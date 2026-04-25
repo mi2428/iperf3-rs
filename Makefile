@@ -1,41 +1,44 @@
-SHELL := /bin/bash
-.SHELLFLAGS := -eu -o pipefail -c
+SHELL         := /bin/bash
+.SHELLFLAGS   := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-CARGO      := $(shell if command -v rustup >/dev/null 2>&1 && rustup which cargo --toolchain stable >/dev/null 2>&1; then rustup which cargo --toolchain stable; else command -v cargo; fi)
-RUSTC      := $(shell if command -v rustup >/dev/null 2>&1 && rustup which rustc --toolchain stable >/dev/null 2>&1; then rustup which rustc --toolchain stable; else command -v rustc; fi)
-RUSTDOC    := $(shell if command -v rustup >/dev/null 2>&1 && rustup which rustdoc --toolchain stable >/dev/null 2>&1; then rustup which rustdoc --toolchain stable; else command -v rustdoc; fi)
-RUSTUP     ?= rustup
-RUSTUP_TOOLCHAIN ?= stable
-CARGO_ENV  := RUSTC="$(RUSTC)" RUSTDOC="$(RUSTDOC)"
-INSTALL    ?= install
-GIT        ?= git
-GH         ?= gh
-DOCKER     ?= docker
-COMPOSE    ?= $(shell if $(DOCKER) compose version >/dev/null 2>&1; then printf '%s compose' '$(DOCKER)'; elif command -v docker-compose >/dev/null 2>&1; then command -v docker-compose; else printf '%s compose' '$(DOCKER)'; fi)
-REMOTE     ?= origin
-MAIN_BRANCH ?= main
+RUSTUP           ?= rustup
+RUSTUP_TOOLCHAIN ?= 1.95.0
+CARGO            ?= $(shell if command -v $(RUSTUP) >/dev/null 2>&1 && $(RUSTUP) which cargo --toolchain $(RUSTUP_TOOLCHAIN) >/dev/null 2>&1; then $(RUSTUP) which cargo --toolchain $(RUSTUP_TOOLCHAIN); else command -v cargo; fi)
+RUSTC            ?= $(shell if command -v $(RUSTUP) >/dev/null 2>&1 && $(RUSTUP) which rustc --toolchain $(RUSTUP_TOOLCHAIN) >/dev/null 2>&1; then $(RUSTUP) which rustc --toolchain $(RUSTUP_TOOLCHAIN); else command -v rustc; fi)
+RUSTDOC          ?= $(shell if command -v $(RUSTUP) >/dev/null 2>&1 && $(RUSTUP) which rustdoc --toolchain $(RUSTUP_TOOLCHAIN) >/dev/null 2>&1; then $(RUSTUP) which rustdoc --toolchain $(RUSTUP_TOOLCHAIN); else command -v rustdoc; fi)
+CARGO_ENV        := RUSTC="$(RUSTC)" RUSTDOC="$(RUSTDOC)"
+
+INSTALL ?= install
+GIT     ?= git
+GH      ?= gh
+DOCKER  ?= docker
+COMPOSE ?= $(shell if $(DOCKER) compose version >/dev/null 2>&1; then printf '%s compose' '$(DOCKER)'; elif command -v docker-compose >/dev/null 2>&1; then command -v docker-compose; else printf '%s compose' '$(DOCKER)'; fi)
+
+REMOTE            ?= origin
+MAIN_BRANCH       ?= main
 GITHUB_REPOSITORY ?= $(shell $(GIT) remote get-url $(REMOTE) 2>/dev/null | awk '{ gsub(/^git@github.com:/, ""); gsub(/^ssh:\/\/git@github.com\//, ""); gsub(/^https:\/\/github.com\//, ""); gsub(/\.git$$/, ""); print tolower($$0) }')
-GIT_DESCRIBE ?= $(shell $(GIT) describe --tags --always --dirty=-dirty 2>/dev/null || printf 'unknown')
-GIT_COMMIT ?= $(shell $(GIT) rev-parse HEAD 2>/dev/null || printf 'unknown')
-GIT_COMMIT_DATE ?= $(shell $(GIT) show -s --format=%cI HEAD 2>/dev/null || printf 'unknown')
-BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+GIT_DESCRIBE      ?= $(shell $(GIT) describe --tags --always --dirty=-dirty 2>/dev/null || printf 'unknown')
+GIT_COMMIT        ?= $(shell $(GIT) rev-parse HEAD 2>/dev/null || printf 'unknown')
+GIT_COMMIT_DATE   ?= $(shell $(GIT) show -s --format=%cI HEAD 2>/dev/null || printf 'unknown')
+BUILD_DATE        ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 DOCKER_BUILD_METADATA_ARGS := --build-arg IPERF3_RS_BUILD_DATE="$(BUILD_DATE)" --build-arg IPERF3_RS_GIT_COMMIT="$(GIT_COMMIT)" --build-arg IPERF3_RS_GIT_COMMIT_DATE="$(GIT_COMMIT_DATE)" --build-arg IPERF3_RS_GIT_DESCRIBE="$(GIT_DESCRIBE)"
 
-APP        := iperf3-rs
-BINDIR     := bin
+APP            := iperf3-rs
+BINDIR         := bin
 COMPLETION_DIR := completions
-INSTALL_PREFIX ?= $(HOME)/.local
-INSTALL_BINDIR ?= $(INSTALL_PREFIX)/bin
+DISTDIR        := dist
+TEST_COMPOSE   := docker-compose.test.yml
+VERSION        := $(shell awk 'BEGIN { in_pkg = 0 } /^\[package\]$$/ { in_pkg = 1; next } /^\[/ { in_pkg = 0 } in_pkg && $$1 == "version" { gsub(/"/, "", $$3); print $$3; exit }' Cargo.toml)
+
+INSTALL_PREFIX      ?= $(HOME)/.local
+INSTALL_BINDIR      ?= $(INSTALL_PREFIX)/bin
 BASH_COMPLETION_DIR ?= $(INSTALL_PREFIX)/share/bash-completion/completions
-ZSH_COMPLETION_DIR ?= $(INSTALL_PREFIX)/share/zsh/site-functions
+ZSH_COMPLETION_DIR  ?= $(INSTALL_PREFIX)/share/zsh/site-functions
 FISH_COMPLETION_DIR ?= $(INSTALL_PREFIX)/share/fish/vendor_completions.d
-DISTDIR    := dist
-TEST_COMPOSE := docker-compose.test.yml
-VERSION    := $(shell awk 'BEGIN { in_pkg = 0 } /^\[package\]$$/ { in_pkg = 1; next } /^\[/ { in_pkg = 0 } in_pkg && $$1 == "version" { gsub(/"/, "", $$3); print $$3; exit }' Cargo.toml)
-TAG        ?= v$(VERSION)
-OS         ?= darwin,linux
-ARCH       ?= amd64,arm64
+TAG                 ?= v$(VERSION)
+OS                  ?= darwin,linux
+ARCH                ?= amd64,arm64
 
 DARWIN_ARCHS := amd64 arm64
 LINUX_ARCHS  := amd64 arm64
@@ -47,24 +50,24 @@ DARWIN_arm64_TARGET := aarch64-apple-darwin
 DARWIN_arm64_SUFFIX := darwin-arm64
 
 LINUX_amd64_PLATFORM := linux/amd64
-LINUX_amd64_SUFFIX := linux-amd64
+LINUX_amd64_SUFFIX   := linux-amd64
 LINUX_arm64_PLATFORM := linux/arm64
-LINUX_arm64_SUFFIX := linux-arm64
-LINUX_BUILD_IMAGE ?= rust:1.95-bookworm
-DOCKER_UID ?= $(shell id -u)
-DOCKER_GID ?= $(shell id -g)
-HOST_OS := $(shell uname -s)
+LINUX_arm64_SUFFIX   := linux-arm64
+LINUX_BUILD_IMAGE    ?= rust:1.95-bookworm
+DOCKER_UID           ?= $(shell id -u)
+DOCKER_GID           ?= $(shell id -g)
+HOST_OS              := $(shell uname -s)
 
 RELEASE_CONFIGURE_ARGS ?= --without-openssl
-MAIN_REMOTE_REF := refs/remotes/$(REMOTE)/$(MAIN_BRANCH)
-GHCR_REGISTRY ?= ghcr.io
-GHCR_REPOSITORY ?= $(GITHUB_REPOSITORY)
-GHCR_IMAGE ?= $(GHCR_REGISTRY)/$(GHCR_REPOSITORY)
-GHCR_USER ?= $(firstword $(subst /, ,$(GHCR_REPOSITORY)))
-GHCR_PLATFORMS ?= linux/amd64,linux/arm64
-GHCR_TAGS ?= $(TAG)
-GHCR_TARGET ?= release
-GHCR_LOGIN ?= true
+MAIN_REMOTE_REF        := refs/remotes/$(REMOTE)/$(MAIN_BRANCH)
+GHCR_REGISTRY          ?= ghcr.io
+GHCR_REPOSITORY        ?= $(GITHUB_REPOSITORY)
+GHCR_IMAGE             ?= $(GHCR_REGISTRY)/$(GHCR_REPOSITORY)
+GHCR_USER              ?= $(firstword $(subst /, ,$(GHCR_REPOSITORY)))
+GHCR_PLATFORMS         ?= linux/amd64,linux/arm64
+GHCR_TAGS              ?= $(TAG)
+GHCR_TARGET            ?= release
+GHCR_LOGIN             ?= true
 
 ##@ Development
 
@@ -391,34 +394,38 @@ release: ## Build binaries for origin/main, publish a GitHub Release, and push t
 
 .PHONY: help
 help: ## Show this help message
-	@awk 'BEGIN {FS = ":.*##"; section = ""} \
-	/^[a-zA-Z0-9_.-]+:.*##/ { \
-		if (section != "") printf "\n\033[1m%s\033[0m\n", section; \
-		section = ""; \
-		printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2; next \
-	} \
-	/^##@/ { section = substr($$0, 5); next }' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"; width = 0} \
+		{ lines[NR] = $$0 } \
+		/^[a-zA-Z0-9_.-]+:.*##/ { if (length($$1) > width) width = length($$1) } \
+		END { \
+			section = ""; \
+			width += 2; \
+			for (i = 1; i <= NR; i++) { \
+				$$0 = lines[i]; \
+				if ($$0 ~ /^##@/) { \
+					section = substr($$0, 5); \
+				} else if ($$0 ~ /^[a-zA-Z0-9_.-]+:.*##/) { \
+					split($$0, parts, ":.*##"); \
+					if (section != "") printf "\n\033[1m%s\033[0m\n", section; \
+					section = ""; \
+					printf "  \033[36m%-*s\033[0m %s\n", width, parts[1], parts[2]; \
+				} \
+			} \
+		}' $(MAKEFILE_LIST)
 	@printf "\n\033[1mVariables:\033[0m\n"
-	@printf "  \033[36mOS\033[0m       Release OS list: \033[36mdarwin,linux\033[0m\n"
-	@printf "  \033[36mARCH\033[0m     Release arch list: \033[36mamd64,arm64\033[0m\n"
-	@printf "  \033[36mTAG\033[0m      GitHub release tag, defaults to \033[36mv%s\033[0m\n" "$(VERSION)"
-	@printf "  \033[36mINSTALL_BINDIR\033[0m Install directory, defaults to \033[36m%s\033[0m\n" "$(INSTALL_BINDIR)"
-	@printf "  \033[36mBASH_COMPLETION_DIR\033[0m Bash completion install dir, defaults to \033[36m%s\033[0m\n" "$(BASH_COMPLETION_DIR)"
-	@printf "  \033[36mZSH_COMPLETION_DIR\033[0m Zsh completion install dir, defaults to \033[36m%s\033[0m\n" "$(ZSH_COMPLETION_DIR)"
-	@printf "  \033[36mFISH_COMPLETION_DIR\033[0m Fish completion install dir, defaults to \033[36m%s\033[0m\n" "$(FISH_COMPLETION_DIR)"
-	@printf "  \033[36mGHCR_IMAGE\033[0m Release image, defaults to \033[36m%s\033[0m\n" "$(GHCR_IMAGE)"
-	@printf "  \033[36mGHCR_PLATFORMS\033[0m Release image platforms, defaults to \033[36m%s\033[0m\n" "$(GHCR_PLATFORMS)"
-	@printf "  \033[36mGHCR_TAGS\033[0m Release image tags, defaults to \033[36m%s\033[0m\n" "$(GHCR_TAGS)"
-	@printf "  \033[36mGHCR_LOGIN\033[0m Log in to GHCR with gh auth token before pushing, defaults to \033[36m%s\033[0m\n" "$(GHCR_LOGIN)"
+	@printf "  \033[36mOS\033[0m                     Release OS list: \033[36mdarwin,linux\033[0m\n"
+	@printf "  \033[36mARCH\033[0m                   Release arch list: \033[36mamd64,arm64\033[0m\n"
+	@printf "  \033[36mTAG\033[0m                    GitHub release tag, defaults to \033[36mv%s\033[0m\n" "$(VERSION)"
+	@printf "  \033[36mINSTALL_BINDIR\033[0m         Install directory, defaults to \033[36m%s\033[0m\n" "$(INSTALL_BINDIR)"
+	@printf "  \033[36mBASH_COMPLETION_DIR\033[0m    Bash completion install dir, defaults to \033[36m%s\033[0m\n" "$(BASH_COMPLETION_DIR)"
+	@printf "  \033[36mZSH_COMPLETION_DIR\033[0m     Zsh completion install dir, defaults to \033[36m%s\033[0m\n" "$(ZSH_COMPLETION_DIR)"
+	@printf "  \033[36mFISH_COMPLETION_DIR\033[0m    Fish completion install dir, defaults to \033[36m%s\033[0m\n" "$(FISH_COMPLETION_DIR)"
+	@printf "  \033[36mGHCR_IMAGE\033[0m             Release image, defaults to \033[36m%s\033[0m\n" "$(GHCR_IMAGE)"
+	@printf "  \033[36mGHCR_PLATFORMS\033[0m         Release image platforms, defaults to \033[36m%s\033[0m\n" "$(GHCR_PLATFORMS)"
+	@printf "  \033[36mGHCR_TAGS\033[0m              Release image tags, defaults to \033[36m%s\033[0m\n" "$(GHCR_TAGS)"
+	@printf "  \033[36mGHCR_LOGIN\033[0m             Log in to GHCR with gh auth token before pushing, defaults to \033[36m%s\033[0m\n" "$(GHCR_LOGIN)"
 	@printf "\n\033[1mExamples:\033[0m\n"
-	@printf "  \033[36mmake build\033[0m\n"
-	@printf "  \033[36mmake install\033[0m\n"
-	@printf "  \033[36mmake install-completions\033[0m\n"
-	@printf "  \033[36mmake check\033[0m\n"
-	@printf "  \033[36mmake verify\033[0m\n"
-	@printf "  \033[36mmake kani\033[0m\n"
-	@printf "  \033[36mmake integration-test\033[0m\n"
-	@printf "  \033[36mmake dist OS=darwin ARCH=arm64\033[0m\n"
+	@printf "  \033[36mmake build install\033[0m\n"
 	@printf "  \033[36mmake dist OS=darwin,linux ARCH=amd64,arm64\033[0m\n"
 	@printf "  \033[36mmake release-image TAG=v%s\033[0m\n" "$(VERSION)"
 	@printf "  \033[36mmake -n release\033[0m\n"
