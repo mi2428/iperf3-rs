@@ -99,8 +99,8 @@ fn compose_interop_and_pushgateway_metrics() {
     let iperf3rs_to_upstream = retry_json_client("iperf3-rs client to upstream server", || {
         project.client_output(&[
             "iperf3-rs",
-            "--scenario",
-            "tcp-reference",
+            "--push.label",
+            "scenario=tcp-reference",
             "-c",
             "reference",
             "-t",
@@ -113,7 +113,17 @@ fn compose_interop_and_pushgateway_metrics() {
     // Metrics check: run iperf3-rs against iperf3-rs. Pushgateway
     // configuration comes from the `client-rs` service environment, so this is
     // deliberately just a normal iperf client command.
-    project.run_client(&["iperf3-rs", "-c", "server-rs", "-t", "3", "-i", "1"]);
+    project.run_client(&[
+        "iperf3-rs",
+        "--push.label",
+        "scenario=tcp",
+        "-c",
+        "server-rs",
+        "-t",
+        "3",
+        "-i",
+        "1",
+    ]);
 
     // Scrape Pushgateway and require non-zero traffic and bandwidth samples.
     // The metric names prove that the pusher emitted the expected metric
@@ -145,8 +155,8 @@ fn compose_interop_and_pushgateway_metrics() {
     // Pushgateway sample after process completion.
     let live_args = [
         "iperf3-rs",
-        "--scenario",
-        LIVE_SCENARIO,
+        "--push.label",
+        "scenario=tcp-live",
         "-c",
         "server-rs",
         "-t",
@@ -176,8 +186,8 @@ fn compose_interop_and_pushgateway_metrics() {
     let udp = retry_json_client("iperf3-rs UDP client to iperf3-rs server", || {
         project.client_output(&[
             "iperf3-rs",
-            "--scenario",
-            UDP_SCENARIO,
+            "--push.label",
+            "scenario=udp",
             "-c",
             "server-rs",
             "-u",
@@ -204,8 +214,8 @@ fn compose_interop_and_pushgateway_metrics() {
     let reverse = retry_json_client("iperf3-rs reverse TCP client", || {
         project.client_output(&[
             "iperf3-rs",
-            "--scenario",
-            REVERSE_SCENARIO,
+            "--push.label",
+            "scenario=tcp-reverse",
             "-c",
             "server-rs",
             "-R",
@@ -230,8 +240,8 @@ fn compose_interop_and_pushgateway_metrics() {
     let bidir = retry_json_client("iperf3-rs bidirectional TCP client", || {
         project.client_output(&[
             "iperf3-rs",
-            "--scenario",
-            BIDIR_SCENARIO,
+            "--push.label",
+            "scenario=tcp-bidir",
             "-c",
             "server-rs",
             "--bidir",
