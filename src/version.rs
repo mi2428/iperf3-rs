@@ -1,5 +1,3 @@
-use std::fmt::Write;
-
 #[derive(Debug, Clone, Copy)]
 pub struct VersionInfo<'a> {
     pub package_name: &'a str,
@@ -30,17 +28,21 @@ pub fn current(libiperf_version: &str) -> VersionInfo<'_> {
 }
 
 pub fn render(info: &VersionInfo<'_>) -> String {
-    let mut out = String::new();
-    writeln!(out, "{} {}", info.package_name, info.package_version).unwrap();
-    writeln!(out, "esnet/iperf3 libiperf {}", info.libiperf_version).unwrap();
-    writeln!(out, "git describe: {}", info.git_describe).unwrap();
-    writeln!(out, "git commit: {}", info.git_commit).unwrap();
-    writeln!(out, "git commit date: {}", info.git_commit_date).unwrap();
-    writeln!(out, "build date: {}", info.build_date).unwrap();
-    writeln!(out, "build host: {}", info.build_host).unwrap();
-    writeln!(out, "build target: {}", info.build_target).unwrap();
-    writeln!(out, "build profile: {}", info.build_profile).unwrap();
-    out
+    // Keep --version script-friendly: one line, with the same broad shape as
+    // common runtimes (`name version (revision, date) [dependency] on target`).
+    format!(
+        "{} {} (git {}; commit {}; commit date {}; built {}; {}) [libiperf {}] on {} (host {})\n",
+        info.package_name,
+        info.package_version,
+        info.git_describe,
+        info.git_commit,
+        info.git_commit_date,
+        info.build_date,
+        info.build_profile,
+        info.libiperf_version,
+        info.build_target,
+        info.build_host,
+    )
 }
 
 #[cfg(test)]
@@ -62,9 +64,16 @@ mod tests {
             build_profile: "release",
         });
 
-        assert!(rendered.contains("iperf3-rs 0.1.0\n"));
-        assert!(rendered.contains("esnet/iperf3 libiperf 3.20\n"));
-        assert!(rendered.contains("git describe: v0.1.0-1-gabc123\n"));
-        assert!(rendered.contains("build target: x86_64-unknown-linux-gnu\n"));
+        assert_eq!(
+            rendered,
+            concat!(
+                "iperf3-rs 0.1.0 ",
+                "(git v0.1.0-1-gabc123; commit abc123; ",
+                "commit date 2026-04-25T00:00:00+09:00; ",
+                "built 2026-04-25T01:00:00Z; release) ",
+                "[libiperf 3.20] on x86_64-unknown-linux-gnu ",
+                "(host aarch64-apple-darwin)\n"
+            )
+        );
     }
 }
