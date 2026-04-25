@@ -336,7 +336,7 @@ Metric mapping:
 | `iperf3_bandwidth` | `bytes_transferred`, `interval_duration` | Bits per second for the interval. |
 | `iperf3_packets` | `interval_packet_count` | UDP packet count when available. |
 | `iperf3_error_packets` | `interval_cnt_error` | UDP lost/error packet count when available. |
-| `iperf3_jitter` | `jitter` | UDP receiver jitter in seconds. |
+| `iperf3_jitter` | `jitter`, `rttvar` | UDP receiver jitter or TCP sender RTT variation in seconds. |
 | `iperf3_tcp_retransmits` | `interval_retrans` | TCP sender retransmits when reported by libiperf and the OS. |
 | `iperf3_tcp_rtt_seconds` | `rtt` | TCP sender smoothed RTT from TCP_INFO, converted from microseconds to seconds. |
 | `iperf3_tcp_rttvar_seconds` | `rttvar` | TCP sender RTT variance from TCP_INFO, converted from microseconds to seconds. |

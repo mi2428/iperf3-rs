@@ -133,6 +133,10 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
     if (tcp_rttvar_count > 0) {
         tcp_rttvar_seconds = tcp_rttvar_seconds / tcp_rttvar_count / 1000000.0;
     }
+    if (test->protocol->id == Ptcp && stream_must_be_sender) {
+        /* For TCP, expose RTT variation through the generic jitter gauge. */
+        jitter_seconds = tcp_rttvar_seconds;
+    }
     if (tcp_pmtu_count > 0) {
         tcp_pmtu_bytes /= tcp_pmtu_count;
     }
