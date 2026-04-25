@@ -3,10 +3,6 @@ name: iperf3-rs-test
 services:
   server-rs:
     image: iperf3-rs:test
-    command: ["iperf3-rs", "-s"]
-
-  server-rs-metrics:
-    image: iperf3-rs:test
     command:
       [
         "iperf3-rs",
@@ -19,7 +15,6 @@ services:
         "--scenario",
         "tcp-server",
         "-s",
-        "-1",
         "-i",
         "1",
         "--json-stream",

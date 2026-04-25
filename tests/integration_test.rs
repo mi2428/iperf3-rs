@@ -17,10 +17,9 @@ const SERVER_SCENARIO: &str = "tcp-server";
 // This integration test exercises the Docker Compose test topology end to end.
 //
 // The topology contains:
-// - `server-rs`: an iperf3-rs server, used to verify that the Rust frontend can
-//   accept traffic from the upstream iperf3 client.
-// - `server-rs-metrics`: an iperf3-rs one-off server with Pushgateway enabled,
-//   used to verify that server-role interval metrics are exported.
+// - `server-rs`: an iperf3-rs server with Pushgateway enabled, used to verify
+//   that the Rust frontend can accept upstream iperf3 traffic and export
+//   server-role interval metrics.
 // - `reference`: an upstream esnet/iperf3 server, used to verify that the
 //   iperf3-rs client remains wire-compatible with the reference implementation.
 // - `pushgateway`: a Prometheus Pushgateway instance, used to verify that
@@ -32,13 +31,13 @@ const SERVER_SCENARIO: &str = "tcp-server";
 // - the Compose image builds and the server services start;
 // - Pushgateway reports readiness;
 // - an upstream iperf3 client can complete a JSON test against iperf3-rs;
+// - the metrics-enabled iperf3-rs server publishes non-zero
+//   `iperf3_bytes` and `iperf3_bandwidth` samples with the expected
+//   server-mode integration labels;
 // - an iperf3-rs client can complete a JSON test against upstream iperf3;
 // - an iperf3-rs client run with `--json-stream` and Pushgateway options
 //   publishes non-zero `iperf3_bytes` and `iperf3_bandwidth` samples with the
-//   expected client-mode integration labels;
-// - an iperf3-rs one-off server run with `--json-stream` and Pushgateway
-//   options publishes non-zero samples with the expected server-mode
-//   integration labels.
+//   expected client-mode integration labels.
 #[test]
 #[ignore = "requires Docker"]
 fn compose_interop_and_pushgateway_metrics() {
@@ -59,9 +58,15 @@ fn compose_interop_and_pushgateway_metrics() {
     // Interop check 1: the upstream iperf3 client must be able to talk to the
     // iperf3-rs server and return a complete JSON summary containing traffic.
     let upstream_to_iperf3rs = retry_json_client("upstream client to iperf3-rs server", || {
-        project.client_output(&["iperf3", "-c", "server-rs", "-t", "1", "-J"])
+        project.client_output(&["iperf3", "-c", "server-rs", "-t", "3", "-i", "1", "-J"])
     });
     assert_iperf_summary_has_traffic(&upstream_to_iperf3rs);
+
+    // Server metrics check: because `server-rs` itself runs in metrics mode,
+    // the upstream client traffic above should leave a server-side metric group
+    // in Pushgateway. This keeps the topology close to the real deployment
+    // shape instead of adding a dedicated one-off metrics server.
+    wait_for_pushgateway_metrics(&project, SERVER_SCENARIO, "server");
 
     // Interop check 2: the iperf3-rs client must be able to talk to the
     // upstream iperf3 server and return a complete JSON summary containing
@@ -98,27 +103,6 @@ fn compose_interop_and_pushgateway_metrics() {
     // families; the label filters prove they came from this integration
     // scenario rather than from another stale Pushgateway group.
     wait_for_pushgateway_metrics(&project, CLIENT_SCENARIO, "client");
-
-    // Server metrics check: start a one-off iperf3-rs server with the same
-    // Pushgateway integration enabled, drive it with the upstream iperf3
-    // client, and require the server-side metric group to appear. This proves
-    // that the wrapper sets `iperf_mode=server` and pushes callback-derived
-    // interval metrics from server role, not only from client role.
-    project.run_compose(&["up", "-d", "server-rs-metrics"]);
-    let upstream_to_metric_server = retry_json_client("upstream client to metric server", || {
-        project.client_output(&[
-            "iperf3",
-            "-c",
-            "server-rs-metrics",
-            "-t",
-            "3",
-            "-i",
-            "1",
-            "-J",
-        ])
-    });
-    assert_iperf_summary_has_traffic(&upstream_to_metric_server);
-    wait_for_pushgateway_metrics(&project, SERVER_SCENARIO, "server");
 }
 
 struct ComposeProject {
