@@ -17,9 +17,9 @@ const SERVER_SCENARIO: &str = "tcp-server";
 // This integration test exercises the Docker Compose test topology end to end.
 //
 // The topology contains:
-// - `server-rs`: an iperf3-rs server with Pushgateway enabled, used to verify
-//   that the Rust frontend can accept upstream iperf3 traffic and export
-//   server-role interval metrics.
+// - `server-rs`: an iperf3-rs server with Pushgateway defaults in its
+//   environment, used to verify that the Rust frontend can accept upstream
+//   iperf3 traffic and export server-role interval metrics.
 // - `reference`: an upstream esnet/iperf3 server, used to verify that the
 //   iperf3-rs client remains wire-compatible with the reference implementation.
 // - `pushgateway`: a Prometheus Pushgateway instance, used to verify that
@@ -63,10 +63,11 @@ fn compose_interop_and_pushgateway_metrics() {
     });
     assert_iperf_summary_has_traffic(&upstream_to_iperf3rs);
 
-    // Server metrics check: because `server-rs` itself runs in metrics mode,
-    // the upstream client traffic above should leave a server-side metric group
-    // in Pushgateway. This keeps the topology close to the real deployment
-    // shape instead of adding a dedicated one-off metrics server.
+    // Server metrics check: because `server-rs` itself gets Pushgateway
+    // configuration from its service environment, the upstream client traffic
+    // above should leave a server-side metric group in Pushgateway. This keeps
+    // the topology close to the real deployment shape instead of adding a
+    // dedicated one-off metrics server.
     wait_for_pushgateway_metrics(&project, SERVER_SCENARIO, "server");
 
     // Interop check 2: the iperf3-rs client must be able to talk to the

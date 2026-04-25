@@ -1,24 +1,17 @@
 name: iperf3-rs-test
 
+x-pushgateway-environment: &pushgateway-environment
+  PUSH_GATEWAY_URL: http://pushgateway:9091
+  JOB_NAME: integration
+  TEST_NAME: self
+
 services:
   server-rs:
     image: iperf3-rs:test
-    command:
-      [
-        "iperf3-rs",
-        "--push-gateway",
-        "http://pushgateway:9091",
-        "--job",
-        "integration",
-        "--test",
-        "self",
-        "--scenario",
-        "tcp-server",
-        "-s",
-        "-i",
-        "1",
-        "--json-stream",
-      ]
+    environment:
+      <<: *pushgateway-environment
+      SCENARIO_NAME: tcp-server
+    command: ["iperf3-rs", "-s", "-i", "1", "--json-stream"]
     depends_on:
       - pushgateway
 
@@ -36,9 +29,7 @@ services:
       target: integration-test
     image: iperf3-rs:test
     environment:
-      PUSH_GATEWAY_URL: http://pushgateway:9091
-      JOB_NAME: integration
-      TEST_NAME: self
+      <<: *pushgateway-environment
       SCENARIO_NAME: tcp
     depends_on:
       - server-rs
