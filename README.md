@@ -1,5 +1,7 @@
 # iperf3-rs
 
+[![Release](https://github.com/mi2428/iperf3-rs/actions/workflows/release.yml/badge.svg)](https://github.com/mi2428/iperf3-rs/actions/workflows/release.yml) [![GHCR](https://github.com/mi2428/iperf3-rs/actions/workflows/ghcr.yml/badge.svg)](https://github.com/mi2428/iperf3-rs/actions/workflows/ghcr.yml)
+
 Rust frontend for upstream `libiperf` with live Prometheus Pushgateway export.
 
 `iperf3-rs` is intentionally not a shell wrapper around the `iperf3` executable.
