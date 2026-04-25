@@ -7,14 +7,14 @@ FROM ${BUILD_IMAGE}:${BUILD_IMAGE_TAG} AS integration-build
 
 # hadolint ignore=DL3008
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential \
-        ca-certificates \
-        curl \
-        jq \
-        make \
-        pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      curl \
+      jq \
+      make \
+      pkg-config \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 COPY . .
@@ -22,13 +22,13 @@ COPY . .
 FROM integration-build AS integration-test
 
 RUN if [ -f iperf3/config.status ]; then make -C iperf3 distclean; fi \
-    && mkdir -p /tmp/iperf3-build
+ && mkdir -p /tmp/iperf3-build
 
 WORKDIR /tmp/iperf3-build
 RUN /workspace/iperf3/configure --prefix=/opt/iperf3 --without-openssl \
-    && make -j"$(nproc)" \
-    && make install \
-    && rm -rf /tmp/iperf3-build
+ && make -j"$(nproc)" \
+ && make install \
+ && rm -rf /tmp/iperf3-build
 
 WORKDIR /workspace
 RUN IPERF3_RS_CONFIGURE_ARGS=--without-openssl cargo build --release --locked
@@ -44,9 +44,9 @@ WORKDIR /workspace
 COPY . .
 
 RUN IPERF3_RS_CONFIGURE_ARGS=--without-openssl cargo build --release --locked \
-    && mkdir -p /out \
-    && cp target/release/iperf3-rs /out/iperf3-rs \
-    && chmod +x /out/iperf3-rs
+ && mkdir -p /out \
+ && cp target/release/iperf3-rs /out/iperf3-rs \
+ && chmod +x /out/iperf3-rs
 
 FROM scratch AS release
 
