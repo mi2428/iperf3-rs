@@ -1,16 +1,13 @@
-name: Quality Gates
+name: PR Checks
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
 
 permissions:
   contents: read
 
 concurrency:
-  group: quality-gates-${{ github.ref }}
+  group: checks-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -18,8 +15,8 @@ env:
   IPERF3_RS_CONFIGURE_ARGS: --without-openssl
 
 jobs:
-  workflows:
-    name: actionlint
+  workflow:
+    name: Workflow
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -28,8 +25,8 @@ jobs:
       - name: Run actionlint
         uses: rhysd/actionlint@v1
 
-  check:
-    name: make check
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -37,14 +34,15 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install system dependencies
+      - name: Install native build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             ca-certificates \
-            make \
-            pkg-config
+            fish \
+            pkg-config \
+            zsh
 
       - name: Install Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt
@@ -57,15 +55,24 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: ${{ runner.os }}-lint-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ github.job }}-cargo-
+            ${{ runner.os }}-lint-cargo-
 
-      - name: Run checks
-        run: make check
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
 
-  kani:
-    name: make kani
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Check shell completions
+        run: |
+          bash -n completions/iperf3-rs.bash
+          zsh -n completions/_iperf3-rs
+          fish -n completions/iperf3-rs.fish
+
+  test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -73,13 +80,12 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install system dependencies
+      - name: Install native build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             ca-certificates \
-            make \
             pkg-config
 
       - name: Install Rust toolchain
@@ -93,19 +99,54 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: ${{ runner.os }}-test-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ github.job }}-cargo-
+            ${{ runner.os }}-test-cargo-
+
+      - name: Run unit tests
+        run: cargo test
+
+  kani:
+    name: Kani
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            pkg-config
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal
+
+      - name: Cache Rust dependencies and build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-kani-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-kani-cargo-
 
       - name: Run Kani
         uses: model-checking/kani-github-action@v1
         with:
           kani-version: "0.67.0"
-          command: make
+          command: cargo
           args: kani
 
   integration:
-    name: make integration
+    name: Integration
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -114,13 +155,12 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install system dependencies
+      - name: Install native build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             ca-certificates \
-            make \
             pkg-config
 
       - name: Install Rust toolchain
@@ -134,9 +174,9 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: ${{ runner.os }}-integration-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ github.job }}-cargo-
+            ${{ runner.os }}-integration-cargo-
 
       - name: Show Docker versions
         run: |
@@ -166,25 +206,29 @@ jobs:
           cache-from: type=gha,scope=iperf3-rs-release
           cache-to: type=gha,mode=max,scope=iperf3-rs-release
 
-      - name: Run Docker integration tests
+      - name: Run integration tests
         env:
+          COMPOSE: docker compose
+          DOCKER: docker
           RELEASE_SMOKE_IMAGE: iperf3-rs:release-smoke-ci
           SKIP_INTEGRATION_IMAGE_BUILD: "true"
-        run: make integration
+        run: cargo test --test integration_test -- --ignored --nocapture --test-threads=1
 
-  quality-gate:
-    name: quality gate
+  required:
+    name: Required
     runs-on: ubuntu-latest
     needs:
-      - workflows
-      - check
+      - workflow
+      - lint
+      - test
       - kani
       - integration
     if: always()
     steps:
-      - name: Require all quality jobs
+      - name: Require all checks
         run: |
-          test "${{ needs.workflows.result }}" = "success"
-          test "${{ needs.check.result }}" = "success"
+          test "${{ needs.workflow.result }}" = "success"
+          test "${{ needs.lint.result }}" = "success"
+          test "${{ needs.test.result }}" = "success"
           test "${{ needs.kani.result }}" = "success"
           test "${{ needs.integration.result }}" = "success"
