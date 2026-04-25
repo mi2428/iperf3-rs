@@ -10,28 +10,61 @@ use serde_json::Value;
 const COMPOSE_FILE: &str = "docker-compose.test.yml";
 const PUSHGATEWAY_URL: &str = "http://pushgateway:9091";
 
+// This integration test exercises the Docker Compose test topology end to end.
+//
+// The topology contains:
+// - `server-rs`: an iperf3-rs server, used to verify that the Rust frontend can
+//   accept traffic from the upstream iperf3 client.
+// - `reference`: an upstream esnet/iperf3 server, used to verify that the
+//   iperf3-rs client remains wire-compatible with the reference implementation.
+// - `pushgateway`: a Prometheus Pushgateway instance, used to verify that
+//   iperf3-rs can publish interval metrics during a client run.
+// - `client-rs`: the test runner image, which contains both iperf3-rs and the
+//   upstream iperf3 binary so the same container can drive all scenarios.
+//
+// The test succeeds only when all of the following are true:
+// - the Compose image builds and the server services start;
+// - Pushgateway reports readiness;
+// - an upstream iperf3 client can complete a JSON test against iperf3-rs;
+// - an iperf3-rs client can complete a JSON test against upstream iperf3;
+// - an iperf3-rs client run with `--json-stream` and Pushgateway options
+//   publishes non-zero `iperf3_bytes` and `iperf3_bandwidth` samples with the
+//   expected integration labels.
 #[test]
 #[ignore = "requires Docker"]
 fn compose_interop_and_pushgateway_metrics() {
     let project = ComposeProject::new();
 
+    // Build the shared test image and start the long-running services. The
+    // `ComposeProject` uses a unique project name so concurrent or stale test
+    // runs do not reuse containers from another invocation.
     project.run_compose(&["build", "client-rs"]);
     project.run_compose(&["up", "-d", "server-rs", "reference", "pushgateway"]);
 
+    // Wait until Pushgateway is ready to accept writes. This prevents the
+    // metrics assertion from racing the container startup path.
     wait_for("pushgateway readiness", || {
         project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/-/ready")])
     });
 
+    // Interop check 1: the upstream iperf3 client must be able to talk to the
+    // iperf3-rs server and return a complete JSON summary containing traffic.
     let upstream_to_iperf3rs = retry_json_client("upstream client to iperf3-rs server", || {
         project.client_output(&["iperf3", "-c", "server-rs", "-t", "1", "-J"])
     });
     assert_iperf_summary_has_traffic(&upstream_to_iperf3rs);
 
+    // Interop check 2: the iperf3-rs client must be able to talk to the
+    // upstream iperf3 server and return a complete JSON summary containing
+    // traffic. This covers the opposite client/server direction.
     let iperf3rs_to_upstream = retry_json_client("iperf3-rs client to upstream server", || {
         project.client_output(&["iperf3-rs", "-c", "reference", "-t", "1", "-J"])
     });
     assert_iperf_summary_has_traffic(&iperf3rs_to_upstream);
 
+    // Metrics check: run iperf3-rs against iperf3-rs with one-second JSON
+    // streaming enabled. The run should push interval metrics to Pushgateway
+    // under the integration labels below.
     project.run_client(&[
         "iperf3-rs",
         "--push-gateway",
@@ -51,6 +84,10 @@ fn compose_interop_and_pushgateway_metrics() {
         "--json-stream",
     ]);
 
+    // Scrape Pushgateway and require non-zero traffic and bandwidth samples.
+    // The metric names prove that the pusher emitted the expected metric
+    // families; the label filters prove they came from this integration
+    // scenario rather than from another stale Pushgateway group.
     wait_for("pushgateway metrics", || {
         let output =
             project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
@@ -85,6 +122,8 @@ struct ComposeProject {
 impl ComposeProject {
     fn new() -> Self {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        // Use a unique Compose project name so the Drop cleanup removes only
+        // this test's containers, network, and volumes.
         let project_name = format!(
             "iperf3rsit{}{}",
             std::process::id(),
@@ -141,6 +180,8 @@ impl ComposeProject {
 
 impl Drop for ComposeProject {
     fn drop(&mut self) {
+        // Best-effort cleanup keeps failure output intact while still removing
+        // containers and networks created for this test project.
         let _ = self
             .base_command(&["down", "--volumes", "--remove-orphans"])
             .stdout(Stdio::null())
@@ -150,6 +191,10 @@ impl Drop for ComposeProject {
 }
 
 fn compose_command() -> Vec<OsString> {
+    // Allow Makefile-driven tests to pass either `docker compose` or a
+    // `docker-compose` binary path through COMPOSE. Falling back to Docker
+    // Compose v2 keeps direct `cargo test --test integration_test -- --ignored`
+    // usable on a normal Docker installation.
     env::var_os("COMPOSE")
         .and_then(|raw| {
             let parts = raw
@@ -163,6 +208,10 @@ fn compose_command() -> Vec<OsString> {
 }
 
 fn retry_json_client(label: &str, mut run: impl FnMut() -> Output) -> Value {
+    // iperf servers can take a moment to accept connections after Compose marks
+    // the containers as started. Retrying here makes startup ordering explicit
+    // without weakening the final success condition: the last successful output
+    // still has to be valid iperf JSON with non-zero transferred bytes.
     let output = wait_for(label, || {
         let output = run();
         if !output.status.success() || parse_iperf_summary(&output).is_none() {
@@ -175,6 +224,8 @@ fn retry_json_client(label: &str, mut run: impl FnMut() -> Output) -> Value {
 }
 
 fn wait_for(label: &str, mut run: impl FnMut() -> Output) -> Output {
+    // Poll command-style checks until they return success, and include the last
+    // stdout/stderr in the panic so failures are actionable in CI logs.
     let mut last = None;
     for _ in 0..30 {
         let output = run();
@@ -195,6 +246,9 @@ fn wait_for(label: &str, mut run: impl FnMut() -> Output) -> Output {
 }
 
 fn parse_iperf_summary(output: &Output) -> Option<Value> {
+    // A valid interop result must be a complete iperf JSON document. Requiring
+    // both `start` and `end` avoids accepting partial output, and requiring
+    // non-zero bytes proves that a real test stream ran.
     let json: Value = serde_json::from_slice(&output.stdout).ok()?;
     let has_start = json.get("start").is_some();
     let has_end = json.get("end").is_some();
@@ -228,6 +282,9 @@ fn json_path_number(json: &Value, path: &[&str]) -> Option<f64> {
 }
 
 fn metric_value_gt_zero(metrics: &str, name: &str) -> bool {
+    // Pushgateway exposes all retained groups on /metrics, so the labels are
+    // part of the success condition. They scope the assertion to the iperf3-rs
+    // client run performed above.
     let prefix = format!("{name}{{");
     metrics
         .lines()
