@@ -44,9 +44,11 @@ fn run() -> Result<()> {
         let sink = PushGateway::new(PushGatewayConfig {
             endpoint: push_gateway_url,
             job: app.job,
-            test: app.test,
-            scenario: app.scenario,
-            mode: mode.to_owned(),
+            labels: vec![
+                ("test".to_owned(), app.test),
+                ("scenario".to_owned(), app.scenario),
+                ("iperf_mode".to_owned(), mode.to_owned()),
+            ],
         })?;
         Some(JsonMetricsReporter::attach(
             &mut test,

@@ -12,9 +12,7 @@ const PUSH_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct PushGatewayConfig {
     pub endpoint: Url,
     pub job: String,
-    pub test: String,
-    pub scenario: String,
-    pub mode: String,
+    pub labels: Vec<(String, String)>,
 }
 
 pub struct PushGateway {
@@ -28,12 +26,12 @@ impl PushGateway {
         let mut path = url.path().trim_end_matches('/').to_owned();
         path.push_str("/metrics/job/");
         path.push_str(&encode_path_segment(&config.job));
-        path.push_str("/test/");
-        path.push_str(&encode_path_segment(&config.test));
-        path.push_str("/scenario/");
-        path.push_str(&encode_path_segment(&config.scenario));
-        path.push_str("/iperf_mode/");
-        path.push_str(&encode_path_segment(&config.mode));
+        for (name, value) in config.labels {
+            path.push('/');
+            path.push_str(&encode_path_segment(&name));
+            path.push('/');
+            path.push_str(&encode_path_segment(&value));
+        }
         url.set_path(&path);
 
         let client = Client::builder()
@@ -128,9 +126,11 @@ mod tests {
         let gateway = PushGateway::new(PushGatewayConfig {
             endpoint: Url::parse("http://127.0.0.1:9091/base/").unwrap(),
             job: "iperf job".to_owned(),
-            test: "test/one".to_owned(),
-            scenario: "sample#1".to_owned(),
-            mode: "client".to_owned(),
+            labels: vec![
+                ("test".to_owned(), "test/one".to_owned()),
+                ("scenario".to_owned(), "sample#1".to_owned()),
+                ("iperf_mode".to_owned(), "client".to_owned()),
+            ],
         })
         .unwrap();
 
