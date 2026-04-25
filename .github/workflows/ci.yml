@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  IPERF3_RS_CONFIGURE_ARGS: --without-openssl
+
+jobs:
+  check:
+    name: make check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            make \
+            pkg-config
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+
+      - name: Run checks
+        run: make check
+
+  kani:
+    name: make kani
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            make \
+            pkg-config
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Run Kani
+        uses: model-checking/kani-github-action@v1
+        with:
+          kani-version: "0.67.0"
+          command: make
+          args: kani
+
+  integration:
+    name: make integration-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            make \
+            pkg-config
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Show Docker versions
+        run: |
+          docker version
+          docker compose version
+
+      - name: Run Docker integration tests
+        run: make integration-test
+
+  quality-gate:
+    name: quality gate
+    runs-on: ubuntu-latest
+    needs:
+      - check
+      - kani
+      - integration
+    if: always()
+    steps:
+      - name: Require all quality jobs
+        run: |
+          test "${{ needs.check.result }}" = "success"
+          test "${{ needs.kani.result }}" = "success"
+          test "${{ needs.integration.result }}" = "success"
