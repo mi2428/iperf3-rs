@@ -25,8 +25,31 @@ git submodule update --init --recursive
 make build
 ```
 
-`build.rs` runs `./configure --enable-static --disable-shared` and builds
-`src/.libs/libiperf.a` when needed.
+`build.rs` runs `./configure --enable-static --disable-shared` in Cargo's target
+build directory and links the resulting static `libiperf.a`.
+
+Useful development targets:
+
+```sh
+make help
+make check
+make dist OS=darwin ARCH=arm64
+```
+
+## Release
+
+`make release` follows the `origin/main` ref, builds release binaries for
+`darwin-amd64`, `darwin-arm64`, `linux-amd64`, and `linux-arm64`, writes
+`dist/checksums.txt`, and creates a GitHub Release tagged from the Cargo package
+version.
+
+```sh
+make release
+```
+
+The release target requires `gh`, Docker for Linux builds, and a macOS host for
+Darwin builds. Release builds set `IPERF3_RS_CONFIGURE_ARGS=--without-openssl`
+so the bundled libiperf does not depend on external OpenSSL libraries.
 
 ## Usage
 
