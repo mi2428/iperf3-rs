@@ -22,7 +22,17 @@ TEST_COMPOSE   := docker-compose.test.yml
 INSTALL_PREFIX      ?= $(HOME)/.local
 INSTALL_BINDIR      ?= $(INSTALL_PREFIX)/bin
 BASH_COMPLETION_DIR ?= $(INSTALL_PREFIX)/share/bash-completion/completions
-ZSH_COMPLETION_DIR  ?= $(INSTALL_PREFIX)/share/zsh/site-functions
+DETECTED_ZSH_COMPLETION_DIR := $(shell \
+	if command -v zsh >/dev/null 2>&1; then \
+		zsh -fc 'print -rl -- $${fpath[@]}' 2>/dev/null | \
+			while IFS= read -r dir; do \
+				if [ "$${dir%/site-functions}" != "$$dir" ] && [ -d "$$dir" ] && [ -w "$$dir" ]; then \
+					printf '%s\n' "$$dir"; \
+					exit 0; \
+				fi; \
+			done; \
+	fi)
+ZSH_COMPLETION_DIR  ?= $(or $(DETECTED_ZSH_COMPLETION_DIR),$(INSTALL_PREFIX)/share/zsh/site-functions)
 FISH_COMPLETION_DIR ?= $(INSTALL_PREFIX)/share/fish/vendor_completions.d
 OS                  ?= darwin,linux
 ARCH                ?= amd64,arm64
@@ -95,6 +105,9 @@ _completions:
 			printf 'Installed bash completion to %s/%s\n' "$(BASH_COMPLETION_DIR)" "$(APP)"; \
 			printf 'Installed zsh completion to %s/_%s\n' "$(ZSH_COMPLETION_DIR)" "$(APP)"; \
 			printf 'Installed fish completion to %s/%s.fish\n' "$(FISH_COMPLETION_DIR)" "$(APP)"; \
+			if command -v zsh >/dev/null 2>&1 && ! zsh -fc 'target=$$1; for dir in $${fpath[@]}; do [[ "$$dir" == "$$target" ]] && exit 0; done; exit 1' -- "$(ZSH_COMPLETION_DIR)"; then \
+				printf 'Note: zsh completion dir is not in fpath; add before compinit: fpath=(%s $$fpath)\n' "$(ZSH_COMPLETION_DIR)"; \
+			fi; \
 			;; \
 		*) \
 			echo "Unsupported MODE '$$mode'. Supported values: check, install" >&2; \
