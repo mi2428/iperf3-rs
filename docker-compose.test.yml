@@ -15,7 +15,8 @@ services:
   client-rs:
     build:
       context: .
-      dockerfile: Dockerfile.test
+      dockerfile: Dockerfile
+      target: test
     image: iperf3-rs:test
     depends_on:
       - server-rs
