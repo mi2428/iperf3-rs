@@ -9,16 +9,22 @@ use serde_json::Value;
 
 const COMPOSE_FILE: &str = "docker-compose.test.yml";
 const PUSHGATEWAY_URL: &str = "http://pushgateway:9091";
+const PUSH_JOB: &str = "integration";
+const PUSH_TEST: &str = "self";
+const CLIENT_SCENARIO: &str = "tcp";
+const SERVER_SCENARIO: &str = "tcp-server";
 
 // This integration test exercises the Docker Compose test topology end to end.
 //
 // The topology contains:
 // - `server-rs`: an iperf3-rs server, used to verify that the Rust frontend can
 //   accept traffic from the upstream iperf3 client.
+// - `server-rs-metrics`: an iperf3-rs one-off server with Pushgateway enabled,
+//   used to verify that server-role interval metrics are exported.
 // - `reference`: an upstream esnet/iperf3 server, used to verify that the
 //   iperf3-rs client remains wire-compatible with the reference implementation.
 // - `pushgateway`: a Prometheus Pushgateway instance, used to verify that
-//   iperf3-rs can publish interval metrics during a client run.
+//   iperf3-rs can publish interval metrics during client and server runs.
 // - `client-rs`: the test runner image, which contains both iperf3-rs and the
 //   upstream iperf3 binary so the same container can drive all scenarios.
 //
@@ -29,7 +35,10 @@ const PUSHGATEWAY_URL: &str = "http://pushgateway:9091";
 // - an iperf3-rs client can complete a JSON test against upstream iperf3;
 // - an iperf3-rs client run with `--json-stream` and Pushgateway options
 //   publishes non-zero `iperf3_bytes` and `iperf3_bandwidth` samples with the
-//   expected integration labels.
+//   expected client-mode integration labels;
+// - an iperf3-rs one-off server run with `--json-stream` and Pushgateway
+//   options publishes non-zero samples with the expected server-mode
+//   integration labels.
 #[test]
 #[ignore = "requires Docker"]
 fn compose_interop_and_pushgateway_metrics() {
@@ -70,11 +79,11 @@ fn compose_interop_and_pushgateway_metrics() {
         "--push-gateway",
         PUSHGATEWAY_URL,
         "--job",
-        "integration",
+        PUSH_JOB,
         "--test",
-        "self",
+        PUSH_TEST,
         "--scenario",
-        "tcp",
+        CLIENT_SCENARIO,
         "-c",
         "server-rs",
         "-t",
@@ -88,29 +97,28 @@ fn compose_interop_and_pushgateway_metrics() {
     // The metric names prove that the pusher emitted the expected metric
     // families; the label filters prove they came from this integration
     // scenario rather than from another stale Pushgateway group.
-    wait_for("pushgateway metrics", || {
-        let output =
-            project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
-        if !output.status.success() {
-            return output;
-        }
+    wait_for_pushgateway_metrics(&project, CLIENT_SCENARIO, "client");
 
-        let metrics = String::from_utf8_lossy(&output.stdout);
-        if metric_value_gt_zero(&metrics, "iperf3_bytes")
-            && metric_value_gt_zero(&metrics, "iperf3_bandwidth")
-        {
-            output
-        } else {
-            let mut failed = Command::new("false")
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-                .expect("failed to synthesize failed output");
-            failed.stdout = output.stdout;
-            failed.stderr = output.stderr;
-            failed
-        }
+    // Server metrics check: start a one-off iperf3-rs server with the same
+    // Pushgateway integration enabled, drive it with the upstream iperf3
+    // client, and require the server-side metric group to appear. This proves
+    // that the wrapper sets `iperf_mode=server` and pushes callback-derived
+    // interval metrics from server role, not only from client role.
+    project.run_compose(&["up", "-d", "server-rs-metrics"]);
+    let upstream_to_metric_server = retry_json_client("upstream client to metric server", || {
+        project.client_output(&[
+            "iperf3",
+            "-c",
+            "server-rs-metrics",
+            "-t",
+            "3",
+            "-i",
+            "1",
+            "-J",
+        ])
     });
+    assert_iperf_summary_has_traffic(&upstream_to_metric_server);
+    wait_for_pushgateway_metrics(&project, SERVER_SCENARIO, "server");
 }
 
 struct ComposeProject {
@@ -281,18 +289,55 @@ fn json_path_number(json: &Value, path: &[&str]) -> Option<f64> {
     value.as_f64().or_else(|| value.as_u64().map(|v| v as f64))
 }
 
-fn metric_value_gt_zero(metrics: &str, name: &str) -> bool {
+fn wait_for_pushgateway_metrics(project: &ComposeProject, scenario: &str, mode: &str) {
+    wait_for(
+        &format!("pushgateway metrics for {scenario}/{mode}"),
+        || {
+            let output =
+                project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
+            if !output.status.success() {
+                return output;
+            }
+
+            let metrics = String::from_utf8_lossy(&output.stdout);
+            if metric_value_gt_zero(&metrics, "iperf3_bytes", scenario, mode)
+                && metric_value_gt_zero(&metrics, "iperf3_bandwidth", scenario, mode)
+            {
+                output
+            } else {
+                failed_output_like(output)
+            }
+        },
+    );
+}
+
+fn failed_output_like(output: Output) -> Output {
+    let mut failed = Command::new("false")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("failed to synthesize failed output");
+    failed.stdout = output.stdout;
+    failed.stderr = output.stderr;
+    failed
+}
+
+fn metric_value_gt_zero(metrics: &str, name: &str, scenario: &str, mode: &str) -> bool {
     // Pushgateway exposes all retained groups on /metrics, so the labels are
     // part of the success condition. They scope the assertion to the iperf3-rs
-    // client run performed above.
+    // run performed above.
     let prefix = format!("{name}{{");
+    let job_label = format!(r#"job="{PUSH_JOB}""#);
+    let test_label = format!(r#"test="{PUSH_TEST}""#);
+    let scenario_label = format!(r#"scenario="{scenario}""#);
+    let mode_label = format!(r#"iperf_mode="{mode}""#);
     metrics
         .lines()
         .filter(|line| line.starts_with(&prefix))
-        .filter(|line| line.contains(r#"job="integration""#))
-        .filter(|line| line.contains(r#"test="self""#))
-        .filter(|line| line.contains(r#"scenario="tcp""#))
-        .filter(|line| line.contains(r#"iperf_mode="client""#))
+        .filter(|line| line.contains(&job_label))
+        .filter(|line| line.contains(&test_label))
+        .filter(|line| line.contains(&scenario_label))
+        .filter(|line| line.contains(&mode_label))
         .filter_map(|line| line.split_whitespace().last())
         .filter_map(|value| value.parse::<f64>().ok())
         .any(|value| value > 0.0)
