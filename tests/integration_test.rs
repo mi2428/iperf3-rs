@@ -15,26 +15,20 @@ const PUSHGATEWAY_URL: &str = "http://pushgateway:9091";
 fn compose_interop_and_pushgateway_metrics() {
     let project = ComposeProject::new();
 
-    project.run_compose(&["build", "integration"]);
-    project.run_compose(&[
-        "up",
-        "-d",
-        "iperf3rs-server",
-        "upstream-server",
-        "pushgateway",
-    ]);
+    project.run_compose(&["build", "runner"]);
+    project.run_compose(&["up", "-d", "sut", "reference", "pushgateway"]);
 
     wait_for("pushgateway readiness", || {
         project.integration_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/-/ready")])
     });
 
     let upstream_to_iperf3rs = retry_json_client("upstream client to iperf3-rs server", || {
-        project.integration_output(&["iperf3", "-c", "iperf3rs-server", "-t", "1", "-J"])
+        project.integration_output(&["iperf3", "-c", "sut", "-t", "1", "-J"])
     });
     assert_iperf_summary_has_traffic(&upstream_to_iperf3rs);
 
     let iperf3rs_to_upstream = retry_json_client("iperf3-rs client to upstream server", || {
-        project.integration_output(&["iperf3-rs", "-c", "upstream-server", "-t", "1", "-J"])
+        project.integration_output(&["iperf3-rs", "-c", "reference", "-t", "1", "-J"])
     });
     assert_iperf_summary_has_traffic(&iperf3rs_to_upstream);
 
@@ -49,7 +43,7 @@ fn compose_interop_and_pushgateway_metrics() {
         "--scenario",
         "tcp",
         "-c",
-        "iperf3rs-server",
+        "sut",
         "-t",
         "3",
         "-i",
@@ -121,7 +115,7 @@ impl ComposeProject {
     }
 
     fn integration_output(&self, args: &[&str]) -> Output {
-        let mut compose_args = vec!["run", "--rm", "integration"];
+        let mut compose_args = vec!["run", "--rm", "runner"];
         compose_args.extend_from_slice(args);
         self.output(&compose_args)
     }

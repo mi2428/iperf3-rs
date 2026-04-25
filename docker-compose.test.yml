@@ -1,23 +1,23 @@
 name: iperf3-rs-test
 
 services:
-  iperf3rs-server:
+  sut:
     image: iperf3-rs:test
     command: ["iperf3-rs", "-s"]
 
-  upstream-server:
+  reference:
     image: iperf3-rs:test
     command: ["iperf3", "-s"]
 
   pushgateway:
     image: prom/pushgateway:v1.11.2
 
-  integration:
+  runner:
     build:
       context: .
       dockerfile: Dockerfile.test
     image: iperf3-rs:test
     depends_on:
-      - iperf3rs-server
-      - upstream-server
+      - sut
+      - reference
       - pushgateway
