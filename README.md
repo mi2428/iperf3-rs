@@ -6,8 +6,8 @@ Rust frontend for upstream `libiperf` with live Prometheus Pushgateway export.
 
 `iperf3-rs` is intentionally not a shell wrapper around the `iperf3` executable.
 It links the `esnet/iperf3` `libiperf` library directly through FFI, lets
-upstream parse and execute normal iperf3 tests, and uses libiperf's JSON stream
-callback to observe interval results while the test is still running.
+upstream parse and execute normal iperf3 tests, and observes libiperf interval
+results while the test is still running.
 
 That gives the project two goals:
 
@@ -29,9 +29,9 @@ for live observability:
   logic around an opaque child process.
 
 `iperf3-rs` takes a different path. It embeds the upstream library and registers
-a Rust-managed callback for libiperf JSON stream events. Each `interval` event is
-converted to Prometheus text format and pushed to Pushgateway immediately. In
-practice, this means dashboards can update during the test, not only after it.
+a Rust-managed callback on libiperf's reporting path. Each interval is converted
+to Prometheus text format and pushed to Pushgateway immediately. In practice,
+this means dashboards can update during the test, not only after it.
 
 Because the frontend is Rust, the wrapper-specific pieces are normal Rust code:
 argument extraction, URL validation, Pushgateway HTTP behavior, metric
@@ -71,12 +71,11 @@ When `--push.url` or `PUSH_URL` is set, iperf3-rs:
 
 1. lets libiperf parse the iperf3 arguments;
 2. determines the parsed role, such as client or server;
-3. enables libiperf JSON stream output internally;
-4. registers a JSON callback with libiperf;
-5. receives line-delimited JSON stream events;
-6. keeps `interval` events and ignores non-interval events;
-7. maps each interval summary to Prometheus gauges;
-8. sends the newest interval sample to Pushgateway.
+3. installs an interval metrics callback without changing the user-requested
+   output mode;
+4. receives the latest libiperf interval summary from the reporting path;
+5. maps each interval summary to Prometheus gauges;
+6. sends the newest interval sample to Pushgateway.
 
 The callback path is deliberately nonblocking. It sends JSON lines into a
 size-one channel and a worker thread performs HTTP writes. If Pushgateway is
@@ -430,8 +429,9 @@ integration tests, Kani checks, release workflow details, and maintainer setup.
 
 ## Current caveats
 
-- Metrics export currently relies on libiperf JSON stream mode. This is the
-  mechanism that makes live interval export possible without patching upstream.
+- Metrics export is attached to libiperf's reporting path through the local C
+  shim. This keeps stdout behavior aligned with upstream iperf3 while still
+  allowing live interval export without patching the submodule.
 - The Pushgateway path is based on grouping labels. Use labels with bounded
   cardinality, such as `test`, `scenario`, `site`, or `host_role`; avoid
   high-cardinality values that would create unbounded Pushgateway groups.

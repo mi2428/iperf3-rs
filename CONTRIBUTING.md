@@ -65,8 +65,8 @@ At build time, `build.rs`:
 The shim is intentionally small. It exposes the few C operations that Rust needs
 but that are not ergonomic through the public libiperf headers alone, such as:
 
-- enabling JSON stream callbacks;
-- registering the callback function;
+- attaching interval metrics to libiperf's reporter path without changing
+  stdout mode;
 - rendering upstream help text;
 - preserving upstream server-loop behavior;
 - reading the current iperf error;
@@ -91,7 +91,7 @@ requests still work from the scratch release image.
 |   |-- help.rs          # wrapper help inserted into upstream help text
 |   |-- iperf.rs         # Rust wrapper around libiperf FFI
 |   |-- main.rs          # CLI entry point
-|   |-- metrics.rs       # JSON stream callback and metric extraction
+|   |-- metrics.rs       # interval metrics callback and Pushgateway handoff
 |   |-- pushgateway.rs   # Pushgateway URL construction and HTTP writes
 |   `-- version.rs       # one-line version rendering
 |-- native/              # small C shim over libiperf
