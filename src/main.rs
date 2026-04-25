@@ -35,20 +35,18 @@ fn run() -> Result<()> {
     let mut test = IperfTest::new().context("failed to create iperf test")?;
     test.parse_arguments(&iperf_args)?;
 
-    let reporter = if let Some(push_gateway_url) = app.push_gateway_url {
+    let reporter = if let Some(push_url) = app.push_url {
         let mode = match test.role() {
             Role::Client => "client",
             Role::Server => "server",
             Role::Unknown(_) => "unknown",
         };
+        let mut labels = app.push_labels;
+        labels.push(("iperf_mode".to_owned(), mode.to_owned()));
         let sink = PushGateway::new(PushGatewayConfig {
-            endpoint: push_gateway_url,
-            job: app.job,
-            labels: vec![
-                ("test".to_owned(), app.test),
-                ("scenario".to_owned(), app.scenario),
-                ("iperf_mode".to_owned(), mode.to_owned()),
-            ],
+            endpoint: push_url,
+            job: app.push_job,
+            labels,
         })?;
         Some(JsonMetricsReporter::attach(
             &mut test,
