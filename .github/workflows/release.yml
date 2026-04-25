@@ -162,6 +162,11 @@ jobs:
     needs:
       - binaries
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
       - name: Download binary artifacts
         uses: actions/download-artifact@v4
         with:
@@ -173,8 +178,54 @@ jobs:
           cd dist
           sha256sum iperf3-rs-* > checksums.txt
 
+      - name: Generate Homebrew formula
+        run: |
+          bash scripts/generate-homebrew-formula.sh \
+            "${{ github.event.release.tag_name }}" \
+            dist/checksums.txt \
+            dist/iperf3-rs.rb
+
       - name: Upload binaries to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/iperf3-rs-* dist/checksums.txt --clobber
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/iperf3-rs-* \
+            dist/checksums.txt \
+            dist/iperf3-rs.rb \
+            --clobber
+
+      - name: Publish Homebrew tap formula
+        env:
+          HOMEBREW_TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
+            echo "::error::HOMEBREW_TAP_TOKEN is required to publish the Homebrew formula"
+            exit 1
+          fi
+
+          tap_repository="${HOMEBREW_TAP_REPOSITORY:-${GITHUB_REPOSITORY_OWNER}/homebrew-iperf3-rs}"
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "${workdir}"' EXIT
+
+          git clone \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${tap_repository}.git" \
+            "${workdir}"
+          mkdir -p "${workdir}/Formula"
+          cp dist/iperf3-rs.rb "${workdir}/Formula/iperf3-rs.rb"
+
+          git -C "${workdir}" config user.name "github-actions[bot]"
+          git -C "${workdir}" config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "${workdir}" add Formula/iperf3-rs.rb
+
+          if git -C "${workdir}" diff --cached --quiet; then
+            echo "Homebrew formula is already up to date"
+            exit 0
+          fi
+
+          git -C "${workdir}" commit -m "iperf3-rs ${RELEASE_TAG}"
+          git -C "${workdir}" push
