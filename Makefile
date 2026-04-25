@@ -11,12 +11,14 @@ CARGO_ENV  := RUSTC="$(RUSTC)" RUSTDOC="$(RUSTDOC)"
 GIT        ?= git
 GH         ?= gh
 DOCKER     ?= docker
+COMPOSE    ?= $(shell if $(DOCKER) compose version >/dev/null 2>&1; then printf '%s compose' '$(DOCKER)'; elif command -v docker-compose >/dev/null 2>&1; then command -v docker-compose; else printf '%s compose' '$(DOCKER)'; fi)
 REMOTE     ?= origin
 MAIN_BRANCH ?= main
 
 APP        := iperf3-rs
 BINDIR     := bin
 DISTDIR    := dist
+TEST_COMPOSE := docker-compose.test.yml
 VERSION    := $(shell awk 'BEGIN { in_pkg = 0 } /^\[package\]$$/ { in_pkg = 1; next } /^\[/ { in_pkg = 0 } in_pkg && $$1 == "version" { gsub(/"/, "", $$3); print $$3; exit }' Cargo.toml)
 TAG        ?= v$(VERSION)
 OS         ?= darwin,linux
@@ -68,6 +70,14 @@ lint: ## Run clippy with warnings treated as errors
 .PHONY: test
 test: ## Run unit tests
 	@$(CARGO_ENV) $(CARGO) test
+
+.PHONY: integration-test
+integration-test: ## Run Docker Compose integration tests
+	@status=0; \
+	cleanup() { $(COMPOSE) -f "$(TEST_COMPOSE)" down --volumes --remove-orphans; }; \
+	trap cleanup EXIT; \
+	$(COMPOSE) -f "$(TEST_COMPOSE)" up --build --abort-on-container-exit --exit-code-from integration integration || status=$$?; \
+	exit $$status
 
 .PHONY: check
 check: fmt-check lint test ## Run formatting, lint, and tests
@@ -264,6 +274,7 @@ help: ## Show this help message
 	@printf "\n\033[1mExamples:\033[0m\n"
 	@printf "  \033[36mmake build\033[0m\n"
 	@printf "  \033[36mmake check\033[0m\n"
+	@printf "  \033[36mmake integration-test\033[0m\n"
 	@printf "  \033[36mmake dist OS=darwin ARCH=arm64\033[0m\n"
 	@printf "  \033[36mmake dist OS=darwin,linux ARCH=amd64,arm64\033[0m\n"
 	@printf "  \033[36mmake -n release\033[0m\n"
