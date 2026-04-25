@@ -414,127 +414,19 @@ Remove persisted Prometheus and Grafana volumes as well:
 docker compose down -v
 ```
 
-## Build details
+## Build notes
 
 The upstream `esnet/iperf3` source is vendored as the `./iperf3` git submodule.
 The Rust build script compiles `libiperf` from that submodule instead of linking
 to a system iperf3 package.
 
-At build time, `build.rs`:
+The final Rust binary links a static `libiperf.a` plus a small C shim from
+`native/`. Release builds use `IPERF3_RS_CONFIGURE_ARGS=--without-openssl` for
+the bundled libiperf build, while Pushgateway HTTPS support comes from Rustls
+with webpki roots.
 
-1. checks that the submodule exists;
-2. configures iperf3 in Cargo's `OUT_DIR`;
-3. requests a static `libiperf` and disables the shared library;
-4. builds only `src/libiperf.la`;
-5. compiles a small C shim from `native/`;
-6. links the Rust binary against the static `libiperf.a`;
-7. exports version metadata such as git describe, commit, commit date, build
-   date, host, target, and profile.
-
-The shim is intentionally small. It exposes the few C operations that Rust needs
-but that are not ergonomic through the public libiperf headers alone, such as
-enabling JSON stream callbacks, rendering upstream help text, preserving server
-loop behavior, reading the current iperf error, and ignoring `SIGPIPE`.
-
-Release builds pass:
-
-```text
-IPERF3_RS_CONFIGURE_ARGS=--without-openssl
-```
-
-This avoids a runtime OpenSSL dependency in the bundled libiperf build. The
-Pushgateway HTTP client uses Rustls with webpki roots.
-
-## Development
-
-Useful commands:
-
-```sh
-make help
-make build
-make install COMPLETION=1
-make fmt CHECK_ONLY=1
-make lint
-make test
-make check
-make integration
-make kani
-make check integration kani
-make dist OS=darwin,linux ARCH=amd64,arm64
-```
-
-`make check` runs formatting, clippy, unit tests, and shell completion syntax
-checks.
-
-`make integration` runs the Docker Compose integration test:
-
-- builds the shared test image unless `SKIP_INTEGRATION_IMAGE_BUILD=1`;
-- starts an iperf3-rs server, an upstream iperf3 reference server, and
-  Pushgateway;
-- verifies upstream client to iperf3-rs server compatibility;
-- verifies iperf3-rs client to upstream server compatibility;
-- verifies iperf3-rs client to iperf3-rs server metrics;
-- verifies server-mode metrics;
-- verifies metrics are visible while a long-running client is still active;
-- verifies UDP, reverse TCP, and bidirectional TCP scenarios.
-
-`make kani` runs Kani harnesses for selected pure logic:
-
-- Pushgateway path segment encoding;
-- retryable status classification;
-- retry delay bounds;
-- Prometheus label-name validation;
-- reserved label rejection;
-- duration arithmetic.
-
-## Release process
-
-Releases are driven by cargo-dist.
-
-Publishing a tag such as `v0.1.0` runs `.github/workflows/release.yml`, which:
-
-1. plans the release with cargo-dist;
-2. builds archives for the configured targets;
-3. generates checksums;
-4. creates the GitHub Release;
-5. uploads release artifacts;
-6. generates a Homebrew formula;
-7. pushes the formula to `mi2428/homebrew-iperf3-rs`.
-
-The Homebrew publishing step requires this repository secret:
-
-```text
-HOMEBREW_TAP_TOKEN
-```
-
-The token needs push access to `mi2428/homebrew-iperf3-rs`. A fine-grained PAT
-with `Contents: Read and write` for that repository is sufficient.
-
-GHCR publishing is handled separately by `.github/workflows/ghcr.yml` when a
-GitHub Release is published. It uses the automatically provided `GITHUB_TOKEN`
-with `packages: write` and does not require a separate GHCR token.
-
-## Project layout
-
-```text
-.
-|-- src/
-|   |-- args.rs          # iperf3-rs option extraction and validation
-|   |-- help.rs          # wrapper help inserted into upstream help text
-|   |-- iperf.rs         # Rust wrapper around libiperf FFI
-|   |-- main.rs          # CLI entry point
-|   |-- metrics.rs       # JSON stream callback and metric extraction
-|   |-- pushgateway.rs   # Pushgateway URL construction and HTTP writes
-|   `-- version.rs       # one-line version rendering
-|-- native/              # small C shim over libiperf
-|-- iperf3/              # esnet/iperf3 git submodule
-|-- completions/         # bash, zsh, and fish completions
-|-- docker/              # Prometheus and Grafana provisioning
-|-- tests/               # Docker Compose integration tests
-|-- Dockerfile           # build, integration-test, and release image stages
-|-- docker-compose.yml   # local observability stack
-`-- docker-compose.test.yml
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local development commands,
+integration tests, Kani checks, release workflow details, and maintainer setup.
 
 ## Current caveats
 
