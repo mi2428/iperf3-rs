@@ -8,6 +8,7 @@ RUSTDOC    := $(shell if command -v rustup >/dev/null 2>&1 && rustup which rustd
 RUSTUP     ?= rustup
 RUSTUP_TOOLCHAIN ?= stable
 CARGO_ENV  := RUSTC="$(RUSTC)" RUSTDOC="$(RUSTDOC)"
+INSTALL    ?= install
 GIT        ?= git
 GH         ?= gh
 DOCKER     ?= docker
@@ -23,6 +24,8 @@ DOCKER_BUILD_METADATA_ARGS := --build-arg IPERF3_RS_BUILD_DATE="$(BUILD_DATE)" -
 
 APP        := iperf3-rs
 BINDIR     := bin
+INSTALL_PREFIX ?= $(HOME)/.local
+INSTALL_BINDIR ?= $(INSTALL_PREFIX)/bin
 DISTDIR    := dist
 TEST_COMPOSE := docker-compose.test.yml
 VERSION    := $(shell awk 'BEGIN { in_pkg = 0 } /^\[package\]$$/ { in_pkg = 1; next } /^\[/ { in_pkg = 0 } in_pkg && $$1 == "version" { gsub(/"/, "", $$3); print $$3; exit }' Cargo.toml)
@@ -68,6 +71,13 @@ build: ## Build the host binary into bin/
 	@cp target/release/$(APP) $(BINDIR)/$(APP)
 	@chmod +x $(BINDIR)/$(APP)
 	@printf 'Wrote %s/%s\n' "$(BINDIR)" "$(APP)"
+
+.PHONY: install
+install: ## Build and install the host binary into INSTALL_BINDIR
+	@$(CARGO_ENV) $(CARGO) build --release
+	@mkdir -p "$(INSTALL_BINDIR)"
+	@$(INSTALL) -m 0755 "target/release/$(APP)" "$(INSTALL_BINDIR)/$(APP)"
+	@printf 'Installed %s\n' "$(INSTALL_BINDIR)/$(APP)"
 
 .PHONY: fmt
 fmt: ## Format Rust sources
@@ -355,12 +365,14 @@ help: ## Show this help message
 	@printf "  \033[36mOS\033[0m       Release OS list: \033[36mdarwin,linux\033[0m\n"
 	@printf "  \033[36mARCH\033[0m     Release arch list: \033[36mamd64,arm64\033[0m\n"
 	@printf "  \033[36mTAG\033[0m      GitHub release tag, defaults to \033[36mv%s\033[0m\n" "$(VERSION)"
+	@printf "  \033[36mINSTALL_BINDIR\033[0m Install directory, defaults to \033[36m%s\033[0m\n" "$(INSTALL_BINDIR)"
 	@printf "  \033[36mGHCR_IMAGE\033[0m Release image, defaults to \033[36m%s\033[0m\n" "$(GHCR_IMAGE)"
 	@printf "  \033[36mGHCR_PLATFORMS\033[0m Release image platforms, defaults to \033[36m%s\033[0m\n" "$(GHCR_PLATFORMS)"
 	@printf "  \033[36mGHCR_TAGS\033[0m Release image tags, defaults to \033[36m%s\033[0m\n" "$(GHCR_TAGS)"
 	@printf "  \033[36mGHCR_LOGIN\033[0m Log in to GHCR with gh auth token before pushing, defaults to \033[36m%s\033[0m\n" "$(GHCR_LOGIN)"
 	@printf "\n\033[1mExamples:\033[0m\n"
 	@printf "  \033[36mmake build\033[0m\n"
+	@printf "  \033[36mmake install\033[0m\n"
 	@printf "  \033[36mmake check\033[0m\n"
 	@printf "  \033[36mmake integration-test\033[0m\n"
 	@printf "  \033[36mmake dist OS=darwin ARCH=arm64\033[0m\n"
