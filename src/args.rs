@@ -164,12 +164,22 @@ fn parse_label(raw: &str) -> Result<(String, String)> {
 }
 
 fn is_valid_label_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
+    is_valid_label_name_bytes(name.as_bytes())
+}
+
+fn is_valid_label_name_bytes(name: &[u8]) -> bool {
+    let Some((&first, rest)) = name.split_first() else {
         return false;
     };
-    (first.is_ascii_alphabetic() || first == '_')
-        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    if !(first.is_ascii_alphabetic() || first == b'_') {
+        return false;
+    }
+    for &byte in rest {
+        if !(byte.is_ascii_alphanumeric() || byte == b'_') {
+            return false;
+        }
+    }
+    true
 }
 
 fn reject_duplicate_labels(labels: &[(String, String)]) -> Result<()> {
@@ -186,6 +196,34 @@ fn reject_duplicate_labels(labels: &[(String, String)]) -> Result<()> {
 
 fn observes_json_output(arg: &str) -> bool {
     arg == "-J" || arg == "--json" || arg == "--json-stream" || arg == "--json-stream-full-output"
+}
+
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    const MAX_LABEL_NAME_BYTES: usize = 4;
+
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn valid_label_name_matches_prometheus_label_shape_for_bounded_ascii() {
+        let len: usize = kani::any();
+        kani::assume(len <= MAX_LABEL_NAME_BYTES);
+        let bytes: [u8; MAX_LABEL_NAME_BYTES] = kani::any();
+
+        let name = &bytes[..len];
+        let expected = if let Some((&first, rest)) = name.split_first() {
+            let mut ok = first.is_ascii_alphabetic() || first == b'_';
+            for &byte in rest {
+                ok &= byte.is_ascii_alphanumeric() || byte == b'_';
+            }
+            ok
+        } else {
+            false
+        };
+
+        assert_eq!(is_valid_label_name_bytes(name), expected);
+    }
 }
 
 #[cfg(test)]

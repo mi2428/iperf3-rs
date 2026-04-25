@@ -94,14 +94,68 @@ fn encode_path_segment(raw: &str) -> String {
     // the Pushgateway grouping path is assembled onto any existing base path.
     let mut encoded = String::new();
     for byte in raw.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char)
-            }
-            _ => encoded.push_str(&format!("%{byte:02X}")),
+        let encoded_byte = encode_path_byte(byte);
+        for &byte in &encoded_byte.bytes[..encoded_byte.len] {
+            encoded.push(byte as char);
         }
     }
     encoded
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EncodedPathByte {
+    bytes: [u8; 3],
+    len: usize,
+}
+
+fn encode_path_byte(byte: u8) -> EncodedPathByte {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    if is_unreserved_path_byte(byte) {
+        return EncodedPathByte {
+            bytes: [byte, 0, 0],
+            len: 1,
+        };
+    }
+
+    EncodedPathByte {
+        bytes: [b'%', HEX[(byte >> 4) as usize], HEX[(byte & 0x0f) as usize]],
+        len: 3,
+    }
+}
+
+fn is_unreserved_path_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~'
+    )
+}
+
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn path_byte_encoding_escapes_reserved_bytes() {
+        let byte: u8 = kani::any();
+        let encoded = encode_path_byte(byte);
+
+        if is_unreserved_path_byte(byte) {
+            assert_eq!(encoded.len, 1);
+            assert_eq!(encoded.bytes[0], byte);
+        } else {
+            assert_eq!(encoded.len, 3);
+            assert_eq!(encoded.bytes[0], b'%');
+            assert!(encoded.bytes[1].is_ascii_hexdigit());
+            assert!(encoded.bytes[2].is_ascii_hexdigit());
+        }
+
+        for i in 0..encoded.len {
+            assert_ne!(encoded.bytes[i], b'/');
+            assert_ne!(encoded.bytes[i], b' ');
+        }
+    }
 }
 
 #[cfg(test)]
