@@ -1,7 +1,7 @@
 use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -13,6 +13,10 @@ const PUSH_JOB: &str = "integration";
 const PUSH_TEST: &str = "self";
 const CLIENT_SCENARIO: &str = "tcp";
 const SERVER_SCENARIO: &str = "tcp-server";
+const LIVE_SCENARIO: &str = "tcp-live";
+const UDP_SCENARIO: &str = "udp";
+const REVERSE_SCENARIO: &str = "tcp-reverse";
+const BIDIR_SCENARIO: &str = "tcp-bidir";
 
 // This integration test exercises the Docker Compose test topology end to end.
 //
@@ -38,7 +42,12 @@ const SERVER_SCENARIO: &str = "tcp-server";
 // - an iperf3-rs client can complete a JSON test against upstream iperf3;
 // - an iperf3-rs client run from the metrics-enabled `client-rs` service
 //   publishes non-zero `iperf3_bytes` and `iperf3_bandwidth` samples with the
-//   expected client-mode integration labels.
+//   expected client-mode integration labels;
+// - client metrics appear in Pushgateway while a longer run is still active;
+// - the long-running iperf3-rs server continues pushing metrics after a later
+//   client connection;
+// - UDP, reverse TCP, and bidirectional TCP runs all complete and publish
+//   client-mode metrics through the same environment-based Pushgateway path.
 #[test]
 #[ignore = "requires Docker"]
 fn compose_interop_and_pushgateway_metrics() {
@@ -68,7 +77,19 @@ fn compose_interop_and_pushgateway_metrics() {
     // above should leave a server-side metric group in Pushgateway. This keeps
     // the topology close to the real deployment shape instead of adding a
     // dedicated one-off metrics server.
-    wait_for_pushgateway_metrics(&project, SERVER_SCENARIO, "server");
+    wait_for_pushgateway_metrics(
+        &project,
+        SERVER_SCENARIO,
+        "server",
+        &["iperf3_bytes", "iperf3_bandwidth"],
+    );
+    let first_server_push = wait_for_metric_value_gt(
+        &project,
+        "push_time_seconds",
+        SERVER_SCENARIO,
+        "server",
+        0.0,
+    );
 
     // Interop check 2: the iperf3-rs client must be able to talk to the
     // upstream iperf3 server and return a complete JSON summary containing
@@ -98,7 +119,136 @@ fn compose_interop_and_pushgateway_metrics() {
     // The metric names prove that the pusher emitted the expected metric
     // families; the label filters prove they came from this integration
     // scenario rather than from another stale Pushgateway group.
-    wait_for_pushgateway_metrics(&project, CLIENT_SCENARIO, "client");
+    wait_for_pushgateway_metrics(
+        &project,
+        CLIENT_SCENARIO,
+        "client",
+        &["iperf3_bytes", "iperf3_bandwidth"],
+    );
+
+    // The same long-running server should keep its callback and Pushgateway
+    // configuration across client connections. Pushgateway maintains
+    // `push_time_seconds` per grouping key, so requiring it to increase after
+    // the second connection catches regressions where server callbacks only
+    // work for the first accepted test.
+    wait_for_metric_value_gt(
+        &project,
+        "push_time_seconds",
+        SERVER_SCENARIO,
+        "server",
+        first_server_push,
+    );
+
+    // Live push check: the client process runs long enough that metrics should
+    // be visible before the iperf command exits. This directly protects the
+    // interval-push behavior rather than only observing the final retained
+    // Pushgateway sample after process completion.
+    let live_args = [
+        "iperf3-rs",
+        "--scenario",
+        LIVE_SCENARIO,
+        "-c",
+        "server-rs",
+        "-t",
+        "6",
+        "-i",
+        "1",
+    ];
+    let mut live_client = project.spawn_client(&live_args);
+    wait_for_pushgateway_metrics(
+        &project,
+        LIVE_SCENARIO,
+        "client",
+        &["iperf3_bytes", "iperf3_bandwidth"],
+    );
+    assert!(
+        live_client
+            .try_wait()
+            .expect("failed to poll live client")
+            .is_none(),
+        "live client exited before interval metrics were observed"
+    );
+    assert_child_success(&live_args, live_client);
+
+    // UDP uses different interval fields from TCP. Requiring packets in
+    // addition to bytes and bandwidth ensures the UDP-specific metric mapping
+    // is exercised by the Docker integration path.
+    let udp = retry_json_client("iperf3-rs UDP client to iperf3-rs server", || {
+        project.client_output(&[
+            "iperf3-rs",
+            "--scenario",
+            UDP_SCENARIO,
+            "-c",
+            "server-rs",
+            "-u",
+            "-b",
+            "1M",
+            "-t",
+            "3",
+            "-i",
+            "1",
+            "-J",
+        ])
+    });
+    assert_iperf_summary_has_traffic(&udp);
+    wait_for_pushgateway_metrics(
+        &project,
+        UDP_SCENARIO,
+        "client",
+        &["iperf3_bytes", "iperf3_bandwidth", "iperf3_packets"],
+    );
+
+    // Reverse mode flips the traffic direction while retaining the client
+    // control path. It is a common iperf3 workflow and exercises a different
+    // JSON shape from a plain sender-side TCP run.
+    let reverse = retry_json_client("iperf3-rs reverse TCP client", || {
+        project.client_output(&[
+            "iperf3-rs",
+            "--scenario",
+            REVERSE_SCENARIO,
+            "-c",
+            "server-rs",
+            "-R",
+            "-t",
+            "3",
+            "-i",
+            "1",
+            "-J",
+        ])
+    });
+    assert_iperf_summary_has_traffic(&reverse);
+    wait_for_pushgateway_metrics(
+        &project,
+        REVERSE_SCENARIO,
+        "client",
+        &["iperf3_bytes", "iperf3_bandwidth"],
+    );
+
+    // Bidirectional mode emits both forward and reverse stream data. This
+    // protects the summary/fallback parsing used by the metrics reporter for
+    // `sum_bidir_reverse`-style interval events.
+    let bidir = retry_json_client("iperf3-rs bidirectional TCP client", || {
+        project.client_output(&[
+            "iperf3-rs",
+            "--scenario",
+            BIDIR_SCENARIO,
+            "-c",
+            "server-rs",
+            "--bidir",
+            "-t",
+            "3",
+            "-i",
+            "1",
+            "-J",
+        ])
+    });
+    assert_iperf_summary_has_traffic(&bidir);
+    wait_for_pushgateway_metrics(
+        &project,
+        BIDIR_SCENARIO,
+        "client",
+        &["iperf3_bytes", "iperf3_bandwidth"],
+    );
 }
 
 struct ComposeProject {
@@ -139,6 +289,16 @@ impl ComposeProject {
     fn run_client(&self, args: &[&str]) {
         let output = self.client_output(args);
         assert_success(args, &output);
+    }
+
+    fn spawn_client(&self, args: &[&str]) -> Child {
+        let mut compose_args = vec!["run", "--rm", "client-rs"];
+        compose_args.extend_from_slice(args);
+        self.base_command(&compose_args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to start docker compose client")
     }
 
     fn client_output(&self, args: &[&str]) -> Output {
@@ -303,7 +463,12 @@ fn json_path_number(json: &Value, path: &[&str]) -> Option<f64> {
     value.as_f64().or_else(|| value.as_u64().map(|v| v as f64))
 }
 
-fn wait_for_pushgateway_metrics(project: &ComposeProject, scenario: &str, mode: &str) {
+fn wait_for_pushgateway_metrics(
+    project: &ComposeProject,
+    scenario: &str,
+    mode: &str,
+    required_metrics: &[&str],
+) {
     wait_for(
         &format!("pushgateway metrics for {scenario}/{mode}"),
         || {
@@ -314,8 +479,9 @@ fn wait_for_pushgateway_metrics(project: &ComposeProject, scenario: &str, mode: 
             }
 
             let metrics = String::from_utf8_lossy(&output.stdout);
-            if metric_value_gt_zero(&metrics, "iperf3_bytes", scenario, mode)
-                && metric_value_gt_zero(&metrics, "iperf3_bandwidth", scenario, mode)
+            if required_metrics
+                .iter()
+                .all(|name| metric_value_gt_zero(&metrics, name, scenario, mode))
             {
                 output
             } else {
@@ -323,6 +489,34 @@ fn wait_for_pushgateway_metrics(project: &ComposeProject, scenario: &str, mode: 
             }
         },
     );
+}
+
+fn wait_for_metric_value_gt(
+    project: &ComposeProject,
+    name: &str,
+    scenario: &str,
+    mode: &str,
+    min: f64,
+) -> f64 {
+    let output = wait_for(
+        &format!("pushgateway {name} for {scenario}/{mode} > {min}"),
+        || {
+            let output =
+                project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
+            if !output.status.success() {
+                return output;
+            }
+
+            let metrics = String::from_utf8_lossy(&output.stdout);
+            match metric_value(&metrics, name, scenario, mode) {
+                Some(value) if value > min => output,
+                _ => failed_output_like(output),
+            }
+        },
+    );
+    let metrics = String::from_utf8_lossy(&output.stdout);
+    metric_value(&metrics, name, scenario, mode)
+        .expect("metric value should exist after successful wait")
 }
 
 fn failed_output_like(output: Output) -> Output {
@@ -337,6 +531,12 @@ fn failed_output_like(output: Output) -> Output {
 }
 
 fn metric_value_gt_zero(metrics: &str, name: &str, scenario: &str, mode: &str) -> bool {
+    metric_value(metrics, name, scenario, mode)
+        .map(|value| value > 0.0)
+        .unwrap_or_default()
+}
+
+fn metric_value(metrics: &str, name: &str, scenario: &str, mode: &str) -> Option<f64> {
     // Pushgateway exposes all retained groups on /metrics, so the labels are
     // part of the success condition. They scope the assertion to the iperf3-rs
     // run performed above.
@@ -354,7 +554,7 @@ fn metric_value_gt_zero(metrics: &str, name: &str, scenario: &str, mode: &str) -
         .filter(|line| line.contains(&mode_label))
         .filter_map(|line| line.split_whitespace().last())
         .filter_map(|value| value.parse::<f64>().ok())
-        .any(|value| value > 0.0)
+        .next()
 }
 
 fn assert_success(args: &[&str], output: &Output) {
@@ -365,4 +565,11 @@ fn assert_success(args: &[&str], output: &Output) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn assert_child_success(args: &[&str], child: Child) {
+    let output = child
+        .wait_with_output()
+        .expect("failed to wait for integration command");
+    assert_success(args, &output);
 }
