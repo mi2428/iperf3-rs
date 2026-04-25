@@ -2,6 +2,7 @@ mod args;
 mod iperf;
 mod metrics;
 mod pushgateway;
+mod version;
 
 use std::env;
 use std::process::ExitCode;
@@ -33,6 +34,11 @@ fn run() -> Result<()> {
         eprintln!("{err:#}");
         std::process::exit(EXIT_OPTION_ERROR.into());
     })?;
+    if app.show_version {
+        let libiperf_version = iperf::libiperf_version();
+        print!("{}", version::render(&version::current(&libiperf_version)));
+        return Ok(());
+    }
 
     let mut test = IperfTest::new().context("failed to create iperf test")?;
     test.parse_arguments(&iperf_args)?;

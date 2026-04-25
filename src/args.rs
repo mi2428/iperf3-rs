@@ -9,6 +9,7 @@ pub struct AppOptions {
     pub push_job: String,
     pub push_labels: Vec<(String, String)>,
     pub mirror_json: bool,
+    pub show_version: bool,
 }
 
 pub fn extract_app_options(args: Vec<String>) -> Result<(AppOptions, Vec<String>)> {
@@ -35,6 +36,7 @@ fn extract_app_options_with_env(
     let mut saw_push_job = false;
     let mut saw_push_label = !push_labels.is_empty();
     let mut mirror_json = false;
+    let mut show_version = false;
 
     let rest: Vec<String> = iter.collect();
     let mut i = 0;
@@ -48,6 +50,12 @@ fn extract_app_options_with_env(
 
         if observes_json_output(arg) {
             mirror_json = true;
+        }
+
+        if is_version_option(arg) {
+            show_version = true;
+            i += 1;
+            continue;
         }
 
         if let Some((key, value)) = split_long_value(arg) {
@@ -87,13 +95,13 @@ fn extract_app_options_with_env(
     }
 
     let push_url = push_url.as_deref().map(parse_url).transpose()?;
-    if push_url.is_none() && saw_push_job {
+    if !show_version && push_url.is_none() && saw_push_job {
         bail!("--push.job requires --push.url or PUSH_URL");
     }
-    if push_url.is_none() && saw_push_label {
+    if !show_version && push_url.is_none() && saw_push_label {
         bail!("--push.label requires --push.url or PUSH_URL");
     }
-    if push_url.is_some() && push_job.is_empty() {
+    if !show_version && push_url.is_some() && push_job.is_empty() {
         bail!("--push.job must not be empty when --push.url is set");
     }
     reject_duplicate_labels(&push_labels)?;
@@ -104,6 +112,7 @@ fn extract_app_options_with_env(
             push_job,
             push_labels,
             mirror_json,
+            show_version,
         },
         pass_through,
     ))
@@ -196,6 +205,10 @@ fn reject_duplicate_labels(labels: &[(String, String)]) -> Result<()> {
 
 fn observes_json_output(arg: &str) -> bool {
     arg == "-J" || arg == "--json" || arg == "--json-stream" || arg == "--json-stream-full-output"
+}
+
+fn is_version_option(arg: &str) -> bool {
+    arg == "-v" || arg == "--version"
 }
 
 #[cfg(kani)]
@@ -403,5 +416,37 @@ mod tests {
             let (app, _) = extract_app_options_with_env(args, |_| None).unwrap();
             assert!(app.mirror_json, "{flag} should mirror JSON output");
         }
+    }
+
+    #[test]
+    fn strips_version_options() {
+        for flag in ["-v", "--version"] {
+            let args = vec![
+                "iperf3-rs".to_owned(),
+                flag.to_owned(),
+                "-c".to_owned(),
+                "127.0.0.1".to_owned(),
+            ];
+
+            let (app, iperf) = extract_app_options_with_env(args, |_| None).unwrap();
+            assert!(
+                app.show_version,
+                "{flag} should request wrapper version output"
+            );
+            assert_eq!(iperf, ["iperf3-rs", "-c", "127.0.0.1"]);
+        }
+    }
+
+    #[test]
+    fn version_request_skips_pushgateway_consistency_checks() {
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "--version".to_owned(),
+            "--push.label".to_owned(),
+            "scenario=ignored".to_owned(),
+        ];
+
+        let (app, _) = extract_app_options_with_env(args, |_| None).unwrap();
+        assert!(app.show_version);
     }
 }

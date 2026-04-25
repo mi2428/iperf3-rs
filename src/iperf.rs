@@ -29,6 +29,7 @@ mod ffi {
         pub fn iperf_reset_test(test: *mut iperf_test);
         pub fn iperf_get_test_role(test: *mut iperf_test) -> c_char;
         pub fn iperf_get_test_one_off(test: *mut iperf_test) -> c_int;
+        pub fn iperf_get_iperf_version() -> *const c_char;
 
         pub fn iperf3rs_enable_json_stream(test: *mut iperf_test);
         pub fn iperf3rs_set_json_callback(test: *mut iperf_test, callback: Option<JsonCallback>);
@@ -167,6 +168,16 @@ pub fn current_error() -> String {
     if ptr.is_null() {
         let errno = unsafe { ffi::iperf3rs_current_errno() };
         return format!("unknown libiperf error ({errno})");
+    }
+    unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+pub fn libiperf_version() -> String {
+    let ptr = unsafe { ffi::iperf_get_iperf_version() };
+    if ptr.is_null() {
+        return "unknown".to_owned();
     }
     unsafe { CStr::from_ptr(ptr) }
         .to_string_lossy()
