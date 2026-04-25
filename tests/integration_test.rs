@@ -47,13 +47,15 @@ const BIDIR_SCENARIO: &str = "tcp-bidir";
 // - an iperf3-rs client run from the metrics-enabled `client-rs` service
 //   publishes non-zero `iperf3_bytes` and `iperf3_bandwidth` samples with the
 //   expected client-mode integration labels;
+// - TCP runs expose sender-side TCP_INFO metrics while UDP-only metrics stay at
+//   zero for TCP scenarios;
 // - a metrics-enabled iperf3-rs client without `-J` keeps normal
 //   human-readable stdout;
 // - client metrics appear in Pushgateway while a longer run is still active;
 // - the long-running iperf3-rs server continues pushing metrics after a later
 //   client connection;
 // - UDP, reverse TCP, and bidirectional TCP runs all complete and publish
-//   client-mode metrics through the same environment-based Pushgateway path.
+//   protocol-specific metrics through the same environment-based Pushgateway path.
 #[test]
 #[ignore = "requires Docker"]
 fn compose_interop_and_pushgateway_metrics() {
@@ -100,6 +102,21 @@ fn compose_interop_and_pushgateway_metrics() {
         0.0,
     );
     assert_metric_value_eq(&project, "iperf3_jitter", SERVER_SCENARIO, "server", 0.0);
+    assert_metric_value_eq(
+        &project,
+        "iperf3_tcp_rtt_seconds",
+        SERVER_SCENARIO,
+        "server",
+        0.0,
+    );
+    assert_metric_value_eq(
+        &project,
+        "iperf3_udp_out_of_order_packets",
+        SERVER_SCENARIO,
+        "server",
+        0.0,
+    );
+    assert_metric_value_eq(&project, "iperf3_omitted", SERVER_SCENARIO, "server", 0.0);
     wait_for_service_log_contains(&project, "server-rs", "Server listening on");
     wait_for_service_log_contains(&project, "server-rs", "[ ID]");
     let first_server_push = wait_for_metric_value_gt(
@@ -153,7 +170,7 @@ fn compose_interop_and_pushgateway_metrics() {
     );
     assert_human_iperf_output(&iperf3rs_to_iperf3rs_output);
 
-    // Scrape Pushgateway and require non-zero traffic and bandwidth samples.
+    // Scrape Pushgateway and require non-zero traffic plus TCP_INFO samples.
     // The metric names prove that the pusher emitted the expected metric
     // families; the label filters prove they came from this integration
     // scenario rather than from another stale Pushgateway group.
@@ -161,7 +178,15 @@ fn compose_interop_and_pushgateway_metrics() {
         &project,
         CLIENT_SCENARIO,
         "client",
-        &["iperf3_bytes", "iperf3_bandwidth"],
+        &[
+            "iperf3_bytes",
+            "iperf3_bandwidth",
+            "iperf3_tcp_rtt_seconds",
+            "iperf3_tcp_rttvar_seconds",
+            "iperf3_tcp_snd_cwnd_bytes",
+            "iperf3_tcp_snd_wnd_bytes",
+            "iperf3_tcp_pmtu_bytes",
+        ],
     );
     assert_metric_value_eq(&project, "iperf3_packets", CLIENT_SCENARIO, "client", 0.0);
     assert_metric_value_eq(
@@ -172,6 +197,14 @@ fn compose_interop_and_pushgateway_metrics() {
         0.0,
     );
     assert_metric_value_eq(&project, "iperf3_jitter", CLIENT_SCENARIO, "client", 0.0);
+    assert_metric_value_eq(
+        &project,
+        "iperf3_udp_out_of_order_packets",
+        CLIENT_SCENARIO,
+        "client",
+        0.0,
+    );
+    assert_metric_value_eq(&project, "iperf3_omitted", CLIENT_SCENARIO, "client", 0.0);
 
     // The same long-running server should keep its callback and Pushgateway
     // configuration across client connections. Pushgateway maintains
@@ -244,9 +277,23 @@ fn compose_interop_and_pushgateway_metrics() {
         "client",
         &["iperf3_bytes", "iperf3_bandwidth", "iperf3_packets"],
     );
+    assert_metric_value_eq(
+        &project,
+        "iperf3_udp_out_of_order_packets",
+        UDP_SCENARIO,
+        "client",
+        0.0,
+    );
     // Jitter is measured by the UDP receiver, so it should appear on the
     // metrics-enabled server rather than on the sending client.
     wait_for_metric_value_gt(&project, "iperf3_jitter", SERVER_SCENARIO, "server", 0.0);
+    assert_metric_value_eq(
+        &project,
+        "iperf3_udp_out_of_order_packets",
+        SERVER_SCENARIO,
+        "server",
+        0.0,
+    );
 
     // Reverse mode flips the traffic direction while retaining the client
     // control path. It is a common iperf3 workflow and exercises a different
