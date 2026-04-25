@@ -71,11 +71,16 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
         }
 
         bytes += (double)interval->bytes_transferred;
-        packets += (double)interval->interval_packet_count;
-        error_packets += (double)interval->interval_cnt_error;
-        jitter_seconds += interval->jitter;
-        if (test->protocol->id == Ptcp && test->sender_has_retransmits == 1 && stream_must_be_sender) {
-            tcp_retransmits += (double)interval->interval_retrans;
+        if (test->protocol->id == Ptcp) {
+            if (test->sender_has_retransmits == 1 && stream_must_be_sender) {
+                tcp_retransmits += (double)interval->interval_retrans;
+            }
+        } else if (test->protocol->id == Pudp) {
+            packets += (double)interval->interval_packet_count;
+            error_packets += (double)interval->interval_cnt_error;
+            if (!stream_must_be_sender) {
+                jitter_seconds += interval->jitter;
+            }
         }
         if (matched_streams == 0) {
             interval_duration = interval->interval_duration;
@@ -90,7 +95,9 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
     if (interval_duration > 0.0) {
         bandwidth_bits_per_second = bytes * 8.0 / interval_duration;
     }
-    jitter_seconds /= matched_streams;
+    if (test->protocol->id == Pudp && !stream_must_be_sender) {
+        jitter_seconds /= matched_streams;
+    }
 
     interval_metrics_callback(
         test,

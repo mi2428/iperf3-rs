@@ -91,6 +91,15 @@ fn compose_interop_and_pushgateway_metrics() {
         "server",
         &["iperf3_bytes", "iperf3_bandwidth"],
     );
+    assert_metric_value_eq(&project, "iperf3_packets", SERVER_SCENARIO, "server", 0.0);
+    assert_metric_value_eq(
+        &project,
+        "iperf3_error_packets",
+        SERVER_SCENARIO,
+        "server",
+        0.0,
+    );
+    assert_metric_value_eq(&project, "iperf3_jitter", SERVER_SCENARIO, "server", 0.0);
     wait_for_service_log_contains(&project, "server-rs", "Server listening on");
     wait_for_service_log_contains(&project, "server-rs", "[ ID]");
     let first_server_push = wait_for_metric_value_gt(
@@ -154,6 +163,15 @@ fn compose_interop_and_pushgateway_metrics() {
         "client",
         &["iperf3_bytes", "iperf3_bandwidth"],
     );
+    assert_metric_value_eq(&project, "iperf3_packets", CLIENT_SCENARIO, "client", 0.0);
+    assert_metric_value_eq(
+        &project,
+        "iperf3_error_packets",
+        CLIENT_SCENARIO,
+        "client",
+        0.0,
+    );
+    assert_metric_value_eq(&project, "iperf3_jitter", CLIENT_SCENARIO, "client", 0.0);
 
     // The same long-running server should keep its callback and Pushgateway
     // configuration across client connections. Pushgateway maintains
@@ -199,9 +217,9 @@ fn compose_interop_and_pushgateway_metrics() {
     );
     assert_child_success(&live_args, live_client);
 
-    // UDP uses different interval fields from TCP. Requiring packets in
-    // addition to bytes and bandwidth ensures the UDP-specific metric mapping
-    // is exercised by the Docker integration path.
+    // UDP uses different interval fields from TCP. Requiring packets in addition
+    // to bytes and bandwidth ensures the sender-side UDP metric mapping is
+    // exercised by the Docker integration path.
     let udp = retry_json_client("iperf3-rs UDP client to iperf3-rs server", || {
         project.client_output(&[
             "iperf3-rs",
@@ -226,6 +244,9 @@ fn compose_interop_and_pushgateway_metrics() {
         "client",
         &["iperf3_bytes", "iperf3_bandwidth", "iperf3_packets"],
     );
+    // Jitter is measured by the UDP receiver, so it should appear on the
+    // metrics-enabled server rather than on the sending client.
+    wait_for_metric_value_gt(&project, "iperf3_jitter", SERVER_SCENARIO, "server", 0.0);
 
     // Reverse mode flips the traffic direction while retaining the client
     // control path. It is a common iperf3 workflow and exercises a different
@@ -812,6 +833,25 @@ fn wait_for_metric_value_gt(
     let metrics = String::from_utf8_lossy(&output.stdout);
     metric_value(&metrics, name, scenario, mode)
         .expect("metric value should exist after successful wait")
+}
+
+fn assert_metric_value_eq(
+    project: &ComposeProject,
+    name: &str,
+    scenario: &str,
+    mode: &str,
+    expected: f64,
+) {
+    let output = project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
+    assert_command_success("pushgateway metrics scrape", &output);
+    let metrics = String::from_utf8_lossy(&output.stdout);
+    let actual = metric_value(&metrics, name, scenario, mode).unwrap_or_else(|| {
+        panic!("missing metric {name} for {scenario}/{mode}\nmetrics:\n{metrics}")
+    });
+    assert_eq!(
+        actual, expected,
+        "unexpected metric {name} for {scenario}/{mode}\nmetrics:\n{metrics}"
+    );
 }
 
 fn failed_output_like(output: Output) -> Output {
