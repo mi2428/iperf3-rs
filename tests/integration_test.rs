@@ -5,7 +5,7 @@ use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const COMPOSE_FILE: &str = "docker-compose.test.yml";
 const PUSHGATEWAY_URL: &str = "http://pushgateway:9091";
@@ -25,7 +25,8 @@ const SERVER_SCENARIO: &str = "tcp-server";
 // - `pushgateway`: a Prometheus Pushgateway instance, used to verify that
 //   iperf3-rs can publish interval metrics during client and server runs.
 // - `client-rs`: the test runner image, which contains both iperf3-rs and the
-//   upstream iperf3 binary so the same container can drive all scenarios.
+//   upstream iperf3 binary and has Pushgateway defaults in its environment so
+//   the same container can drive all scenarios.
 //
 // The test succeeds only when all of the following are true:
 // - the Compose image builds and the server services start;
@@ -35,7 +36,7 @@ const SERVER_SCENARIO: &str = "tcp-server";
 //   `iperf3_bytes` and `iperf3_bandwidth` samples with the expected
 //   server-mode integration labels;
 // - an iperf3-rs client can complete a JSON test against upstream iperf3;
-// - an iperf3-rs client run with `--json-stream` and Pushgateway options
+// - an iperf3-rs client run from the metrics-enabled `client-rs` service
 //   publishes non-zero `iperf3_bytes` and `iperf3_bandwidth` samples with the
 //   expected client-mode integration labels.
 #[test]
@@ -70,25 +71,28 @@ fn compose_interop_and_pushgateway_metrics() {
 
     // Interop check 2: the iperf3-rs client must be able to talk to the
     // upstream iperf3 server and return a complete JSON summary containing
-    // traffic. This covers the opposite client/server direction.
+    // traffic. This covers the opposite client/server direction. The scenario
+    // override keeps metrics from this reference-server run separate from the
+    // iperf3-rs-to-iperf3-rs client metrics asserted below.
     let iperf3rs_to_upstream = retry_json_client("iperf3-rs client to upstream server", || {
-        project.client_output(&["iperf3-rs", "-c", "reference", "-t", "1", "-J"])
+        project.client_output(&[
+            "iperf3-rs",
+            "--scenario",
+            "tcp-reference",
+            "-c",
+            "reference",
+            "-t",
+            "1",
+            "-J",
+        ])
     });
     assert_iperf_summary_has_traffic(&iperf3rs_to_upstream);
 
     // Metrics check: run iperf3-rs against iperf3-rs with one-second JSON
-    // streaming enabled. The run should push interval metrics to Pushgateway
-    // under the integration labels below.
+    // streaming enabled. Pushgateway configuration comes from the `client-rs`
+    // service environment, so the command only needs normal iperf options.
     project.run_client(&[
         "iperf3-rs",
-        "--push-gateway",
-        PUSHGATEWAY_URL,
-        "--job",
-        PUSH_JOB,
-        "--test",
-        PUSH_TEST,
-        "--scenario",
-        CLIENT_SCENARIO,
         "-c",
         "server-rs",
         "-t",
@@ -241,10 +245,38 @@ fn parse_iperf_summary(output: &Output) -> Option<Value> {
     // A valid interop result must be a complete iperf JSON document. Requiring
     // both `start` and `end` avoids accepting partial output, and requiring
     // non-zero bytes proves that a real test stream ran.
-    let json: Value = serde_json::from_slice(&output.stdout).ok()?;
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .ok()
+        .or_else(|| parse_iperf_json_stream_summary(&output.stdout))?;
+    complete_iperf_summary(json)
+}
+
+fn complete_iperf_summary(json: Value) -> Option<Value> {
     let has_start = json.get("start").is_some();
     let has_end = json.get("end").is_some();
     (has_start && has_end && iperf_summary_bytes(&json) > 0.0).then_some(json)
+}
+
+fn parse_iperf_json_stream_summary(raw: &[u8]) -> Option<Value> {
+    let text = std::str::from_utf8(raw).ok()?;
+    let mut start = None;
+    let mut end = None;
+
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let Ok(event) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        match event.get("event").and_then(Value::as_str) {
+            Some("start") => start = event.get("data").cloned(),
+            Some("end") => end = event.get("data").cloned(),
+            _ => {}
+        }
+    }
+
+    Some(json!({
+        "start": start?,
+        "end": end?,
+    }))
 }
 
 fn assert_iperf_summary_has_traffic(json: &Value) {

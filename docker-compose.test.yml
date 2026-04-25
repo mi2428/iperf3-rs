@@ -35,6 +35,11 @@ services:
       dockerfile: Dockerfile
       target: integration-test
     image: iperf3-rs:test
+    environment:
+      PUSH_GATEWAY_URL: http://pushgateway:9091
+      JOB_NAME: integration
+      TEST_NAME: self
+      SCENARIO_NAME: tcp
     depends_on:
       - server-rs
       - reference
