@@ -1,0 +1,77 @@
+#compdef iperf3-rs
+
+local context state line
+typeset -A opt_args
+
+_arguments -s -S \
+  '(-c --client)'{-s,--server}'[run in server mode]' \
+  '(-s --server)'{-c,--client}'[run in client mode]:host:_hosts' \
+  {-p,--port}'[server port to listen on or connect to]:port:' \
+  {-f,--format}'[report format]:format:(k m g t K M G T)' \
+  {-i,--interval}'[seconds between periodic throughput reports]:seconds:' \
+  {-I,--pidfile}'[write PID file]:file:_files' \
+  {-F,--file}'[transmit or receive the specified file]:file:_files' \
+  {-B,--bind}'[bind to the address or interface]:host:_hosts' \
+  '--bind-dev[bind to a network interface]:device:_net_interfaces' \
+  {-V,--verbose}'[more detailed output]' \
+  {-J,--json}'[output in JSON format]' \
+  '--json-stream[output in line-delimited JSON format]' \
+  '--json-stream-full-output[output in JSON format with JSON streams enabled]' \
+  '--logfile[send output to a log file]:file:_files' \
+  '--forceflush[force flushing output at every interval]' \
+  '--timestamps[emit a timestamp at the start of each output line]:format:' \
+  '--rcv-timeout[idle timeout for receiving data in milliseconds]:milliseconds:' \
+  {-d,--debug}'[emit debugging output]:level:(1 2 3 4)' \
+  {-v,--version}'[show version information and quit]' \
+  {-h,--help}'[show help and quit]' \
+  {-D,--daemon}'[run the server as a daemon]' \
+  '-1[handle one client connection then exit]' \
+  '--one-off[handle one client connection then exit]' \
+  '--server-bitrate-limit[server total bit rate limit]:rate:' \
+  '--idle-timeout[restart idle server after seconds]:seconds:' \
+  '--server-max-duration[maximum test duration against the server]:seconds:' \
+  '--rsa-private-key-path[path to RSA private key]:file:_files' \
+  '--authorized-users-path[path to authorized users file]:file:_files' \
+  '--time-skew-threshold[time skew threshold for authentication]:seconds:' \
+  '--use-pkcs1-padding[use PKCS#1 padding]' \
+  {-u,--udp}'[use UDP rather than TCP]' \
+  '--connect-timeout[timeout for control connection setup]:milliseconds:' \
+  {-b,--bitrate}'[target bitrate]:bitrate:' \
+  '--pacing-timer[server timing for pacing]:microseconds:' \
+  {-t,--time}'[time to transmit for]:seconds:' \
+  {-n,--bytes}'[transmit this many bytes]:bytes:' \
+  {-k,--blockcount}'[transmit this many blocks]:blocks:' \
+  {-l,--length}'[length of buffer to read or write]:length:' \
+  '--cport[bind to a specific client port]:port:' \
+  {-P,--parallel}'[number of parallel client streams]:streams:' \
+  {-R,--reverse}'[run in reverse mode]' \
+  '--bidir[run in bidirectional mode]' \
+  {-w,--window}'[set socket buffer sizes]:size:' \
+  {-M,--set-mss}'[set maximum segment size]:bytes:' \
+  {-N,--no-delay}'[disable Nagle algorithm]' \
+  '-4[only use IPv4]' \
+  '--version4[only use IPv4]' \
+  '-6[only use IPv6]' \
+  '--version6[only use IPv6]' \
+  {-S,--tos}'[set IP type of service]:tos:' \
+  '--dscp[set IP DSCP value]:dscp:' \
+  {-Z,--zerocopy}'[use zero-copy send]' \
+  '--skip-rx-copy[ignore received messages using MSG_TRUNC]' \
+  {-O,--omit}'[omit pre-test seconds]:seconds:' \
+  {-T,--title}'[prefix every output line with this string]:title:' \
+  '--extra-data[data string to include in JSON]:data:' \
+  '--get-server-output[get results from server]' \
+  '--udp-counters-64bit[use 64-bit counters in UDP packets]' \
+  '--gsro[enable UDP GSO/GRO]' \
+  '--repeating-payload[use repeating payload pattern]' \
+  '--dont-fragment[set IPv4 Don'\''t Fragment flag]' \
+  '--username[username for authentication]:username:' \
+  '--rsa-public-key-path[path to RSA public key]:file:_files' \
+  '--push.url[push interval metrics to a Pushgateway URL]:URL:_urls' \
+  '--push.job[Pushgateway job name]:job:(iperf3)' \
+  '*--push.label[add a Pushgateway grouping label]:KEY=VALUE:' \
+  '--push.timeout[per-request Pushgateway timeout]:duration:(500ms 1s 5s 10s 30s 1m)' \
+  '--push.retries[retry failed Pushgateway requests]:retries:(0 1 2 3 5 10)' \
+  '--push.user-agent[HTTP User-Agent for Pushgateway requests]:value:' \
+  '--push.metric-prefix[Prometheus metric name prefix]:prefix:(iperf3)' \
+  '*:argument:_default'

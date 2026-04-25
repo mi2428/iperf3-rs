@@ -24,8 +24,12 @@ DOCKER_BUILD_METADATA_ARGS := --build-arg IPERF3_RS_BUILD_DATE="$(BUILD_DATE)" -
 
 APP        := iperf3-rs
 BINDIR     := bin
+COMPLETION_DIR := completions
 INSTALL_PREFIX ?= $(HOME)/.local
 INSTALL_BINDIR ?= $(INSTALL_PREFIX)/bin
+BASH_COMPLETION_DIR ?= $(INSTALL_PREFIX)/share/bash-completion/completions
+ZSH_COMPLETION_DIR ?= $(INSTALL_PREFIX)/share/zsh/site-functions
+FISH_COMPLETION_DIR ?= $(INSTALL_PREFIX)/share/fish/vendor_completions.d
 DISTDIR    := dist
 TEST_COMPOSE := docker-compose.test.yml
 VERSION    := $(shell awk 'BEGIN { in_pkg = 0 } /^\[package\]$$/ { in_pkg = 1; next } /^\[/ { in_pkg = 0 } in_pkg && $$1 == "version" { gsub(/"/, "", $$3); print $$3; exit }' Cargo.toml)
@@ -79,6 +83,16 @@ install: ## Build and install the host binary into INSTALL_BINDIR
 	@$(INSTALL) -m 0755 "target/release/$(APP)" "$(INSTALL_BINDIR)/$(APP)"
 	@printf 'Installed %s\n' "$(INSTALL_BINDIR)/$(APP)"
 
+.PHONY: install-completions
+install-completions: ## Install bash, zsh, and fish completion files
+	@mkdir -p "$(BASH_COMPLETION_DIR)" "$(ZSH_COMPLETION_DIR)" "$(FISH_COMPLETION_DIR)"
+	@$(INSTALL) -m 0644 "$(COMPLETION_DIR)/$(APP).bash" "$(BASH_COMPLETION_DIR)/$(APP)"
+	@$(INSTALL) -m 0644 "$(COMPLETION_DIR)/_$(APP)" "$(ZSH_COMPLETION_DIR)/_$(APP)"
+	@$(INSTALL) -m 0644 "$(COMPLETION_DIR)/$(APP).fish" "$(FISH_COMPLETION_DIR)/$(APP).fish"
+	@printf 'Installed bash completion to %s/%s\n' "$(BASH_COMPLETION_DIR)" "$(APP)"
+	@printf 'Installed zsh completion to %s/_%s\n' "$(ZSH_COMPLETION_DIR)" "$(APP)"
+	@printf 'Installed fish completion to %s/%s.fish\n' "$(FISH_COMPLETION_DIR)" "$(APP)"
+
 .PHONY: fmt
 fmt: ## Format Rust sources
 	@$(CARGO_ENV) $(CARGO) fmt --all
@@ -95,12 +109,26 @@ lint: ## Run clippy with warnings treated as errors
 test: ## Run unit tests
 	@$(CARGO_ENV) $(CARGO) test
 
+.PHONY: completion-check
+completion-check: ## Syntax-check shell completion files when shells are available
+	@bash -n "$(COMPLETION_DIR)/$(APP).bash"
+	@if command -v zsh >/dev/null 2>&1; then \
+		zsh -n "$(COMPLETION_DIR)/_$(APP)"; \
+	else \
+		printf 'Skipping zsh completion check; zsh not found\n'; \
+	fi
+	@if command -v fish >/dev/null 2>&1; then \
+		fish -n "$(COMPLETION_DIR)/$(APP).fish"; \
+	else \
+		printf 'Skipping fish completion check; fish not found\n'; \
+	fi
+
 .PHONY: integration-test
 integration-test: ## Run Docker Compose integration tests
 	@COMPOSE="$(COMPOSE)" DOCKER="$(DOCKER)" $(CARGO_ENV) $(CARGO) test --test integration_test -- --ignored --nocapture --test-threads=1
 
 .PHONY: check
-check: fmt-check lint test ## Run formatting, lint, and tests
+check: fmt-check lint test completion-check ## Run formatting, lint, tests, and completion checks
 
 .PHONY: clean
 clean: ## Remove local build artifacts
@@ -366,6 +394,9 @@ help: ## Show this help message
 	@printf "  \033[36mARCH\033[0m     Release arch list: \033[36mamd64,arm64\033[0m\n"
 	@printf "  \033[36mTAG\033[0m      GitHub release tag, defaults to \033[36mv%s\033[0m\n" "$(VERSION)"
 	@printf "  \033[36mINSTALL_BINDIR\033[0m Install directory, defaults to \033[36m%s\033[0m\n" "$(INSTALL_BINDIR)"
+	@printf "  \033[36mBASH_COMPLETION_DIR\033[0m Bash completion install dir, defaults to \033[36m%s\033[0m\n" "$(BASH_COMPLETION_DIR)"
+	@printf "  \033[36mZSH_COMPLETION_DIR\033[0m Zsh completion install dir, defaults to \033[36m%s\033[0m\n" "$(ZSH_COMPLETION_DIR)"
+	@printf "  \033[36mFISH_COMPLETION_DIR\033[0m Fish completion install dir, defaults to \033[36m%s\033[0m\n" "$(FISH_COMPLETION_DIR)"
 	@printf "  \033[36mGHCR_IMAGE\033[0m Release image, defaults to \033[36m%s\033[0m\n" "$(GHCR_IMAGE)"
 	@printf "  \033[36mGHCR_PLATFORMS\033[0m Release image platforms, defaults to \033[36m%s\033[0m\n" "$(GHCR_PLATFORMS)"
 	@printf "  \033[36mGHCR_TAGS\033[0m Release image tags, defaults to \033[36m%s\033[0m\n" "$(GHCR_TAGS)"
@@ -373,6 +404,7 @@ help: ## Show this help message
 	@printf "\n\033[1mExamples:\033[0m\n"
 	@printf "  \033[36mmake build\033[0m\n"
 	@printf "  \033[36mmake install\033[0m\n"
+	@printf "  \033[36mmake install-completions\033[0m\n"
 	@printf "  \033[36mmake check\033[0m\n"
 	@printf "  \033[36mmake integration-test\033[0m\n"
 	@printf "  \033[36mmake dist OS=darwin ARCH=arm64\033[0m\n"
