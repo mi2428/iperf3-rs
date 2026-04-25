@@ -164,3 +164,36 @@ pub fn current_error() -> String {
         .into_owned()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static IPERF_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn parser_sets_server_role() {
+        let _guard = IPERF_TEST_LOCK.lock().unwrap();
+        let mut test = IperfTest::new().unwrap();
+        test.parse_arguments(&["iperf3-rs".to_owned(), "-s".to_owned(), "-1".to_owned()])
+            .unwrap();
+
+        assert_eq!(test.role(), Role::Server);
+    }
+
+    #[test]
+    fn parser_sets_client_role() {
+        let _guard = IPERF_TEST_LOCK.lock().unwrap();
+        let mut test = IperfTest::new().unwrap();
+        test.parse_arguments(&[
+            "iperf3-rs".to_owned(),
+            "-c".to_owned(),
+            "127.0.0.1".to_owned(),
+            "-t".to_owned(),
+            "1".to_owned(),
+        ])
+        .unwrap();
+
+        assert_eq!(test.role(), Role::Client);
+    }
+}

@@ -100,3 +100,60 @@ fn encode_path_segment(raw: &str) -> String {
     encoded
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encodes_grouping_segments() {
+        assert_eq!(encode_path_segment("a b/c"), "a%20b%2Fc");
+    }
+
+    #[test]
+    fn renders_prometheus_gauges() {
+        let rendered = render_prometheus(&Metrics {
+            bytes: 1.0,
+            bandwidth_bits_per_second: 8.0,
+            packets: 2.0,
+            error_packets: 3.0,
+            jitter_seconds: 0.004,
+            tcp_retransmits: 5.0,
+        });
+        assert!(rendered.contains("iperf3_bytes 1\n"));
+        assert!(rendered.contains("iperf3_jitter 0.004\n"));
+    }
+
+    #[test]
+    fn builds_pushgateway_grouping_url() {
+        let gateway = PushGateway::new(PushGatewayConfig {
+            endpoint: Url::parse("http://127.0.0.1:9091/base/").unwrap(),
+            job: "iperf job".to_owned(),
+            test: "test/one".to_owned(),
+            scenario: "sample#1".to_owned(),
+            mode: "client".to_owned(),
+        })
+        .unwrap();
+
+        assert_eq!(
+            gateway.url.as_str(),
+            "http://127.0.0.1:9091/base/metrics/job/iperf%20job/test/test%2Fone/scenario/sample%231/iperf_mode/client"
+        );
+    }
+
+    #[test]
+    fn renders_all_expected_metric_names() {
+        let rendered = render_prometheus(&Metrics::default());
+
+        for name in [
+            "iperf3_bytes",
+            "iperf3_bandwidth",
+            "iperf3_packets",
+            "iperf3_error_packets",
+            "iperf3_jitter",
+            "iperf3_tcp_retransmits",
+        ] {
+            assert!(rendered.contains(&format!("# TYPE {name} gauge\n")));
+            assert!(rendered.contains(&format!("{name} 0\n")));
+        }
+    }
+}

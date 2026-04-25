@@ -121,3 +121,117 @@ fn observes_json_output(arg: &str) -> bool {
     arg == "-J" || arg == "--json" || arg == "--json-stream" || arg == "--json-stream-full-output"
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strips_custom_options() {
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "-c".to_owned(),
+            "127.0.0.1".to_owned(),
+            "--push-gateway".to_owned(),
+            "localhost:9091".to_owned(),
+            "--job=net".to_owned(),
+            "-t".to_owned(),
+            "3".to_owned(),
+        ];
+
+        let (app, iperf) = extract_app_options(args).unwrap();
+        assert_eq!(
+            app.push_gateway_url.unwrap().as_str(),
+            "http://localhost:9091/"
+        );
+        assert_eq!(app.job, "net");
+        assert_eq!(iperf, ["iperf3-rs", "-c", "127.0.0.1", "-t", "3"]);
+    }
+
+    #[test]
+    fn cli_values_override_environment_defaults() {
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "-s".to_owned(),
+            "--push-gateway=http://cli.example:9091".to_owned(),
+            "--job".to_owned(),
+            "cli-job".to_owned(),
+        ];
+
+        let (app, iperf) = extract_app_options_with_env(args, |key| match key {
+            "PUSH_GATEWAY_URL" => Some("http://env.example:9091".to_owned()),
+            "JOB_NAME" => Some("env-job".to_owned()),
+            "TEST_NAME" => Some("env-test".to_owned()),
+            "SCENARIO_NAME" => Some("env-scenario".to_owned()),
+            _ => None,
+        })
+        .unwrap();
+
+        assert_eq!(
+            app.push_gateway_url.unwrap().as_str(),
+            "http://cli.example:9091/"
+        );
+        assert_eq!(app.job, "cli-job");
+        assert_eq!(app.test, "env-test");
+        assert_eq!(app.scenario, "env-scenario");
+        assert_eq!(iperf, ["iperf3-rs", "-s"]);
+    }
+
+    #[test]
+    fn preserves_arguments_after_double_dash() {
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "-c".to_owned(),
+            "127.0.0.1".to_owned(),
+            "--".to_owned(),
+            "--push-gateway".to_owned(),
+            "ignored-by-wrapper".to_owned(),
+        ];
+
+        let (app, iperf) = extract_app_options_with_env(args, |_| None).unwrap();
+        assert!(app.push_gateway_url.is_none());
+        assert_eq!(
+            iperf,
+            [
+                "iperf3-rs",
+                "-c",
+                "127.0.0.1",
+                "--",
+                "--push-gateway",
+                "ignored-by-wrapper"
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_missing_custom_option_value() {
+        let args = vec!["iperf3-rs".to_owned(), "--push-gateway".to_owned()];
+
+        let err = extract_app_options_with_env(args, |_| None).unwrap_err();
+        assert!(err.to_string().contains("--push-gateway requires a value"));
+    }
+
+    #[test]
+    fn rejects_empty_grouping_when_pushgateway_is_enabled() {
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "--push-gateway".to_owned(),
+            "localhost:9091".to_owned(),
+            "--scenario=".to_owned(),
+        ];
+
+        let err = extract_app_options_with_env(args, |_| None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--job, --test, and --scenario must not be empty")
+        );
+    }
+
+    #[test]
+    fn notices_user_requested_json_output() {
+        for flag in ["-J", "--json", "--json-stream", "--json-stream-full-output"] {
+            let args = vec!["iperf3-rs".to_owned(), flag.to_owned()];
+            let (app, _) = extract_app_options_with_env(args, |_| None).unwrap();
+            assert!(app.mirror_json, "{flag} should mirror JSON output");
+        }
+    }
+}
