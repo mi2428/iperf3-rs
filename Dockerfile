@@ -3,7 +3,7 @@ ARG BUILD_IMAGE_TAG=1.95-bookworm
 ARG RELEASE_BUILD_IMAGE=rust
 ARG RELEASE_BUILD_IMAGE_TAG=1.95-alpine
 
-FROM ${BUILD_IMAGE}:${BUILD_IMAGE_TAG} AS build
+FROM ${BUILD_IMAGE}:${BUILD_IMAGE_TAG} AS integration-build
 
 # hadolint ignore=DL3008
 RUN apt-get update \
@@ -19,7 +19,7 @@ RUN apt-get update \
 WORKDIR /workspace
 COPY . .
 
-FROM build AS test
+FROM integration-build AS integration-test
 
 RUN if [ -f iperf3/config.status ]; then make -C iperf3 distclean; fi \
     && mkdir -p /tmp/iperf3-build
