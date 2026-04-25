@@ -12,6 +12,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
   IPERF3_RS_CONFIGURE_ARGS: --without-openssl
 
 jobs:
@@ -47,17 +48,24 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt
 
-      - name: Cache Rust dependencies and build outputs
+      - name: Cache Cargo registry
         uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            target
-          key: ${{ runner.os }}-lint-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-lint-cargo-
+            ${{ runner.os }}-cargo-
+
+      - name: Cache Rust build outputs
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ github.job }}-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-target-
 
       - name: Check Rust formatting
         run: cargo fmt --all --check
@@ -91,17 +99,24 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal
 
-      - name: Cache Rust dependencies and build outputs
+      - name: Cache Cargo registry
         uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            target
-          key: ${{ runner.os }}-test-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-test-cargo-
+            ${{ runner.os }}-cargo-
+
+      - name: Cache Rust build outputs
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ github.job }}-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-target-
 
       - name: Run unit tests
         run: cargo test
@@ -126,17 +141,24 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal
 
-      - name: Cache Rust dependencies and build outputs
+      - name: Cache Cargo registry
         uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            target
-          key: ${{ runner.os }}-kani-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-kani-cargo-
+            ${{ runner.os }}-cargo-
+
+      - name: Cache Rust build outputs
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ github.job }}-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-target-
 
       - name: Run Kani
         uses: model-checking/kani-github-action@v1
@@ -166,17 +188,24 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal
 
-      - name: Cache Rust dependencies and build outputs
+      - name: Cache Cargo registry
         uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            target
-          key: ${{ runner.os }}-integration-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-integration-cargo-
+            ${{ runner.os }}-cargo-
+
+      - name: Cache Rust build outputs
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ github.job }}-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-target-
 
       - name: Show Docker versions
         run: |

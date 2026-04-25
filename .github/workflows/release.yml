@@ -130,6 +130,7 @@ jobs:
       - name: "Prepare libiperf build inputs"
         run: |
           git submodule update --init --recursive
+          echo "CARGO_INCREMENTAL=0" >> "${GITHUB_ENV}"
           echo "IPERF3_RS_CONFIGURE_ARGS=--without-openssl" >> "${GITHUB_ENV}"
         shell: "bash"
       - name: "Install Linux build dependencies"
@@ -142,16 +143,19 @@ jobs:
             make \
             pkg-config
         shell: "bash"
-      - name: "Cache Cargo registry"
+      - name: "Cache Cargo sources"
         uses: "actions/cache@v5"
         with:
-          "key": "${{ runner.os }}-${{ join(matrix.targets, '-') }}-release-cargo-registry-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}"
-          "path": "~/.cargo/registry"
-          "restore-keys": "${{ runner.os }}-${{ join(matrix.targets, '-') }}-release-cargo-registry-"
+          "key": "${{ runner.os }}-release-cargo-sources-${{ hashFiles('Cargo.lock') }}"
+          "path": |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          "restore-keys": "${{ runner.os }}-release-cargo-sources-"
       - name: "Cache Rust build outputs"
         uses: "actions/cache@v5"
         with:
-          "key": "${{ runner.os }}-${{ join(matrix.targets, '-') }}-release-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}"
+          "key": "${{ runner.os }}-${{ join(matrix.targets, '-') }}-release-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}"
           "path": "target"
           "restore-keys": "${{ runner.os }}-${{ join(matrix.targets, '-') }}-release-target-"
       - name: Install dist
