@@ -36,9 +36,13 @@ Useful development targets:
 ```sh
 make help
 make check
+make verify
 make kani
 make dist OS=darwin ARCH=arm64
 ```
+
+`make verify` extends `make check` with Kani and the Docker integration/release
+image smoke tests, so it requires Kani and a running Docker daemon.
 
 Shell completions for bash, zsh, and fish are checked in under
 `completions/` and can be installed under `~/.local/share`:
@@ -49,10 +53,10 @@ make install-completions
 
 ## Release
 
-`make release` follows the `origin/main` ref, builds release binaries for
-`darwin-amd64`, `darwin-arm64`, `linux-amd64`, and `linux-arm64`, writes
-`dist/checksums.txt`, and creates a GitHub Release tagged from the Cargo package
-version.
+`make release` follows the `origin/main` ref, runs `make verify`, builds release
+binaries for `darwin-amd64`, `darwin-arm64`, `linux-amd64`, and `linux-arm64`,
+writes `dist/checksums.txt`, and creates a GitHub Release tagged from the Cargo
+package version.
 
 ```sh
 make release

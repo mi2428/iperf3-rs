@@ -134,6 +134,9 @@ integration-test: ## Run Docker Compose integration tests
 .PHONY: check
 check: fmt-check lint test completion-check ## Run formatting, lint, tests, and completion checks
 
+.PHONY: verify
+verify: check kani integration-test ## Run all release-blocking quality gates
+
 .PHONY: clean
 clean: ## Remove local build artifacts
 	@rm -rf $(BINDIR) $(DISTDIR) .cargo-linux .home-linux
@@ -373,6 +376,8 @@ release: ## Build binaries for origin/main, publish a GitHub Release, and push t
 		exit 1; \
 	fi; \
 	tag="v$$release_version"; \
+	printf 'Running release quality gate for %s\n' "$$tag"; \
+	"$$make_bin" -f "$(CURDIR)/Makefile" -C "$$tmpdir" verify; \
 	printf 'Building release assets for %s\n' "$$tag"; \
 	"$$make_bin" -f "$(CURDIR)/Makefile" -C "$$tmpdir" dist OS=darwin,linux ARCH=amd64,arm64; \
 	printf 'Checking release state for %s\n' "$$tag"; \
@@ -410,6 +415,7 @@ help: ## Show this help message
 	@printf "  \033[36mmake install\033[0m\n"
 	@printf "  \033[36mmake install-completions\033[0m\n"
 	@printf "  \033[36mmake check\033[0m\n"
+	@printf "  \033[36mmake verify\033[0m\n"
 	@printf "  \033[36mmake kani\033[0m\n"
 	@printf "  \033[36mmake integration-test\033[0m\n"
 	@printf "  \033[36mmake dist OS=darwin ARCH=arm64\033[0m\n"
