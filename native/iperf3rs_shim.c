@@ -1,7 +1,10 @@
+#define _GNU_SOURCE
+
 #include "iperf_config.h"
 
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "iperf.h"
 #include "iperf_api.h"
@@ -54,9 +57,27 @@ iperf3rs_ignore_sigpipe(void)
 #endif
 }
 
-void
-iperf3rs_print_usage_long(void)
+char *
+iperf3rs_usage_long(void)
 {
-    usage_long(stdout);
-    fflush(stdout);
+    char *buffer = NULL;
+    size_t length = 0;
+    FILE *stream = open_memstream(&buffer, &length);
+    if (stream == NULL) {
+        return NULL;
+    }
+
+    usage_long(stream);
+    if (fclose(stream) != 0) {
+        free(buffer);
+        return NULL;
+    }
+
+    return buffer;
+}
+
+void
+iperf3rs_free_string(char *value)
+{
+    free(value);
 }

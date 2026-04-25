@@ -38,7 +38,8 @@ mod ffi {
         pub fn iperf3rs_is_auth_test_error() -> c_int;
         pub fn iperf3rs_current_error() -> *const c_char;
         pub fn iperf3rs_ignore_sigpipe();
-        pub fn iperf3rs_print_usage_long();
+        pub fn iperf3rs_usage_long() -> *mut c_char;
+        pub fn iperf3rs_free_string(value: *mut c_char);
     }
 }
 
@@ -185,8 +186,16 @@ pub fn libiperf_version() -> String {
         .into_owned()
 }
 
-pub fn print_usage_long() {
-    unsafe { ffi::iperf3rs_print_usage_long() };
+pub fn usage_long() -> Result<String> {
+    let ptr = unsafe { ffi::iperf3rs_usage_long() };
+    if ptr.is_null() {
+        bail!("failed to render iperf usage text");
+    }
+    let text = unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { ffi::iperf3rs_free_string(ptr) };
+    Ok(text)
 }
 
 #[cfg(test)]

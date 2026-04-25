@@ -1,6 +1,7 @@
 use std::fmt::Write as _;
 
 const HELP_VALUE_WIDTH: usize = 25;
+const UPSTREAM_FIRST_SECTION: &str = "Server or Client:\n";
 
 struct HelpRow<'a> {
     value: &'a str,
@@ -99,6 +100,26 @@ pub fn render_wrapper_help() -> String {
     help
 }
 
+pub fn render_full_help(upstream_help: &str) -> String {
+    let wrapper_help = render_wrapper_help();
+    if let Some(index) = upstream_help.find(UPSTREAM_FIRST_SECTION) {
+        let (usage, upstream_sections) = upstream_help.split_at(index);
+        let mut help = String::with_capacity(upstream_help.len() + wrapper_help.len() + 1);
+        help.push_str(usage);
+        help.push_str(wrapper_help.trim_start_matches('\n'));
+        help.push('\n');
+        help.push_str(upstream_sections);
+        help
+    } else {
+        let mut help = upstream_help.to_owned();
+        if !help.ends_with('\n') {
+            help.push('\n');
+        }
+        help.push_str(&wrapper_help);
+        help
+    }
+}
+
 fn write_rows(help: &mut String, rows: &[HelpRow<'_>]) {
     for row in rows {
         writeln!(
@@ -148,5 +169,26 @@ mod tests {
                 .all(|line| line.as_bytes()[27].is_ascii_whitespace()
                     && !line.as_bytes()[28].is_ascii_whitespace())
         );
+    }
+
+    #[test]
+    fn full_help_inserts_wrapper_help_before_upstream_sections() {
+        let help = render_full_help(concat!(
+            "Usage: iperf3 [-s|-c host] [options]\n",
+            "       iperf3 [-h|--help] [-v|--version]\n",
+            "\n",
+            "Server or Client:\n",
+            "  -p, --port      #         server port to listen on/connect to\n",
+            "\n",
+            "Report bugs to:     https://github.com/esnet/iperf\n",
+        ));
+
+        let wrapper_index = help.find("iperf3-rs options:\n").unwrap();
+        let server_index = help.find("Server or Client:\n").unwrap();
+        let bug_report_index = help.find("Report bugs to:").unwrap();
+
+        assert!(wrapper_index < server_index);
+        assert!(server_index < bug_report_index);
+        assert!(help.contains("Report bugs to:     https://github.com/esnet/iperf\n"));
     }
 }

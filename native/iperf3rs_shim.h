@@ -12,6 +12,7 @@ int iperf3rs_current_errno(void);
 int iperf3rs_is_auth_test_error(void);
 const char *iperf3rs_current_error(void);
 void iperf3rs_ignore_sigpipe(void);
-void iperf3rs_print_usage_long(void);
+char *iperf3rs_usage_long(void);
+void iperf3rs_free_string(char *value);
 
 #endif

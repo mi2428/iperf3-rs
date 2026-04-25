@@ -36,8 +36,7 @@ fn run() -> Result<()> {
         std::process::exit(EXIT_OPTION_ERROR.into());
     })?;
     if app.show_help {
-        iperf::print_usage_long();
-        print!("{}", help::render_wrapper_help());
+        print!("{}", help::render_full_help(&iperf::usage_long()?));
         return Ok(());
     }
     if app.show_version {
