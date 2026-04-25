@@ -1,4 +1,5 @@
 mod args;
+mod help;
 mod iperf;
 mod metrics;
 mod pushgateway;
@@ -34,6 +35,11 @@ fn run() -> Result<()> {
         eprintln!("{err:#}");
         std::process::exit(EXIT_OPTION_ERROR.into());
     })?;
+    if app.show_help {
+        iperf::print_usage_long();
+        print!("{}", help::render_wrapper_help());
+        return Ok(());
+    }
     if app.show_version {
         let libiperf_version = iperf::libiperf_version();
         print!("{}", version::render(&version::current(&libiperf_version)));

@@ -9,6 +9,7 @@ pub struct AppOptions {
     pub push_job: String,
     pub push_labels: Vec<(String, String)>,
     pub mirror_json: bool,
+    pub show_help: bool,
     pub show_version: bool,
 }
 
@@ -27,6 +28,22 @@ fn extract_app_options_with_env(
     let program = iter.next().ok_or_else(|| anyhow!("missing argv[0]"))?;
     pass_through.push(program);
 
+    let rest: Vec<String> = iter.collect();
+    let (show_help, show_version) = find_informational_request(&rest);
+    if show_help || show_version {
+        return Ok((
+            AppOptions {
+                push_url: None,
+                push_job: "iperf3".to_owned(),
+                push_labels: Vec::new(),
+                mirror_json: false,
+                show_help,
+                show_version,
+            },
+            pass_through,
+        ));
+    }
+
     let mut push_url = get_env("PUSH_URL");
     let mut push_job = get_env("PUSH_JOB").unwrap_or_else(|| "iperf3".to_owned());
     let mut push_labels = get_env("PUSH_LABELS")
@@ -36,9 +53,7 @@ fn extract_app_options_with_env(
     let mut saw_push_job = false;
     let mut saw_push_label = !push_labels.is_empty();
     let mut mirror_json = false;
-    let mut show_version = false;
 
-    let rest: Vec<String> = iter.collect();
     let mut i = 0;
     while i < rest.len() {
         let arg = &rest[i];
@@ -50,12 +65,6 @@ fn extract_app_options_with_env(
 
         if observes_json_output(arg) {
             mirror_json = true;
-        }
-
-        if is_version_option(arg) {
-            show_version = true;
-            i += 1;
-            continue;
         }
 
         if let Some((key, value)) = split_long_value(arg) {
@@ -95,13 +104,13 @@ fn extract_app_options_with_env(
     }
 
     let push_url = push_url.as_deref().map(parse_url).transpose()?;
-    if !show_version && push_url.is_none() && saw_push_job {
+    if push_url.is_none() && saw_push_job {
         bail!("--push.job requires --push.url or PUSH_URL");
     }
-    if !show_version && push_url.is_none() && saw_push_label {
+    if push_url.is_none() && saw_push_label {
         bail!("--push.label requires --push.url or PUSH_URL");
     }
-    if !show_version && push_url.is_some() && push_job.is_empty() {
+    if push_url.is_some() && push_job.is_empty() {
         bail!("--push.job must not be empty when --push.url is set");
     }
     reject_duplicate_labels(&push_labels)?;
@@ -112,7 +121,8 @@ fn extract_app_options_with_env(
             push_job,
             push_labels,
             mirror_json,
-            show_version,
+            show_help: false,
+            show_version: false,
         },
         pass_through,
     ))
@@ -207,8 +217,25 @@ fn observes_json_output(arg: &str) -> bool {
     arg == "-J" || arg == "--json" || arg == "--json-stream" || arg == "--json-stream-full-output"
 }
 
+fn find_informational_request(args: &[String]) -> (bool, bool) {
+    let mut show_help = false;
+    let mut show_version = false;
+    for arg in args {
+        if arg == "--" {
+            break;
+        }
+        show_help |= is_help_option(arg);
+        show_version |= is_version_option(arg);
+    }
+    (show_help, show_version)
+}
+
 fn is_version_option(arg: &str) -> bool {
     arg == "-v" || arg == "--version"
+}
+
+fn is_help_option(arg: &str) -> bool {
+    arg == "-h" || arg == "--help"
 }
 
 #[cfg(kani)]
@@ -433,7 +460,23 @@ mod tests {
                 app.show_version,
                 "{flag} should request wrapper version output"
             );
-            assert_eq!(iperf, ["iperf3-rs", "-c", "127.0.0.1"]);
+            assert_eq!(iperf, ["iperf3-rs"]);
+        }
+    }
+
+    #[test]
+    fn strips_help_options() {
+        for flag in ["-h", "--help"] {
+            let args = vec![
+                "iperf3-rs".to_owned(),
+                flag.to_owned(),
+                "-c".to_owned(),
+                "127.0.0.1".to_owned(),
+            ];
+
+            let (app, iperf) = extract_app_options_with_env(args, |_| None).unwrap();
+            assert!(app.show_help, "{flag} should request wrapper help output");
+            assert_eq!(iperf, ["iperf3-rs"]);
         }
     }
 
@@ -448,5 +491,33 @@ mod tests {
 
         let (app, _) = extract_app_options_with_env(args, |_| None).unwrap();
         assert!(app.show_version);
+    }
+
+    #[test]
+    fn help_request_skips_pushgateway_consistency_checks() {
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "--help".to_owned(),
+            "--push.job".to_owned(),
+            "ignored".to_owned(),
+        ];
+
+        let (app, _) = extract_app_options_with_env(args, |_| None).unwrap();
+        assert!(app.show_help);
+    }
+
+    #[test]
+    fn informational_requests_ignore_malformed_pushgateway_environment() {
+        for flag in ["--help", "--version"] {
+            let args = vec!["iperf3-rs".to_owned(), flag.to_owned()];
+
+            let (app, _) = extract_app_options_with_env(args, |key| match key {
+                "PUSH_LABELS" => Some("not-a-label".to_owned()),
+                _ => None,
+            })
+            .unwrap();
+
+            assert!(app.show_help || app.show_version);
+        }
     }
 }

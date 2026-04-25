@@ -53,3 +53,10 @@ iperf3rs_ignore_sigpipe(void)
     signal(SIGPIPE, SIG_IGN);
 #endif
 }
+
+void
+iperf3rs_print_usage_long(void)
+{
+    usage_long(stdout);
+    fflush(stdout);
+}
