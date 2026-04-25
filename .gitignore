@@ -54,6 +54,10 @@ Temporary Items
 # will have compiled files and executables
 debug/
 target/
+bin/
+dist/
+.cargo-linux/
+.home-linux/
 
 # This is an executable crate, so keep Cargo.lock tracked for reproducible builds.
 
