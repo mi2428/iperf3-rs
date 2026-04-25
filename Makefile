@@ -15,6 +15,11 @@ COMPOSE    ?= $(shell if $(DOCKER) compose version >/dev/null 2>&1; then printf 
 REMOTE     ?= origin
 MAIN_BRANCH ?= main
 GITHUB_REPOSITORY ?= $(shell $(GIT) remote get-url $(REMOTE) 2>/dev/null | awk '{ gsub(/^git@github.com:/, ""); gsub(/^ssh:\/\/git@github.com\//, ""); gsub(/^https:\/\/github.com\//, ""); gsub(/\.git$$/, ""); print tolower($$0) }')
+GIT_DESCRIBE ?= $(shell $(GIT) describe --tags --always --dirty=-dirty 2>/dev/null || printf 'unknown')
+GIT_COMMIT ?= $(shell $(GIT) rev-parse HEAD 2>/dev/null || printf 'unknown')
+GIT_COMMIT_DATE ?= $(shell $(GIT) show -s --format=%cI HEAD 2>/dev/null || printf 'unknown')
+BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+DOCKER_BUILD_METADATA_ARGS := --build-arg IPERF3_RS_BUILD_DATE="$(BUILD_DATE)" --build-arg IPERF3_RS_GIT_COMMIT="$(GIT_COMMIT)" --build-arg IPERF3_RS_GIT_COMMIT_DATE="$(GIT_COMMIT_DATE)" --build-arg IPERF3_RS_GIT_DESCRIBE="$(GIT_DESCRIBE)"
 
 APP        := iperf3-rs
 BINDIR     := bin
@@ -279,12 +284,13 @@ _publish-release-image: _docker-buildx-check _ghcr-login
 		echo "GHCR_TAGS did not contain any image tags" >&2; \
 		exit 1; \
 	fi; \
-	printf 'Publishing multi-arch image %s for %s on %s\n' "$(GHCR_IMAGE)" "$(TAG)" "$(GHCR_PLATFORMS)"; \
-	$(DOCKER) buildx build \
-		--platform "$(GHCR_PLATFORMS)" \
-		--target "$(GHCR_TARGET)" \
-		--push \
-		--label "org.opencontainers.image.source=https://github.com/$$repo" \
+		printf 'Publishing multi-arch image %s for %s on %s\n' "$(GHCR_IMAGE)" "$(TAG)" "$(GHCR_PLATFORMS)"; \
+		$(DOCKER) buildx build \
+			--platform "$(GHCR_PLATFORMS)" \
+			--target "$(GHCR_TARGET)" \
+			$(DOCKER_BUILD_METADATA_ARGS) \
+			--push \
+			--label "org.opencontainers.image.source=https://github.com/$$repo" \
 		--label "org.opencontainers.image.revision=$(TARGET_SHA)" \
 		--label "org.opencontainers.image.version=$(TAG)" \
 		"$${tag_args[@]}" \
