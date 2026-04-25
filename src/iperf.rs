@@ -1,0 +1,166 @@
+use std::ffi::{CStr, CString};
+use std::os::raw::{c_char, c_int};
+use std::ptr::NonNull;
+
+use anyhow::{Context, Result, anyhow, bail};
+
+#[allow(non_camel_case_types)]
+mod ffi {
+    use super::{c_char, c_int};
+
+    #[repr(C)]
+    pub struct iperf_test {
+        _private: [u8; 0],
+    }
+
+    pub type JsonCallback = unsafe extern "C" fn(*mut iperf_test, *mut c_char);
+
+    unsafe extern "C" {
+        pub fn iperf_new_test() -> *mut iperf_test;
+        pub fn iperf_defaults(test: *mut iperf_test) -> c_int;
+        pub fn iperf_free_test(test: *mut iperf_test);
+        pub fn iperf_parse_arguments(
+            test: *mut iperf_test,
+            argc: c_int,
+            argv: *mut *mut c_char,
+        ) -> c_int;
+        pub fn iperf_run_client(test: *mut iperf_test) -> c_int;
+        pub fn iperf_reset_test(test: *mut iperf_test);
+        pub fn iperf_get_test_role(test: *mut iperf_test) -> c_char;
+        pub fn iperf_get_test_one_off(test: *mut iperf_test) -> c_int;
+
+        pub fn iperf3rs_enable_json_stream(test: *mut iperf_test);
+        pub fn iperf3rs_set_json_callback(test: *mut iperf_test, callback: Option<JsonCallback>);
+        pub fn iperf3rs_run_server_once(test: *mut iperf_test) -> c_int;
+        pub fn iperf3rs_current_errno() -> c_int;
+        pub fn iperf3rs_is_auth_test_error() -> c_int;
+        pub fn iperf3rs_current_error() -> *const c_char;
+        pub fn iperf3rs_ignore_sigpipe();
+    }
+}
+
+pub use ffi::iperf_test as RawIperfTest;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Client,
+    Server,
+    Unknown(i8),
+}
+
+pub struct IperfTest {
+    ptr: NonNull<ffi::iperf_test>,
+}
+
+impl IperfTest {
+    pub fn new() -> Result<Self> {
+        let ptr = NonNull::new(unsafe { ffi::iperf_new_test() })
+            .ok_or_else(|| anyhow!("iperf_new_test returned null"))?;
+        let test = Self { ptr };
+        let rc = unsafe { ffi::iperf_defaults(test.as_ptr()) };
+        if rc < 0 {
+            bail!("iperf_defaults failed: {}", current_error());
+        }
+        Ok(test)
+    }
+
+    pub fn as_ptr(&self) -> *mut RawIperfTest {
+        self.ptr.as_ptr()
+    }
+
+    pub fn parse_arguments(&mut self, args: &[String]) -> Result<()> {
+        let cstrings = args
+            .iter()
+            .map(|arg| {
+                CString::new(arg.as_str())
+                    .with_context(|| format!("argument contains NUL: {arg:?}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut argv = cstrings
+            .iter()
+            .map(|arg| arg.as_ptr() as *mut c_char)
+            .collect::<Vec<_>>();
+
+        let rc = unsafe {
+            ffi::iperf_parse_arguments(self.as_ptr(), argv.len() as c_int, argv.as_mut_ptr())
+        };
+        if rc < 0 {
+            bail!("failed to parse iperf options: {}", current_error());
+        }
+        Ok(())
+    }
+
+    pub fn enable_json_metrics(&mut self, callback: ffi::JsonCallback) {
+        unsafe {
+            ffi::iperf3rs_enable_json_stream(self.as_ptr());
+            ffi::iperf3rs_set_json_callback(self.as_ptr(), Some(callback));
+        }
+    }
+
+    pub fn role(&self) -> Role {
+        match unsafe { ffi::iperf_get_test_role(self.as_ptr()) } as u8 as char {
+            'c' => Role::Client,
+            's' => Role::Server,
+            other => Role::Unknown(other as i8),
+        }
+    }
+
+    pub fn run(&mut self) -> Result<()> {
+        unsafe { ffi::iperf3rs_ignore_sigpipe() };
+        match self.role() {
+            Role::Client => self.run_client(),
+            Role::Server => self.run_server(),
+            Role::Unknown(role) => bail!("iperf role was not set by arguments: {role}"),
+        }
+    }
+
+    fn run_client(&mut self) -> Result<()> {
+        let rc = unsafe { ffi::iperf_run_client(self.as_ptr()) };
+        if rc < 0 {
+            bail!("iperf client exited with error: {}", current_error());
+        }
+        Ok(())
+    }
+
+    fn run_server(&mut self) -> Result<()> {
+        loop {
+            let rc = unsafe { ffi::iperf3rs_run_server_once(self.as_ptr()) };
+            if rc < 0 {
+                let error = current_error();
+                if rc < -1 {
+                    bail!("iperf server exited with error: {error}");
+                }
+                eprintln!("iperf server recovered from error: {error}");
+            }
+
+            unsafe { ffi::iperf_reset_test(self.as_ptr()) };
+
+            let one_off = unsafe { ffi::iperf_get_test_one_off(self.as_ptr()) } != 0;
+            let auth_error = unsafe { ffi::iperf3rs_is_auth_test_error() } != 0;
+            if one_off && rc != 2 {
+                if rc < 0 && auth_error {
+                    continue;
+                }
+                return Ok(());
+            }
+        }
+    }
+}
+
+impl Drop for IperfTest {
+    fn drop(&mut self) {
+        unsafe { ffi::iperf_free_test(self.as_ptr()) };
+    }
+}
+
+pub fn current_error() -> String {
+    let ptr = unsafe { ffi::iperf3rs_current_error() };
+    if ptr.is_null() {
+        let errno = unsafe { ffi::iperf3rs_current_errno() };
+        return format!("unknown libiperf error ({errno})");
+    }
+    unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned()
+}
+
