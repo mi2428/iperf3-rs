@@ -1,5 +1,3 @@
-name: iperf3-rs-observability
-
 services:
   pushgateway:
     image: prom/pushgateway:latest
