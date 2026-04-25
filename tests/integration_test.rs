@@ -89,19 +89,10 @@ fn compose_interop_and_pushgateway_metrics() {
     });
     assert_iperf_summary_has_traffic(&iperf3rs_to_upstream);
 
-    // Metrics check: run iperf3-rs against iperf3-rs with one-second JSON
-    // streaming enabled. Pushgateway configuration comes from the `client-rs`
-    // service environment, so the command only needs normal iperf options.
-    project.run_client(&[
-        "iperf3-rs",
-        "-c",
-        "server-rs",
-        "-t",
-        "3",
-        "-i",
-        "1",
-        "--json-stream",
-    ]);
+    // Metrics check: run iperf3-rs against iperf3-rs. Pushgateway
+    // configuration comes from the `client-rs` service environment, so this is
+    // deliberately just a normal iperf client command.
+    project.run_client(&["iperf3-rs", "-c", "server-rs", "-t", "3", "-i", "1"]);
 
     // Scrape Pushgateway and require non-zero traffic and bandwidth samples.
     // The metric names prove that the pusher emitted the expected metric
@@ -259,6 +250,12 @@ fn complete_iperf_summary(json: Value) -> Option<Value> {
 }
 
 fn parse_iperf_json_stream_summary(raw: &[u8]) -> Option<Value> {
+    // `client-rs` has Pushgateway configured in its environment. When that
+    // service runs `iperf3-rs -J`, the wrapper enables libiperf's JSON callback
+    // internally for metrics and mirrors callback events because the caller
+    // requested JSON output. Accepting JSON stream output here keeps the
+    // interop assertion focused on the iperf result instead of on the stdout
+    // encoding chosen by the metrics path.
     let text = std::str::from_utf8(raw).ok()?;
     let mut start = None;
     let mut end = None;

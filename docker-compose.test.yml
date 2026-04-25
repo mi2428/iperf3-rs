@@ -11,7 +11,7 @@ services:
     environment:
       <<: *pushgateway-environment
       SCENARIO_NAME: tcp-server
-    command: ["iperf3-rs", "-s", "-i", "1", "--json-stream"]
+    command: ["iperf3-rs", "-s", "-i", "1"]
     depends_on:
       - pushgateway
 
