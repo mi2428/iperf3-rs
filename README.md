@@ -51,11 +51,20 @@ Shell completions for bash, zsh, and fish are checked in under
 make install COMPLETION=1
 ```
 
+## Install
+
+Released versions are installable with Homebrew:
+
+```sh
+brew install mi2428/iperf3-rs/iperf3-rs
+```
+
 ## Release
 
 Publishing a GitHub Release triggers `.github/workflows/release.yml`. The
 workflow checks out the release tag, builds and pushes the multi-arch GHCR image,
-and uploads release binaries plus `checksums.txt` to the GitHub Release.
+uploads release binaries plus `checksums.txt` and the generated Homebrew formula
+to the GitHub Release, and updates the Homebrew tap formula.
 
 Release assets are built for `darwin-amd64`, `darwin-arm64`, `linux-amd64`, and
 `linux-arm64`. The container image is published as
@@ -64,6 +73,12 @@ Release assets are built for `darwin-amd64`, `darwin-arm64`, `linux-amd64`, and
 
 Release builds set `IPERF3_RS_CONFIGURE_ARGS=--without-openssl` so the bundled
 libiperf does not depend on external OpenSSL libraries.
+
+Homebrew publishing expects a tap repository named `<owner>/homebrew-iperf3-rs`;
+for this repository that is `mi2428/homebrew-iperf3-rs`. Configure a
+`HOMEBREW_TAP_TOKEN` repository secret with push access to that tap. Set the
+`HOMEBREW_TAP_REPOSITORY` repository variable to override the default tap
+repository.
 
 ## Usage
 
