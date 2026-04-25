@@ -63,6 +63,10 @@ fn run() -> Result<()> {
             endpoint: push_url,
             job: app.push_job,
             labels,
+            timeout: app.push_timeout,
+            retries: app.push_retries,
+            user_agent: app.push_user_agent,
+            metric_prefix: app.push_metric_prefix,
         })?;
         Some(JsonMetricsReporter::attach(
             &mut test,

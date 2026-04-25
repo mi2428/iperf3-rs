@@ -1,23 +1,31 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
+use reqwest::StatusCode;
 use reqwest::blocking::Client;
 use url::Url;
 
 use crate::metrics::Metrics;
 
-const PUSH_TIMEOUT: Duration = Duration::from_secs(5);
+const PUSH_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
+const PUSH_RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
 pub struct PushGatewayConfig {
     pub endpoint: Url,
     pub job: String,
     pub labels: Vec<(String, String)>,
+    pub timeout: Duration,
+    pub retries: u32,
+    pub user_agent: String,
+    pub metric_prefix: String,
 }
 
 pub struct PushGateway {
     client: Client,
     url: Url,
+    retries: u32,
+    metric_prefix: String,
 }
 
 impl PushGateway {
@@ -39,44 +47,103 @@ impl PushGateway {
         let client = Client::builder()
             // Metrics are best-effort; a stuck gateway should not hold the iperf
             // process indefinitely.
-            .timeout(PUSH_TIMEOUT)
+            .timeout(config.timeout)
+            .user_agent(config.user_agent)
             .build()
             .context("failed to build HTTP client")?;
 
-        Ok(Self { client, url })
+        Ok(Self {
+            client,
+            url,
+            retries: config.retries,
+            metric_prefix: config.metric_prefix,
+        })
     }
 
     pub fn push(&self, metrics: &Metrics) -> Result<()> {
-        let body = render_prometheus(metrics);
+        let body = render_prometheus(metrics, &self.metric_prefix);
+        for attempt in 0..=self.retries {
+            match self.push_once(&body) {
+                Ok(()) => return Ok(()),
+                Err(err) if err.retryable && attempt < self.retries => {
+                    std::thread::sleep(retry_delay(attempt));
+                }
+                Err(err) => return Err(err.error),
+            }
+        }
+
+        unreachable!("push retry loop always returns")
+    }
+
+    fn push_once(&self, body: &str) -> std::result::Result<(), PushAttemptError> {
         let response = self
             .client
             .put(self.url.clone())
             .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
-            .body(body)
+            .body(body.to_owned())
             .send()
-            .context("failed to send Pushgateway request")?;
+            .map_err(|err| PushAttemptError {
+                error: anyhow!("failed to send Pushgateway request: {err}"),
+                retryable: true,
+            })?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("Pushgateway returned {}", response.status()));
+            let status = response.status();
+            return Err(PushAttemptError {
+                error: anyhow!("Pushgateway returned {status}"),
+                retryable: is_retryable_status(status),
+            });
         }
 
         Ok(())
     }
 }
 
-fn render_prometheus(metrics: &Metrics) -> String {
+#[derive(Debug)]
+struct PushAttemptError {
+    error: anyhow::Error,
+    retryable: bool,
+}
+
+fn is_retryable_status(status: StatusCode) -> bool {
+    status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS
+}
+
+fn retry_delay(attempt: u32) -> Duration {
+    PUSH_RETRY_BASE_DELAY
+        .saturating_mul(2_u32.saturating_pow(attempt))
+        .min(PUSH_RETRY_MAX_DELAY)
+}
+
+fn render_prometheus(metrics: &Metrics, prefix: &str) -> String {
     let mut out = String::new();
-    gauge(&mut out, "iperf3_bytes", metrics.bytes);
+    gauge(&mut out, &metric_name(prefix, "bytes"), metrics.bytes);
     gauge(
         &mut out,
-        "iperf3_bandwidth",
+        &metric_name(prefix, "bandwidth"),
         metrics.bandwidth_bits_per_second,
     );
-    gauge(&mut out, "iperf3_packets", metrics.packets);
-    gauge(&mut out, "iperf3_error_packets", metrics.error_packets);
-    gauge(&mut out, "iperf3_jitter", metrics.jitter_seconds);
-    gauge(&mut out, "iperf3_tcp_retransmits", metrics.tcp_retransmits);
+    gauge(&mut out, &metric_name(prefix, "packets"), metrics.packets);
+    gauge(
+        &mut out,
+        &metric_name(prefix, "error_packets"),
+        metrics.error_packets,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "jitter"),
+        metrics.jitter_seconds,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "tcp_retransmits"),
+        metrics.tcp_retransmits,
+    );
     out
+}
+
+fn metric_name(prefix: &str, suffix: &str) -> String {
+    format!("{prefix}_{suffix}")
 }
 
 fn gauge(out: &mut String, name: &str, value: f64) {
@@ -169,14 +236,17 @@ mod tests {
 
     #[test]
     fn renders_prometheus_gauges() {
-        let rendered = render_prometheus(&Metrics {
-            bytes: 1.0,
-            bandwidth_bits_per_second: 8.0,
-            packets: 2.0,
-            error_packets: 3.0,
-            jitter_seconds: 0.004,
-            tcp_retransmits: 5.0,
-        });
+        let rendered = render_prometheus(
+            &Metrics {
+                bytes: 1.0,
+                bandwidth_bits_per_second: 8.0,
+                packets: 2.0,
+                error_packets: 3.0,
+                jitter_seconds: 0.004,
+                tcp_retransmits: 5.0,
+            },
+            "iperf3",
+        );
         assert!(rendered.contains("iperf3_bytes 1\n"));
         assert!(rendered.contains("iperf3_jitter 0.004\n"));
     }
@@ -191,6 +261,10 @@ mod tests {
                 ("scenario".to_owned(), "sample#1".to_owned()),
                 ("iperf_mode".to_owned(), "client".to_owned()),
             ],
+            timeout: Duration::from_secs(5),
+            retries: 0,
+            user_agent: "iperf3-rs/test".to_owned(),
+            metric_prefix: "iperf3".to_owned(),
         })
         .unwrap();
 
@@ -202,7 +276,7 @@ mod tests {
 
     #[test]
     fn renders_all_expected_metric_names() {
-        let rendered = render_prometheus(&Metrics::default());
+        let rendered = render_prometheus(&Metrics::default(), "iperf3");
 
         for name in [
             "iperf3_bytes",
@@ -215,5 +289,28 @@ mod tests {
             assert!(rendered.contains(&format!("# TYPE {name} gauge\n")));
             assert!(rendered.contains(&format!("{name} 0\n")));
         }
+    }
+
+    #[test]
+    fn renders_metric_names_with_custom_prefix() {
+        let rendered = render_prometheus(&Metrics::default(), "nettest");
+
+        assert!(rendered.contains("# TYPE nettest_bytes gauge\n"));
+        assert!(rendered.contains("nettest_bandwidth 0\n"));
+        assert!(!rendered.contains("iperf3_bytes"));
+    }
+
+    #[test]
+    fn identifies_retryable_statuses() {
+        assert!(is_retryable_status(StatusCode::TOO_MANY_REQUESTS));
+        assert!(is_retryable_status(StatusCode::BAD_GATEWAY));
+        assert!(!is_retryable_status(StatusCode::BAD_REQUEST));
+    }
+
+    #[test]
+    fn caps_retry_delay() {
+        assert_eq!(retry_delay(0), Duration::from_millis(100));
+        assert_eq!(retry_delay(1), Duration::from_millis(200));
+        assert_eq!(retry_delay(10), Duration::from_secs(1));
     }
 }
