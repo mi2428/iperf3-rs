@@ -82,7 +82,7 @@ test: ## Run unit tests
 
 .PHONY: integration-test
 integration-test: ## Run Docker Compose integration tests
-	@COMPOSE="$(COMPOSE)" $(CARGO_ENV) $(CARGO) test --test integration_test -- --ignored --nocapture
+	@COMPOSE="$(COMPOSE)" DOCKER="$(DOCKER)" $(CARGO_ENV) $(CARGO) test --test integration_test -- --ignored --nocapture --test-threads=1
 
 .PHONY: check
 check: fmt-check lint test ## Run formatting, lint, and tests

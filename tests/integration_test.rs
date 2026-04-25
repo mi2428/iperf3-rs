@@ -251,6 +251,42 @@ fn compose_interop_and_pushgateway_metrics() {
     );
 }
 
+// This smoke test protects the Docker image shape used by release publishing.
+//
+// The Compose integration test above runs in the `integration-test` target,
+// which intentionally includes test tools such as curl and upstream iperf3.
+// The image published to GHCR is the `release` target instead: a scratch image
+// that contains only the iperf3-rs binary. Building that target and running
+// `--version` verifies that the final image can start without a shell, dynamic
+// loader, or copied runtime assets. Protocol interoperability and Pushgateway
+// behavior remain covered by the Compose test above.
+#[test]
+#[ignore = "requires Docker"]
+fn release_image_smoke() {
+    let image = ReleaseImage::build();
+    let output = Command::new(&image.docker)
+        .arg("run")
+        .arg("--rm")
+        .arg(&image.tag)
+        .arg("--version")
+        .output()
+        .expect("failed to run release image");
+
+    assert_command_success(&format!("docker run --rm {} --version", image.tag), &output);
+
+    let version_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        version_output.to_ascii_lowercase().contains("iperf"),
+        "release image --version output should identify iperf\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 struct ComposeProject {
     command: Vec<OsString>,
     compose_file: PathBuf,
@@ -259,21 +295,13 @@ struct ComposeProject {
 
 impl ComposeProject {
     fn new() -> Self {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         // Use a unique Compose project name so the Drop cleanup removes only
         // this test's containers, network, and volumes.
-        let project_name = format!(
-            "iperf3rsit{}{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos()
-        );
+        let project_name = format!("iperf3rsit{}", unique_suffix());
 
         Self {
             command: compose_command(),
-            compose_file: manifest_dir.join(COMPOSE_FILE),
+            compose_file: repo_root().join(COMPOSE_FILE),
             project_name,
         }
     }
@@ -338,6 +366,50 @@ impl Drop for ComposeProject {
     }
 }
 
+struct ReleaseImage {
+    docker: OsString,
+    tag: String,
+}
+
+impl ReleaseImage {
+    fn build() -> Self {
+        let docker = docker_command();
+        let tag = format!("iperf3-rs:release-smoke-{}", unique_suffix());
+        let output = Command::new(&docker)
+            .arg("build")
+            .arg("--target")
+            .arg("release")
+            .arg("-t")
+            .arg(&tag)
+            .arg(".")
+            .current_dir(repo_root())
+            .output()
+            .expect("failed to build release image");
+
+        assert_command_success(
+            &format!("docker build --target release -t {tag} ."),
+            &output,
+        );
+
+        Self { docker, tag }
+    }
+}
+
+impl Drop for ReleaseImage {
+    fn drop(&mut self) {
+        // Best-effort cleanup keeps the failure output from the test command
+        // visible while removing the unique local image tag created for the
+        // smoke test.
+        let _ = Command::new(&self.docker)
+            .arg("rmi")
+            .arg("-f")
+            .arg(&self.tag)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
 fn compose_command() -> Vec<OsString> {
     // Allow Makefile-driven tests to pass either `docker compose` or a
     // `docker-compose` binary path through COMPOSE. Falling back to Docker
@@ -353,6 +425,25 @@ fn compose_command() -> Vec<OsString> {
             (!parts.is_empty()).then_some(parts)
         })
         .unwrap_or_else(|| vec![OsString::from("docker"), OsString::from("compose")])
+}
+
+fn docker_command() -> OsString {
+    env::var_os("DOCKER").unwrap_or_else(|| OsString::from("docker"))
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn unique_suffix() -> String {
+    format!(
+        "{}{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos()
+    )
 }
 
 fn retry_json_client(label: &str, mut run: impl FnMut() -> Output) -> Value {
@@ -558,10 +649,13 @@ fn metric_value(metrics: &str, name: &str, scenario: &str, mode: &str) -> Option
 }
 
 fn assert_success(args: &[&str], output: &Output) {
+    assert_command_success(&format!("integration command {args:?}"), output);
+}
+
+fn assert_command_success(label: &str, output: &Output) {
     assert!(
         output.status.success(),
-        "integration command failed: {:?}\nstdout:\n{}\nstderr:\n{}",
-        args,
+        "{label} failed\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
