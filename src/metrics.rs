@@ -17,6 +17,14 @@ pub struct Metrics {
     pub error_packets: f64,
     pub jitter_seconds: f64,
     pub tcp_retransmits: f64,
+    pub tcp_rtt_seconds: f64,
+    pub tcp_rttvar_seconds: f64,
+    pub tcp_snd_cwnd_bytes: f64,
+    pub tcp_snd_wnd_bytes: f64,
+    pub tcp_pmtu_bytes: f64,
+    pub tcp_reorder_events: f64,
+    pub udp_out_of_order_packets: f64,
+    pub omitted: f64,
 }
 
 pub struct IntervalMetricsReporter {
@@ -86,6 +94,14 @@ unsafe extern "C" fn metrics_callback(
     error_packets: c_double,
     jitter_seconds: c_double,
     tcp_retransmits: c_double,
+    tcp_rtt_seconds: c_double,
+    tcp_rttvar_seconds: c_double,
+    tcp_snd_cwnd_bytes: c_double,
+    tcp_snd_wnd_bytes: c_double,
+    tcp_pmtu_bytes: c_double,
+    tcp_reorder_events: c_double,
+    udp_out_of_order_packets: c_double,
+    omitted: c_double,
 ) {
     if test.is_null() {
         return;
@@ -107,6 +123,14 @@ unsafe extern "C" fn metrics_callback(
             error_packets,
             jitter_seconds,
             tcp_retransmits,
+            tcp_rtt_seconds,
+            tcp_rttvar_seconds,
+            tcp_snd_cwnd_bytes,
+            tcp_snd_wnd_bytes,
+            tcp_pmtu_bytes,
+            tcp_reorder_events,
+            udp_out_of_order_packets,
+            omitted,
         },
     );
 }

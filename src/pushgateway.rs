@@ -143,6 +143,42 @@ fn render_prometheus(metrics: &Metrics, prefix: &str) -> String {
         &metric_name(prefix, "tcp_retransmits"),
         metrics.tcp_retransmits,
     );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "tcp_rtt_seconds"),
+        metrics.tcp_rtt_seconds,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "tcp_rttvar_seconds"),
+        metrics.tcp_rttvar_seconds,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "tcp_snd_cwnd_bytes"),
+        metrics.tcp_snd_cwnd_bytes,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "tcp_snd_wnd_bytes"),
+        metrics.tcp_snd_wnd_bytes,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "tcp_pmtu_bytes"),
+        metrics.tcp_pmtu_bytes,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "tcp_reorder_events"),
+        metrics.tcp_reorder_events,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "udp_out_of_order_packets"),
+        metrics.udp_out_of_order_packets,
+    );
+    gauge(&mut out, &metric_name(prefix, "omitted"), metrics.omitted);
     out
 }
 
@@ -269,11 +305,22 @@ mod tests {
                 error_packets: 3.0,
                 jitter_seconds: 0.004,
                 tcp_retransmits: 5.0,
+                tcp_rtt_seconds: 0.006,
+                tcp_rttvar_seconds: 0.007,
+                tcp_snd_cwnd_bytes: 8.0,
+                tcp_snd_wnd_bytes: 9.0,
+                tcp_pmtu_bytes: 10.0,
+                tcp_reorder_events: 11.0,
+                udp_out_of_order_packets: 12.0,
+                omitted: 1.0,
             },
             "iperf3",
         );
         assert!(rendered.contains("iperf3_bytes 1\n"));
         assert!(rendered.contains("iperf3_jitter 0.004\n"));
+        assert!(rendered.contains("iperf3_tcp_rtt_seconds 0.006\n"));
+        assert!(rendered.contains("iperf3_udp_out_of_order_packets 12\n"));
+        assert!(rendered.contains("iperf3_omitted 1\n"));
     }
 
     #[test]
@@ -310,6 +357,14 @@ mod tests {
             "iperf3_error_packets",
             "iperf3_jitter",
             "iperf3_tcp_retransmits",
+            "iperf3_tcp_rtt_seconds",
+            "iperf3_tcp_rttvar_seconds",
+            "iperf3_tcp_snd_cwnd_bytes",
+            "iperf3_tcp_snd_wnd_bytes",
+            "iperf3_tcp_pmtu_bytes",
+            "iperf3_tcp_reorder_events",
+            "iperf3_udp_out_of_order_packets",
+            "iperf3_omitted",
         ] {
             assert!(rendered.contains(&format!("# TYPE {name} gauge\n")));
             assert!(rendered.contains(&format!("{name} 0\n")));

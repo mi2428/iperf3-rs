@@ -10,7 +10,15 @@ typedef void (*iperf3rs_metrics_callback)(
     double packets,
     double error_packets,
     double jitter_seconds,
-    double tcp_retransmits);
+    double tcp_retransmits,
+    double tcp_rtt_seconds,
+    double tcp_rttvar_seconds,
+    double tcp_snd_cwnd_bytes,
+    double tcp_snd_wnd_bytes,
+    double tcp_pmtu_bytes,
+    double tcp_reorder_events,
+    double udp_out_of_order_packets,
+    double omitted);
 
 void iperf3rs_enable_interval_metrics(struct iperf_test *test, iperf3rs_metrics_callback callback);
 int iperf3rs_run_server_once(struct iperf_test *test);
