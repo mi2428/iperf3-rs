@@ -56,7 +56,8 @@ make install COMPLETION=1
 Released versions are installable with Homebrew:
 
 ```sh
-brew install mi2428/iperf3-rs/iperf3-rs
+brew tap mi2428/iperf3-rs
+brew install iperf3-rs
 ```
 
 ## Release
