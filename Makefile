@@ -85,24 +85,52 @@ install: ## Build and install the host binary into INSTALL_BINDIR
 	@mkdir -p "$(INSTALL_BINDIR)"
 	@$(INSTALL) -m 0755 "target/release/$(APP)" "$(INSTALL_BINDIR)/$(APP)"
 	@printf 'Installed %s\n' "$(INSTALL_BINDIR)/$(APP)"
+	@if [ "$(COMPLETION)" = "1" ]; then \
+		$(MAKE) --no-print-directory _completions MODE=install; \
+	fi
 
-.PHONY: install-completions
-install-completions: ## Install bash, zsh, and fish completion files
-	@mkdir -p "$(BASH_COMPLETION_DIR)" "$(ZSH_COMPLETION_DIR)" "$(FISH_COMPLETION_DIR)"
-	@$(INSTALL) -m 0644 "$(COMPLETION_DIR)/$(APP).bash" "$(BASH_COMPLETION_DIR)/$(APP)"
-	@$(INSTALL) -m 0644 "$(COMPLETION_DIR)/_$(APP)" "$(ZSH_COMPLETION_DIR)/_$(APP)"
-	@$(INSTALL) -m 0644 "$(COMPLETION_DIR)/$(APP).fish" "$(FISH_COMPLETION_DIR)/$(APP).fish"
-	@printf 'Installed bash completion to %s/%s\n' "$(BASH_COMPLETION_DIR)" "$(APP)"
-	@printf 'Installed zsh completion to %s/_%s\n' "$(ZSH_COMPLETION_DIR)" "$(APP)"
-	@printf 'Installed fish completion to %s/%s.fish\n' "$(FISH_COMPLETION_DIR)" "$(APP)"
+.PHONY: _completions
+_completions:
+	@mode="$(MODE)"; \
+	if [ "$(CHECK_ONLY)" = "1" ]; then \
+		mode="check"; \
+	fi; \
+	case "$$mode" in \
+		""|check) \
+			bash -n "$(COMPLETION_DIR)/$(APP).bash"; \
+			if command -v zsh >/dev/null 2>&1; then \
+				zsh -n "$(COMPLETION_DIR)/_$(APP)"; \
+			else \
+				printf 'Skipping zsh completion check; zsh not found\n'; \
+			fi; \
+			if command -v fish >/dev/null 2>&1; then \
+				fish -n "$(COMPLETION_DIR)/$(APP).fish"; \
+			else \
+				printf 'Skipping fish completion check; fish not found\n'; \
+			fi; \
+			;; \
+		install) \
+			mkdir -p "$(BASH_COMPLETION_DIR)" "$(ZSH_COMPLETION_DIR)" "$(FISH_COMPLETION_DIR)"; \
+			$(INSTALL) -m 0644 "$(COMPLETION_DIR)/$(APP).bash" "$(BASH_COMPLETION_DIR)/$(APP)"; \
+			$(INSTALL) -m 0644 "$(COMPLETION_DIR)/_$(APP)" "$(ZSH_COMPLETION_DIR)/_$(APP)"; \
+			$(INSTALL) -m 0644 "$(COMPLETION_DIR)/$(APP).fish" "$(FISH_COMPLETION_DIR)/$(APP).fish"; \
+			printf 'Installed bash completion to %s/%s\n' "$(BASH_COMPLETION_DIR)" "$(APP)"; \
+			printf 'Installed zsh completion to %s/_%s\n' "$(ZSH_COMPLETION_DIR)" "$(APP)"; \
+			printf 'Installed fish completion to %s/%s.fish\n' "$(FISH_COMPLETION_DIR)" "$(APP)"; \
+			;; \
+		*) \
+			echo "Unsupported MODE '$$mode'. Supported values: check, install" >&2; \
+			exit 1; \
+			;; \
+	esac
 
 .PHONY: fmt
-fmt: ## Format Rust sources
-	@$(CARGO_ENV) $(CARGO) fmt --all
-
-.PHONY: fmt-check
-fmt-check: ## Check Rust formatting without changing files
-	@$(CARGO_ENV) $(CARGO) fmt --all --check
+fmt: ## Format Rust sources. Use CHECK_ONLY=1 to check without writing
+	@if [ "$(CHECK_ONLY)" = "1" ]; then \
+		$(CARGO_ENV) $(CARGO) fmt --all --check; \
+	else \
+		$(CARGO_ENV) $(CARGO) fmt --all; \
+	fi
 
 .PHONY: lint
 lint: ## Run clippy with warnings treated as errors
@@ -112,33 +140,20 @@ lint: ## Run clippy with warnings treated as errors
 test: ## Run unit tests
 	@$(CARGO_ENV) $(CARGO) test
 
-.PHONY: completion-check
-completion-check: ## Syntax-check shell completion files when shells are available
-	@bash -n "$(COMPLETION_DIR)/$(APP).bash"
-	@if command -v zsh >/dev/null 2>&1; then \
-		zsh -n "$(COMPLETION_DIR)/_$(APP)"; \
-	else \
-		printf 'Skipping zsh completion check; zsh not found\n'; \
-	fi
-	@if command -v fish >/dev/null 2>&1; then \
-		fish -n "$(COMPLETION_DIR)/$(APP).fish"; \
-	else \
-		printf 'Skipping fish completion check; fish not found\n'; \
-	fi
-
 .PHONY: kani
 kani: ## Run Kani model checking harnesses
 	@$(CARGO_ENV) $(CARGO) kani
 
-.PHONY: integration-test
-integration-test: ## Run Docker Compose integration tests
+.PHONY: integration
+integration: ## Run Docker Compose integration tests
 	@COMPOSE="$(COMPOSE)" DOCKER="$(DOCKER)" $(CARGO_ENV) $(CARGO) test --test integration_test -- --ignored --nocapture --test-threads=1
 
 .PHONY: check
-check: fmt-check lint test completion-check ## Run formatting, lint, tests, and completion checks
-
-.PHONY: verify
-verify: check kani integration-test ## Run all release-blocking quality gates
+check: ## Run formatting, lint, tests, and completion checks
+	@$(MAKE) --no-print-directory fmt CHECK_ONLY=1
+	@$(MAKE) --no-print-directory lint
+	@$(MAKE) --no-print-directory test
+	@$(MAKE) --no-print-directory _completions CHECK_ONLY=1
 
 .PHONY: clean
 clean: ## Remove local build artifacts
@@ -375,7 +390,7 @@ release: ## Build binaries for origin/main, publish a GitHub Release, and push t
 	fi; \
 	tag="v$$release_version"; \
 	printf 'Running release quality gate for %s\n' "$$tag"; \
-	"$$make_bin" -f "$(CURDIR)/Makefile" -C "$$tmpdir" verify; \
+	"$$make_bin" -f "$(CURDIR)/Makefile" -C "$$tmpdir" check integration kani; \
 	printf 'Building release assets for %s\n' "$$tag"; \
 	"$$make_bin" -f "$(CURDIR)/Makefile" -C "$$tmpdir" dist OS=darwin,linux ARCH=amd64,arm64; \
 	printf 'Checking release state for %s\n' "$$tag"; \
@@ -420,7 +435,9 @@ help: ## Show this help message
 	@printf "  \033[36mGHCR_TAGS\033[0m              Release image tags, defaults to \033[36m%s\033[0m\n" "$(GHCR_TAGS)"
 	@printf "  \033[36mGHCR_LOGIN\033[0m             Log in to GHCR with gh auth token before pushing, defaults to \033[36m%s\033[0m\n" "$(GHCR_LOGIN)"
 	@printf "\n\033[1mExamples:\033[0m\n"
-	@printf "  \033[36mmake build install\033[0m                          # to build and install the host binary\n"
-	@printf "  \033[36mmake dist OS=darwin,linux ARCH=amd64,arm64\033[0m  # to build release binaries and checksums\n"
-	@printf "  \033[36mmake -n release\033[0m                             # to preview release steps\n"
-	@printf "  \033[36mmake release\033[0m                                # to verify, build, and publish a release\n"
+	@printf "  \033[36m%-44s\033[0m # to check formatting without writing\n" "make fmt CHECK_ONLY=1"
+	@printf "  \033[36m%-44s\033[0m # to build and install the host binary and completions\n" "make install COMPLETION=1"
+	@printf "  \033[36m%-44s\033[0m # to run all release-blocking quality gates\n" "make check integration kani"
+	@printf "  \033[36m%-44s\033[0m # to build release binaries and checksums\n" "make dist OS=darwin,linux ARCH=amd64,arm64"
+	@printf "  \033[36m%-44s\033[0m # to preview release steps\n" "make -n release"
+	@printf "  \033[36m%-44s\033[0m # to run gates, build, and publish a release\n" "make release"
