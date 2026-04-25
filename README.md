@@ -39,6 +39,13 @@ make check
 make dist OS=darwin ARCH=arm64
 ```
 
+Shell completions for bash, zsh, and fish are checked in under
+`completions/` and can be installed under `~/.local/share`:
+
+```sh
+make install-completions
+```
+
 ## Release
 
 `make release` follows the `origin/main` ref, builds release binaries for
