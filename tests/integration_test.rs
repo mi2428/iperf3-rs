@@ -39,10 +39,16 @@ const BIDIR_SCENARIO: &str = "tcp-bidir";
 // - the metrics-enabled iperf3-rs server publishes non-zero
 //   `iperf3_bytes` and `iperf3_bandwidth` samples with the expected
 //   server-mode integration labels;
+// - that same metrics-enabled server keeps the normal upstream human-readable
+//   stdout shape instead of going silent;
 // - an iperf3-rs client can complete a JSON test against upstream iperf3;
+// - an iperf3-rs client with metrics enabled still preserves `-J` as a normal
+//   complete JSON document rather than turning it into JSON stream output;
 // - an iperf3-rs client run from the metrics-enabled `client-rs` service
 //   publishes non-zero `iperf3_bytes` and `iperf3_bandwidth` samples with the
 //   expected client-mode integration labels;
+// - a metrics-enabled iperf3-rs client without `-J` keeps normal
+//   human-readable stdout;
 // - client metrics appear in Pushgateway while a longer run is still active;
 // - the long-running iperf3-rs server continues pushing metrics after a later
 //   client connection;
@@ -85,6 +91,8 @@ fn compose_interop_and_pushgateway_metrics() {
         "server",
         &["iperf3_bytes", "iperf3_bandwidth"],
     );
+    wait_for_service_log_contains(&project, "server-rs", "Server listening on");
+    wait_for_service_log_contains(&project, "server-rs", "[ ID]");
     let first_server_push = wait_for_metric_value_gt(
         &project,
         "push_time_seconds",
@@ -98,24 +106,28 @@ fn compose_interop_and_pushgateway_metrics() {
     // traffic. This covers the opposite client/server direction. The scenario
     // override keeps metrics from this reference-server run separate from the
     // iperf3-rs-to-iperf3-rs client metrics asserted below.
-    let iperf3rs_to_upstream = retry_json_client("iperf3-rs client to upstream server", || {
-        project.client_output(&[
-            "iperf3-rs",
-            "--push.label",
-            "scenario=tcp-reference",
-            "-c",
-            "reference",
-            "-t",
-            "1",
-            "-J",
-        ])
-    });
+    let iperf3rs_to_upstream_output =
+        retry_json_client_output("iperf3-rs client to upstream server", || {
+            project.client_output(&[
+                "iperf3-rs",
+                "--push.label",
+                "scenario=tcp-reference",
+                "-c",
+                "reference",
+                "-t",
+                "1",
+                "-J",
+            ])
+        });
+    assert_stdout_is_json_document(&iperf3rs_to_upstream_output);
+    let iperf3rs_to_upstream =
+        parse_iperf_summary(&iperf3rs_to_upstream_output).expect("iperf JSON should parse");
     assert_iperf_summary_has_traffic(&iperf3rs_to_upstream);
 
     // Metrics check: run iperf3-rs against iperf3-rs. Pushgateway
     // configuration comes from the `client-rs` service environment, so this is
     // deliberately just a normal iperf client command.
-    project.run_client(&[
+    let iperf3rs_to_iperf3rs_output = project.client_output(&[
         "iperf3-rs",
         "--push.label",
         "scenario=tcp",
@@ -126,6 +138,11 @@ fn compose_interop_and_pushgateway_metrics() {
         "-i",
         "1",
     ]);
+    assert_success(
+        &["iperf3-rs metrics-enabled human stdout"],
+        &iperf3rs_to_iperf3rs_output,
+    );
+    assert_human_iperf_output(&iperf3rs_to_iperf3rs_output);
 
     // Scrape Pushgateway and require non-zero traffic and bandwidth samples.
     // The metric names prove that the pusher emitted the expected metric
@@ -236,9 +253,9 @@ fn compose_interop_and_pushgateway_metrics() {
         &["iperf3_bytes", "iperf3_bandwidth"],
     );
 
-    // Bidirectional mode emits both forward and reverse stream data. This
-    // protects the summary/fallback parsing used by the metrics reporter for
-    // `sum_bidir_reverse`-style interval events.
+    // Bidirectional mode emits both forward and reverse stream data. Requiring
+    // Pushgateway samples for it protects the interval aggregation path from
+    // dropping bidirectional runs entirely.
     let bidir = retry_json_client("iperf3-rs bidirectional TCP client", || {
         project.client_output(&[
             "iperf3-rs",
@@ -350,11 +367,6 @@ impl ComposeProject {
         assert!(status.success(), "docker compose failed with {status}");
     }
 
-    fn run_client(&self, args: &[&str]) {
-        let output = self.client_output(args);
-        assert_success(args, &output);
-    }
-
     fn spawn_client(&self, args: &[&str]) -> Child {
         let mut compose_args = vec!["run", "--rm", "client-rs"];
         compose_args.extend_from_slice(args);
@@ -375,6 +387,10 @@ impl ComposeProject {
         self.base_command(args)
             .output()
             .expect("failed to run docker compose")
+    }
+
+    fn service_logs(&self, service: &str) -> Output {
+        self.output(&["logs", "--no-color", service])
     }
 
     fn base_command(&self, args: &[&str]) -> Command {
@@ -589,20 +605,23 @@ fn unique_suffix() -> String {
     )
 }
 
-fn retry_json_client(label: &str, mut run: impl FnMut() -> Output) -> Value {
+fn retry_json_client(label: &str, run: impl FnMut() -> Output) -> Value {
+    let output = retry_json_client_output(label, run);
+    parse_iperf_summary(&output).expect("iperf JSON should be valid after successful retry")
+}
+
+fn retry_json_client_output(label: &str, mut run: impl FnMut() -> Output) -> Output {
     // iperf servers can take a moment to accept connections after Compose marks
     // the containers as started. Retrying here makes startup ordering explicit
     // without weakening the final success condition: the last successful output
-    // still has to be valid iperf JSON with non-zero transferred bytes.
-    let output = wait_for(label, || {
+    // still has to be parseable iperf JSON, and callers assert traffic.
+    wait_for(label, || {
         let output = run();
         if !output.status.success() || parse_iperf_summary(&output).is_none() {
             return output;
         }
         output
-    });
-
-    parse_iperf_summary(&output).expect("iperf JSON should be valid after successful retry")
+    })
 }
 
 fn wait_for(label: &str, mut run: impl FnMut() -> Output) -> Output {
@@ -644,12 +663,9 @@ fn complete_iperf_summary(json: Value) -> Option<Value> {
 }
 
 fn parse_iperf_json_stream_summary(raw: &[u8]) -> Option<Value> {
-    // `client-rs` has Pushgateway configured in its environment. When that
-    // service runs `iperf3-rs -J`, the wrapper enables libiperf's JSON callback
-    // internally for metrics and mirrors callback events because the caller
-    // requested JSON output. Accepting JSON stream output here keeps the
-    // interop assertion focused on the iperf result instead of on the stdout
-    // encoding chosen by the metrics path.
+    // Accept JSON stream output when the caller explicitly requests upstream
+    // `--json-stream`; plain `-J` should still be a single complete JSON
+    // document even when Pushgateway metrics are enabled.
     let text = std::str::from_utf8(raw).ok()?;
     let mut start = None;
     let mut end = None;
@@ -669,6 +685,51 @@ fn parse_iperf_json_stream_summary(raw: &[u8]) -> Option<Value> {
         "start": start?,
         "end": end?,
     }))
+}
+
+fn assert_stdout_is_json_document(output: &Output) {
+    let json = serde_json::from_slice::<Value>(&output.stdout).unwrap_or_else(|err| {
+        panic!(
+            "stdout should be a complete JSON document, got {err}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    assert!(
+        complete_iperf_summary(json).is_some(),
+        "stdout JSON should be a complete iperf summary\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+fn assert_human_iperf_output(output: &Output) {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[ ID]") && stdout.contains("Interval") && stdout.contains("sender"),
+        "metrics-enabled iperf3-rs should preserve human-readable iperf stdout\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        serde_json::from_slice::<Value>(&output.stdout).is_err(),
+        "metrics-enabled iperf3-rs without -J should not replace human stdout with JSON"
+    );
+}
+
+fn wait_for_service_log_contains(project: &ComposeProject, service: &str, needle: &str) {
+    wait_for(&format!("{service} logs contain {needle:?}"), || {
+        let output = project.service_logs(service);
+        if !output.status.success() {
+            return output;
+        }
+
+        let logs = String::from_utf8_lossy(&output.stdout);
+        if logs.contains(needle) {
+            output
+        } else {
+            failed_output_like(output)
+        }
+    });
 }
 
 fn assert_iperf_summary_has_traffic(json: &Value) {
