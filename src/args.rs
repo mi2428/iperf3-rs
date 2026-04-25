@@ -77,10 +77,8 @@ fn extract_app_options_with_env(
     }
 
     let push_gateway_url = push_gateway.as_deref().map(parse_url).transpose()?;
-    if push_gateway_url.is_some() {
-        if job.is_empty() || test.is_empty() || scenario.is_empty() {
-            bail!("--job, --test, and --scenario must not be empty when --push-gateway is set");
-        }
+    if push_gateway_url.is_some() && (job.is_empty() || test.is_empty() || scenario.is_empty()) {
+        bail!("--job, --test, and --scenario must not be empty when --push-gateway is set");
     }
 
     Ok((
