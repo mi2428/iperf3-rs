@@ -53,18 +53,17 @@ make install COMPLETION=1
 
 ## Release
 
-`make release` follows the `origin/main` ref, runs `make check integration
-kani`, builds release binaries for `darwin-amd64`, `darwin-arm64`,
-`linux-amd64`, and `linux-arm64`, writes `dist/checksums.txt`, and creates a
-GitHub Release tagged from the Cargo package version.
+Publishing a GitHub Release triggers `.github/workflows/release.yml`. The
+workflow checks out the release tag, builds and pushes the multi-arch GHCR image,
+and uploads release binaries plus `checksums.txt` to the GitHub Release.
 
-```sh
-make release
-```
+Release assets are built for `darwin-amd64`, `darwin-arm64`, `linux-amd64`, and
+`linux-arm64`. The container image is published as
+`ghcr.io/<owner>/iperf3-rs:<tag>`; non-prerelease releases also update
+`ghcr.io/<owner>/iperf3-rs:latest`.
 
-The release target requires `gh`, Docker for Linux builds, and a macOS host for
-Darwin builds. Release builds set `IPERF3_RS_CONFIGURE_ARGS=--without-openssl`
-so the bundled libiperf does not depend on external OpenSSL libraries.
+Release builds set `IPERF3_RS_CONFIGURE_ARGS=--without-openssl` so the bundled
+libiperf does not depend on external OpenSSL libraries.
 
 ## Usage
 
