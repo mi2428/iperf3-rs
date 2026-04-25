@@ -1,45 +1,85 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
-formula_path="${FORMULA_PATH:-dist/iperf3-rs.rb}"
-release_tag="${RELEASE_TAG:?RELEASE_TAG is required}"
-tap_token="${HOMEBREW_TAP_TOKEN:?HOMEBREW_TAP_TOKEN is required}"
+# Publish the generated formula into the Homebrew tap repository.
+readonly formula_path="${FORMULA_PATH:-dist/iperf3-rs.rb}"
+readonly release_tag="${RELEASE_TAG:?RELEASE_TAG is required}"
+readonly tap_token="${HOMEBREW_TAP_TOKEN:?HOMEBREW_TAP_TOKEN is required}"
+readonly bot_name="github-actions[bot]"
+readonly bot_email="41898282+github-actions[bot]@users.noreply.github.com"
 
-if [ ! -f "${formula_path}" ]; then
-  echo "Homebrew formula not found: ${formula_path}" >&2
+workdir=""
+
+die() {
+  printf 'error: %s\n' "$*" >&2
   exit 1
-fi
+}
 
-if [ -n "${HOMEBREW_TAP_REPOSITORY:-}" ]; then
-  tap_repository="${HOMEBREW_TAP_REPOSITORY}"
-elif [ -n "${GITHUB_REPOSITORY_OWNER:-}" ]; then
-  tap_repository="${GITHUB_REPOSITORY_OWNER}/homebrew-iperf3-rs"
-elif [ -n "${GITHUB_REPOSITORY:-}" ]; then
-  owner="${GITHUB_REPOSITORY%%/*}"
-  tap_repository="${owner}/homebrew-iperf3-rs"
-else
-  echo "HOMEBREW_TAP_REPOSITORY or GitHub repository metadata is required" >&2
-  exit 1
-fi
+cleanup() {
+  [[ -z "${workdir}" ]] || rm -rf "${workdir}"
+}
 
-workdir="$(mktemp -d)"
-trap 'rm -rf "${workdir}"' EXIT
+# Resolve the tap repository while keeping the default tied to the release owner.
+resolve_tap_repository() {
+  local owner
 
-git clone "https://github.com/${tap_repository}.git" "${workdir}"
-mkdir -p "${workdir}/Formula"
-cp "${formula_path}" "${workdir}/Formula/iperf3-rs.rb"
+  if [[ -n "${HOMEBREW_TAP_REPOSITORY:-}" ]]; then
+    printf '%s\n' "${HOMEBREW_TAP_REPOSITORY}"
+    return
+  fi
 
-git -C "${workdir}" config user.name "github-actions[bot]"
-git -C "${workdir}" config user.email \
-  "41898282+github-actions[bot]@users.noreply.github.com"
-git -C "${workdir}" add Formula/iperf3-rs.rb
+  if [[ -n "${GITHUB_REPOSITORY_OWNER:-}" ]]; then
+    printf '%s/homebrew-iperf3-rs\n' "${GITHUB_REPOSITORY_OWNER}"
+    return
+  fi
 
-if git -C "${workdir}" diff --cached --quiet; then
-  echo "Homebrew formula is already up to date"
-  exit 0
-fi
+  if [[ -n "${GITHUB_REPOSITORY:-}" && "${GITHUB_REPOSITORY}" == */* ]]; then
+    owner="${GITHUB_REPOSITORY%%/*}"
+    printf '%s/homebrew-iperf3-rs\n' "${owner}"
+    return
+  fi
 
-git -C "${workdir}" commit -m "iperf3-rs ${release_tag}"
-git -C "${workdir}" remote set-url origin \
-  "https://x-access-token:${tap_token}@github.com/${tap_repository}.git"
-git -C "${workdir}" push
+  die "HOMEBREW_TAP_REPOSITORY or GitHub repository metadata is required"
+}
+
+# Keep tap commits clearly attributable to GitHub Actions.
+configure_git_author() {
+  git -C "${workdir}" config user.name "${bot_name}"
+  git -C "${workdir}" config user.email "${bot_email}"
+}
+
+# Copy the generated formula, commit it only when it changed, and push it.
+publish_formula() {
+  local tap_repository="$1"
+
+  git clone "https://github.com/${tap_repository}.git" "${workdir}"
+  mkdir -p "${workdir}/Formula"
+  cp "${formula_path}" "${workdir}/Formula/iperf3-rs.rb"
+
+  configure_git_author
+  git -C "${workdir}" add Formula/iperf3-rs.rb
+
+  if git -C "${workdir}" diff --cached --quiet; then
+    printf 'Homebrew formula is already up to date\n'
+    return
+  fi
+
+  git -C "${workdir}" commit -m "iperf3-rs ${release_tag}"
+  git -C "${workdir}" remote set-url origin \
+    "https://x-access-token:${tap_token}@github.com/${tap_repository}.git"
+  git -C "${workdir}" push
+}
+
+main() {
+  local tap_repository
+
+  [[ -f "${formula_path}" ]] || die "Homebrew formula not found: ${formula_path}"
+
+  tap_repository="$(resolve_tap_repository)"
+  workdir="$(mktemp -d)"
+  trap cleanup EXIT
+
+  publish_formula "${tap_repository}"
+}
+
+main "$@"
