@@ -1,9 +1,11 @@
 #include "iperf_config.h"
+
+#include <signal.h>
+#include <stdio.h>
+
 #include "iperf.h"
 #include "iperf_api.h"
 #include "iperf3rs_shim.h"
-
-#include <signal.h>
 
 void
 iperf3rs_enable_json_stream(struct iperf_test *test)
