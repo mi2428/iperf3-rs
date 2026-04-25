@@ -318,22 +318,38 @@ iperf3_packets
 iperf3_error_packets
 iperf3_jitter
 iperf3_tcp_retransmits
+iperf3_tcp_rtt_seconds
+iperf3_tcp_rttvar_seconds
+iperf3_tcp_snd_cwnd_bytes
+iperf3_tcp_snd_wnd_bytes
+iperf3_tcp_pmtu_bytes
+iperf3_tcp_reorder_events
+iperf3_udp_out_of_order_packets
+iperf3_omitted
 ```
 
 Metric mapping:
 
 | Metric | Source field | Notes |
 | --- | --- | --- |
-| `iperf3_bytes` | `bytes` | Interval bytes from the aggregate sum. |
-| `iperf3_bandwidth` | `bits_per_second` | Bits per second for the interval. |
-| `iperf3_packets` | `packets` | UDP packet count when available. |
-| `iperf3_error_packets` | `lost_packets` | UDP lost/error packet count when available. |
-| `iperf3_jitter` | `jitter_ms` | Converted from milliseconds to seconds. |
-| `iperf3_tcp_retransmits` | `retransmits` | TCP sender retransmits when reported by libiperf and the OS. |
+| `iperf3_bytes` | `bytes_transferred` | Interval bytes from the aggregate report side. |
+| `iperf3_bandwidth` | `bytes_transferred`, `interval_duration` | Bits per second for the interval. |
+| `iperf3_packets` | `interval_packet_count` | UDP packet count when available. |
+| `iperf3_error_packets` | `interval_cnt_error` | UDP lost/error packet count when available. |
+| `iperf3_jitter` | `jitter` | UDP receiver jitter in seconds. |
+| `iperf3_tcp_retransmits` | `interval_retrans` | TCP sender retransmits when reported by libiperf and the OS. |
+| `iperf3_tcp_rtt_seconds` | `rtt` | TCP sender smoothed RTT from TCP_INFO, converted from microseconds to seconds. |
+| `iperf3_tcp_rttvar_seconds` | `rttvar` | TCP sender RTT variance from TCP_INFO, converted from microseconds to seconds. |
+| `iperf3_tcp_snd_cwnd_bytes` | `snd_cwnd` | TCP sender congestion window in bytes. |
+| `iperf3_tcp_snd_wnd_bytes` | `snd_wnd` | TCP sender send window in bytes when the platform reports it. |
+| `iperf3_tcp_pmtu_bytes` | `pmtu` | TCP sender path MTU in bytes when the platform reports it. |
+| `iperf3_tcp_reorder_events` | `reorder` | TCP sender reordering events when the platform reports them. |
+| `iperf3_udp_out_of_order_packets` | `out_of_order` | UDP out-of-order packets observed in the interval. |
+| `iperf3_omitted` | `omitted` | `1` for omitted warm-up intervals, otherwise `0`. |
 
 Not every metric is meaningful for every iperf mode. For example, UDP-specific
-packet and jitter fields are zero for normal TCP runs, and retransmits depend on
-libiperf and operating-system support for TCP information.
+packet and jitter fields are zero for normal TCP runs, and TCP_INFO-derived
+fields depend on libiperf and operating-system support for TCP information.
 
 Use a custom prefix when multiple tools share a Pushgateway:
 
