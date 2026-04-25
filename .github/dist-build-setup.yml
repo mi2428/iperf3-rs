@@ -1,0 +1,30 @@
+- name: Prepare libiperf build inputs
+  shell: bash
+  run: |
+    git submodule update --init --recursive
+    echo "IPERF3_RS_CONFIGURE_ARGS=--without-openssl" >> "${GITHUB_ENV}"
+
+- name: Install Linux build dependencies
+  if: runner.os == 'Linux'
+  shell: bash
+  run: |
+    sudo apt-get update
+    sudo apt-get install -y --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      make \
+      pkg-config
+
+- name: Cache Cargo registry
+  uses: actions/cache@v4
+  with:
+    path: ~/.cargo/registry
+    key: ${{ runner.os }}-${{ join(matrix.targets, '-') }}-release-cargo-registry-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+    restore-keys: ${{ runner.os }}-${{ join(matrix.targets, '-') }}-release-cargo-registry-
+
+- name: Cache Rust build outputs
+  uses: actions/cache@v4
+  with:
+    path: target
+    key: ${{ runner.os }}-${{ join(matrix.targets, '-') }}-release-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+    restore-keys: ${{ runner.os }}-${{ join(matrix.targets, '-') }}-release-target-
