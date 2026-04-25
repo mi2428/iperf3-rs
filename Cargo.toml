@@ -2,7 +2,7 @@
 name = "iperf3-rs"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.93"
 description = "Rust frontend for libiperf with live Prometheus Pushgateway export"
 repository = "https://github.com/mi2428/iperf3-rs"
 homepage = "https://github.com/mi2428/iperf3-rs"
