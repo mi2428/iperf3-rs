@@ -37,7 +37,19 @@ jobs:
             pkg-config
 
       - name: Install Rust toolchain
-        run: rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+        run: rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt
+
+      - name: Cache Rust dependencies and build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-cargo-
 
       - name: Run checks
         run: make check
@@ -61,7 +73,19 @@ jobs:
             pkg-config
 
       - name: Install Rust toolchain
-        run: rustup toolchain install stable --profile minimal
+        run: rustup toolchain install 1.95.0 --profile minimal
+
+      - name: Cache Rust dependencies and build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-cargo-
 
       - name: Run Kani
         uses: model-checking/kani-github-action@v1
@@ -90,14 +114,52 @@ jobs:
             pkg-config
 
       - name: Install Rust toolchain
-        run: rustup toolchain install stable --profile minimal
+        run: rustup toolchain install 1.95.0 --profile minimal
+
+      - name: Cache Rust dependencies and build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-cargo-
 
       - name: Show Docker versions
         run: |
           docker version
           docker compose version
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build integration image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: integration-test
+          tags: iperf3-rs:test
+          load: true
+          cache-from: type=gha,scope=iperf3-rs-integration
+          cache-to: type=gha,mode=max,scope=iperf3-rs-integration
+
+      - name: Build release smoke image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: release
+          tags: iperf3-rs:release-smoke-ci
+          load: true
+          cache-from: type=gha,scope=iperf3-rs-release
+          cache-to: type=gha,mode=max,scope=iperf3-rs-release
+
       - name: Run Docker integration tests
+        env:
+          RELEASE_SMOKE_IMAGE: iperf3-rs:release-smoke-ci
+          SKIP_INTEGRATION_IMAGE_BUILD: "true"
         run: make integration-test
 
   quality-gate:

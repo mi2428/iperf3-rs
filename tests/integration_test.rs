@@ -56,7 +56,9 @@ fn compose_interop_and_pushgateway_metrics() {
     // Build the shared test image and start the long-running services. The
     // `ComposeProject` uses a unique project name so concurrent or stale test
     // runs do not reuse containers from another invocation.
-    project.run_compose(&["build", "client-rs"]);
+    if !truthy_env("SKIP_INTEGRATION_IMAGE_BUILD") {
+        project.run_compose(&["build", "client-rs"]);
+    }
     project.run_compose(&["up", "-d", "server-rs", "reference", "pushgateway"]);
 
     // Wait until Pushgateway is ready to accept writes. This prevents the
@@ -403,11 +405,20 @@ impl Drop for ComposeProject {
 struct ReleaseImage {
     docker: OsString,
     tag: String,
+    remove_on_drop: bool,
 }
 
 impl ReleaseImage {
     fn build() -> Self {
         let docker = docker_command();
+        if let Some(tag) = nonempty_env("RELEASE_SMOKE_IMAGE") {
+            return Self {
+                docker,
+                tag,
+                remove_on_drop: false,
+            };
+        }
+
         let tag = format!("iperf3-rs:release-smoke-{}", unique_suffix());
         let output = Command::new(&docker)
             .arg("build")
@@ -425,12 +436,20 @@ impl ReleaseImage {
             &output,
         );
 
-        Self { docker, tag }
+        Self {
+            docker,
+            tag,
+            remove_on_drop: true,
+        }
     }
 }
 
 impl Drop for ReleaseImage {
     fn drop(&mut self) {
+        if !self.remove_on_drop {
+            return;
+        }
+
         // Best-effort cleanup keeps the failure output from the test command
         // visible while removing the unique local image tag created for the
         // smoke test.
@@ -543,6 +562,16 @@ fn compose_command() -> Vec<OsString> {
 
 fn docker_command() -> OsString {
     env::var_os("DOCKER").unwrap_or_else(|| OsString::from("docker"))
+}
+
+fn truthy_env(key: &str) -> bool {
+    nonempty_env(key)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or_default()
+}
+
+fn nonempty_env(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|value| !value.trim().is_empty())
 }
 
 fn repo_root() -> PathBuf {
