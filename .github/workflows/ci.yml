@@ -95,7 +95,7 @@ jobs:
           args: kani
 
   integration:
-    name: make integration-test
+    name: make integration
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -160,7 +160,7 @@ jobs:
         env:
           RELEASE_SMOKE_IMAGE: iperf3-rs:release-smoke-ci
           SKIP_INTEGRATION_IMAGE_BUILD: "true"
-        run: make integration-test
+        run: make integration
 
   quality-gate:
     name: quality gate
