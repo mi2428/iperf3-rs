@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use args::extract_app_options;
 use iperf::{IperfTest, Role};
-use metrics::JsonMetricsReporter;
+use metrics::IntervalMetricsReporter;
 use pushgateway::{PushGateway, PushGatewayConfig};
 
 const EXIT_OPTION_ERROR: u8 = 1;
@@ -67,11 +67,7 @@ fn run() -> Result<()> {
             user_agent: app.push_user_agent,
             metric_prefix: app.push_metric_prefix,
         })?;
-        Some(JsonMetricsReporter::attach(
-            &mut test,
-            sink,
-            app.mirror_json,
-        )?)
+        Some(IntervalMetricsReporter::attach(&mut test, sink)?)
     } else {
         None
     };
@@ -79,7 +75,7 @@ fn run() -> Result<()> {
     test.run()?;
 
     // Dropping the reporter unregisters the C callback and drains the worker
-    // thread after libiperf has stopped producing JSON events.
+    // thread after libiperf has stopped reporting interval metrics.
     drop(reporter);
     Ok(())
 }

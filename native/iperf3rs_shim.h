@@ -3,10 +3,16 @@
 
 #include "iperf_api.h"
 
-typedef void (*iperf3rs_json_callback)(struct iperf_test *, char *);
+typedef void (*iperf3rs_metrics_callback)(
+    struct iperf_test *,
+    double bytes,
+    double bits_per_second,
+    double packets,
+    double error_packets,
+    double jitter_seconds,
+    double tcp_retransmits);
 
-void iperf3rs_enable_json_stream(struct iperf_test *test);
-void iperf3rs_set_json_callback(struct iperf_test *test, iperf3rs_json_callback callback);
+void iperf3rs_enable_interval_metrics(struct iperf_test *test, iperf3rs_metrics_callback callback);
 int iperf3rs_run_server_once(struct iperf_test *test);
 int iperf3rs_current_errno(void);
 int iperf3rs_is_auth_test_error(void);

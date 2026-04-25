@@ -1,12 +1,12 @@
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_int};
+use std::os::raw::{c_char, c_double, c_int};
 use std::ptr::NonNull;
 
 use anyhow::{Context, Result, anyhow, bail};
 
 #[allow(non_camel_case_types)]
 mod ffi {
-    use super::{c_char, c_int};
+    use super::{c_char, c_double, c_int};
 
     // libiperf owns this object; Rust only passes the opaque pointer back to C.
     #[repr(C)]
@@ -14,7 +14,15 @@ mod ffi {
         _private: [u8; 0],
     }
 
-    pub type JsonCallback = unsafe extern "C" fn(*mut iperf_test, *mut c_char);
+    pub type MetricsCallback = unsafe extern "C" fn(
+        *mut iperf_test,
+        c_double,
+        c_double,
+        c_double,
+        c_double,
+        c_double,
+        c_double,
+    );
 
     unsafe extern "C" {
         pub fn iperf_new_test() -> *mut iperf_test;
@@ -31,8 +39,10 @@ mod ffi {
         pub fn iperf_get_test_one_off(test: *mut iperf_test) -> c_int;
         pub fn iperf_get_iperf_version() -> *const c_char;
 
-        pub fn iperf3rs_enable_json_stream(test: *mut iperf_test);
-        pub fn iperf3rs_set_json_callback(test: *mut iperf_test, callback: Option<JsonCallback>);
+        pub fn iperf3rs_enable_interval_metrics(
+            test: *mut iperf_test,
+            callback: Option<MetricsCallback>,
+        );
         pub fn iperf3rs_run_server_once(test: *mut iperf_test) -> c_int;
         pub fn iperf3rs_current_errno() -> c_int;
         pub fn iperf3rs_is_auth_test_error() -> c_int;
@@ -96,13 +106,8 @@ impl IperfTest {
         Ok(())
     }
 
-    pub fn enable_json_metrics(&mut self, callback: ffi::JsonCallback) {
-        unsafe {
-            // The shim enables JSON stream output even when the user did not ask
-            // for visible JSON, then routes each stream event to the Rust callback.
-            ffi::iperf3rs_enable_json_stream(self.as_ptr());
-            ffi::iperf3rs_set_json_callback(self.as_ptr(), Some(callback));
-        }
+    pub fn enable_interval_metrics(&mut self, callback: ffi::MetricsCallback) {
+        unsafe { ffi::iperf3rs_enable_interval_metrics(self.as_ptr(), Some(callback)) };
     }
 
     pub fn role(&self) -> Role {

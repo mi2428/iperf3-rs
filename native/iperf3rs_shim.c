@@ -10,17 +10,96 @@
 #include "iperf_api.h"
 #include "iperf3rs_shim.h"
 
-void
-iperf3rs_enable_json_stream(struct iperf_test *test)
-{
-    iperf_set_test_json_output(test, 1);
-    iperf_set_test_json_stream(test, 1);
-}
+static iperf3rs_metrics_callback interval_metrics_callback = NULL;
+
+static void iperf3rs_reporter_callback(struct iperf_test *test);
+static void iperf3rs_emit_interval_metrics(struct iperf_test *test);
 
 void
-iperf3rs_set_json_callback(struct iperf_test *test, iperf3rs_json_callback callback)
+iperf3rs_enable_interval_metrics(struct iperf_test *test, iperf3rs_metrics_callback callback)
 {
-    iperf_set_test_json_callback(test, callback);
+    interval_metrics_callback = callback;
+    test->reporter_callback = iperf3rs_reporter_callback;
+}
+
+static void
+iperf3rs_reporter_callback(struct iperf_test *test)
+{
+    iperf_reporter_callback(test);
+    iperf3rs_emit_interval_metrics(test);
+}
+
+static void
+iperf3rs_emit_interval_metrics(struct iperf_test *test)
+{
+    struct iperf_stream *stream = NULL;
+    struct iperf_interval_results *interval = NULL;
+    double bytes = 0.0;
+    double bandwidth_bits_per_second = 0.0;
+    double packets = 0.0;
+    double error_packets = 0.0;
+    double jitter_seconds = 0.0;
+    double tcp_retransmits = 0.0;
+    double interval_duration = 0.0;
+    int matched_streams = 0;
+    int interval_ok = 0;
+    int stream_must_be_sender;
+
+    if (interval_metrics_callback == NULL) {
+        return;
+    }
+
+    if (test->mode == BIDIRECTIONAL) {
+        stream_must_be_sender = test->role == 'c';
+    } else {
+        stream_must_be_sender = test->mode * test->mode;
+    }
+
+    SLIST_FOREACH(stream, &test->streams, streams) {
+        if (stream->sender != stream_must_be_sender) {
+            continue;
+        }
+
+        interval = TAILQ_LAST(&stream->result->interval_results, irlisthead);
+        if (interval == NULL) {
+            continue;
+        }
+
+        if (interval->interval_duration >= test->stats_interval * 0.10 ||
+            interval->bytes_transferred > 0) {
+            interval_ok = 1;
+        }
+
+        bytes += (double)interval->bytes_transferred;
+        packets += (double)interval->interval_packet_count;
+        error_packets += (double)interval->interval_cnt_error;
+        jitter_seconds += interval->jitter;
+        if (test->protocol->id == Ptcp && test->sender_has_retransmits == 1 && stream_must_be_sender) {
+            tcp_retransmits += (double)interval->interval_retrans;
+        }
+        if (matched_streams == 0) {
+            interval_duration = interval->interval_duration;
+        }
+        matched_streams += 1;
+    }
+
+    if (!interval_ok || matched_streams == 0) {
+        return;
+    }
+
+    if (interval_duration > 0.0) {
+        bandwidth_bits_per_second = bytes * 8.0 / interval_duration;
+    }
+    jitter_seconds /= matched_streams;
+
+    interval_metrics_callback(
+        test,
+        bytes,
+        bandwidth_bits_per_second,
+        packets,
+        error_packets,
+        jitter_seconds,
+        tcp_retransmits);
 }
 
 int

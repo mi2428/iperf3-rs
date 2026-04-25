@@ -25,7 +25,6 @@ pub struct AppOptions {
     pub push_retries: u32,
     pub push_user_agent: String,
     pub push_metric_prefix: String,
-    pub mirror_json: bool,
     pub show_help: bool,
     pub show_version: bool,
 }
@@ -57,7 +56,6 @@ fn extract_app_options_with_env(
                 push_retries: DEFAULT_PUSH_RETRIES,
                 push_user_agent: default_push_user_agent(),
                 push_metric_prefix: DEFAULT_PUSH_METRIC_PREFIX.to_owned(),
-                mirror_json: false,
                 show_help,
                 show_version,
             },
@@ -90,7 +88,6 @@ fn extract_app_options_with_env(
     let mut saw_push_job = false;
     let mut saw_push_label = !push_labels.is_empty();
     let mut saw_push_setting = false;
-    let mut mirror_json = false;
 
     let mut i = 0;
     while i < rest.len() {
@@ -99,10 +96,6 @@ fn extract_app_options_with_env(
             // After `--`, every token belongs to libiperf exactly as written.
             pass_through.extend(rest[i..].iter().cloned());
             break;
-        }
-
-        if observes_json_output(arg) {
-            mirror_json = true;
         }
 
         if let Some((key, value)) = split_long_value(arg) {
@@ -209,7 +202,6 @@ fn extract_app_options_with_env(
             push_retries,
             push_user_agent,
             push_metric_prefix,
-            mirror_json,
             show_help: false,
             show_version: false,
         },
@@ -405,10 +397,6 @@ fn reject_duplicate_labels(labels: &[(String, String)]) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn observes_json_output(arg: &str) -> bool {
-    arg == "-J" || arg == "--json" || arg == "--json-stream" || arg == "--json-stream-full-output"
 }
 
 fn find_informational_request(args: &[String]) -> (bool, bool) {
@@ -801,15 +789,6 @@ mod tests {
             parse_duration_option("--push.timeout", "7").unwrap(),
             Duration::from_secs(7)
         );
-    }
-
-    #[test]
-    fn notices_user_requested_json_output() {
-        for flag in ["-J", "--json", "--json-stream", "--json-stream-full-output"] {
-            let args = vec!["iperf3-rs".to_owned(), flag.to_owned()];
-            let (app, _) = extract_app_options_with_env(args, |_| None).unwrap();
-            assert!(app.mirror_json, "{flag} should mirror JSON output");
-        }
     }
 
     #[test]
