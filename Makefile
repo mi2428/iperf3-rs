@@ -352,11 +352,6 @@ _publish-release: _release-check
 		--title "$(TAG)" \
 		--notes "Release $(TAG) built from $(TARGET_SHA)"
 
-.PHONY: release-image
-release-image: ## Build and push the GHCR multi-arch release image for the current checkout
-	@target_sha="$$($(GIT) rev-parse HEAD)"; \
-	$(MAKE) _publish-release-image TAG="$(TAG)" TARGET_SHA="$$target_sha"
-
 .PHONY: release
 release: ## Build binaries for origin/main, publish a GitHub Release, and push the GHCR multi-arch image
 	@command -v $(GIT) >/dev/null 2>&1 || { \
@@ -427,6 +422,5 @@ help: ## Show this help message
 	@printf "\n\033[1mExamples:\033[0m\n"
 	@printf "  \033[36mmake build install\033[0m                          # to build and install the host binary\n"
 	@printf "  \033[36mmake dist OS=darwin,linux ARCH=amd64,arm64\033[0m  # to build release binaries and checksums\n"
-	@printf "  \033[36mmake release-image TAG=v0.1.0\033[0m               # to push the GHCR multi-arch image\n"
 	@printf "  \033[36mmake -n release\033[0m                             # to preview release steps\n"
 	@printf "  \033[36mmake release\033[0m                                # to verify, build, and publish a release\n"
