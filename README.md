@@ -72,8 +72,7 @@ Release archives are built for `x86_64-apple-darwin`,
 `aarch64-unknown-linux-gnu`. The manual `make dist` target is still available
 for local release-style binaries under `dist/`.
 
-The multi-arch container image is published by
-`.github/workflows/container-release.yml` as
+The multi-arch container image is published by `.github/workflows/ghcr.yml` as
 `ghcr.io/<owner>/iperf3-rs:<tag>`; non-prerelease tags also update
 `ghcr.io/<owner>/iperf3-rs:latest`.
 

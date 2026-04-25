@@ -1,0 +1,166 @@
+name: GHCR
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ghcr-${{ github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref_name }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Prepare image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "${GITHUB_OUTPUT}"
+
+      - name: Compute image metadata
+        id: meta
+        env:
+          RELEASE_PRERELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease || contains(github.ref_name, '-') }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
+        run: .github/scripts/release_metadata.sh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.platform }} image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: release
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.source=${{ steps.meta.outputs.source }}
+            org.opencontainers.image.revision=${{ steps.meta.outputs.revision }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+          build-args: |
+            IPERF3_RS_BUILD_DATE=${{ steps.meta.outputs.build_date }}
+            IPERF3_RS_GIT_COMMIT=${{ steps.meta.outputs.git_commit }}
+            IPERF3_RS_GIT_COMMIT_DATE=${{ steps.meta.outputs.git_commit_date }}
+            IPERF3_RS_GIT_DESCRIBE=${{ steps.meta.outputs.git_describe }}
+          cache-from: type=gha,scope=iperf3-rs-release-image-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=iperf3-rs-release-image-${{ matrix.arch }}
+
+      - name: Export image digest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          digest="${{ steps.build.outputs.digest }}"
+          test -n "${digest}"
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${digest#sha256:}"
+
+      - name: Upload image digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Prepare image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "${GITHUB_OUTPUT}"
+
+      - name: Compute image metadata
+        id: meta
+        env:
+          RELEASE_PRERELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease || contains(github.ref_name, '-') }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
+        run: .github/scripts/release_metadata.sh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download image digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: Create and push manifest list
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -Eeuo pipefail
+
+          mapfile -t tags <<< "${TAGS}"
+          tag_args=()
+          for tag in "${tags[@]}"; do
+            [[ -n "${tag}" ]] && tag_args+=("-t" "${tag}")
+          done
+          if ((${#tag_args[@]} == 0)); then
+            echo "No image tags were generated" >&2
+            exit 1
+          fi
+
+          sources=()
+          for digest_file in "${RUNNER_TEMP}/digests"/*; do
+            [[ -f "${digest_file}" ]] || continue
+            sources+=("${IMAGE}@sha256:$(basename "${digest_file}")")
+          done
+          if ((${#sources[@]} == 0)); then
+            echo "No image digests were downloaded" >&2
+            exit 1
+          fi
+
+          docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
