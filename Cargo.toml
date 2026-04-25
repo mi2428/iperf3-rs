@@ -8,7 +8,9 @@ license = "MIT"
 [dependencies]
 anyhow = "1"
 crossbeam-channel = "0.5"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+# Use webpki roots so the scratch release image can validate public HTTPS
+# Pushgateway certificates without an OS CA bundle.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-webpki-roots"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"

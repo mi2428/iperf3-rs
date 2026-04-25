@@ -46,9 +46,12 @@ COPY . .
 RUN IPERF3_RS_CONFIGURE_ARGS=--without-openssl cargo build --release --locked \
  && mkdir -p /out \
  && cp target/release/iperf3-rs /out/iperf3-rs \
- && chmod +x /out/iperf3-rs
+ && chmod +x /out/iperf3-rs \
+ && mkdir -p /out/rootfs/tmp \
+ && chmod 1777 /out/rootfs/tmp
 
 FROM scratch AS release
 
+COPY --from=release-build /out/rootfs/ /
 COPY --from=release-build /out/iperf3-rs /iperf3-rs
 ENTRYPOINT ["/iperf3-rs"]

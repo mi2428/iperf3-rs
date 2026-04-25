@@ -256,9 +256,11 @@ fn compose_interop_and_pushgateway_metrics() {
 // The Compose integration test above runs in the `integration-test` target,
 // which intentionally includes test tools such as curl and upstream iperf3.
 // The image published to GHCR is the `release` target instead: a scratch image
-// that contains only the iperf3-rs binary. Building that target and running
-// `--version` verifies that the final image can start without a shell, dynamic
-// loader, or copied runtime assets. Protocol interoperability and Pushgateway
+// that contains only the iperf3-rs binary and the minimal writable filesystem
+// libiperf needs at runtime. Building that target, running `--version`, and
+// completing a release-image-to-release-image iperf run verifies that the final
+// image can start without a shell or dynamic loader and still create real test
+// streams. Protocol interoperability with upstream iperf3 and Pushgateway
 // behavior remain covered by the Compose test above.
 #[test]
 #[ignore = "requires Docker"]
@@ -285,6 +287,28 @@ fn release_image_smoke() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+
+    let network = DockerNetwork::create(&image.docker);
+    let server = DockerContainer::run_detached(&image.docker, &image.tag, &network.name, &["-s"]);
+    let release_to_release =
+        retry_json_client("release image client to release image server", || {
+            Command::new(&image.docker)
+                .arg("run")
+                .arg("--rm")
+                .arg("--network")
+                .arg(&network.name)
+                .arg(&image.tag)
+                .arg("-c")
+                .arg(&server.name)
+                .arg("-t")
+                .arg("1")
+                .arg("-i")
+                .arg("1")
+                .arg("-J")
+                .output()
+                .expect("failed to run release image client")
+        });
+    assert_iperf_summary_has_traffic(&release_to_release);
 }
 
 struct ComposeProject {
@@ -404,6 +428,86 @@ impl Drop for ReleaseImage {
             .arg("rmi")
             .arg("-f")
             .arg(&self.tag)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+struct DockerNetwork {
+    docker: OsString,
+    name: String,
+}
+
+impl DockerNetwork {
+    fn create(docker: &OsString) -> Self {
+        let name = format!("iperf3rs-release-smoke-{}", unique_suffix());
+        let output = Command::new(docker)
+            .arg("network")
+            .arg("create")
+            .arg(&name)
+            .output()
+            .expect("failed to create Docker network");
+
+        assert_command_success(&format!("docker network create {name}"), &output);
+
+        Self {
+            docker: docker.clone(),
+            name,
+        }
+    }
+}
+
+impl Drop for DockerNetwork {
+    fn drop(&mut self) {
+        let _ = Command::new(&self.docker)
+            .arg("network")
+            .arg("rm")
+            .arg(&self.name)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+struct DockerContainer {
+    docker: OsString,
+    name: String,
+}
+
+impl DockerContainer {
+    fn run_detached(docker: &OsString, image: &str, network: &str, args: &[&str]) -> Self {
+        let name = format!("iperf3rs-release-smoke-server-{}", unique_suffix());
+        let output = Command::new(docker)
+            .arg("run")
+            .arg("-d")
+            .arg("--name")
+            .arg(&name)
+            .arg("--network")
+            .arg(network)
+            .arg(image)
+            .args(args)
+            .output()
+            .expect("failed to start Docker container");
+
+        assert_command_success(
+            &format!("docker run -d --name {name} {image} {args:?}"),
+            &output,
+        );
+
+        Self {
+            docker: docker.clone(),
+            name,
+        }
+    }
+}
+
+impl Drop for DockerContainer {
+    fn drop(&mut self) {
+        let _ = Command::new(&self.docker)
+            .arg("rm")
+            .arg("-f")
+            .arg(&self.name)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
