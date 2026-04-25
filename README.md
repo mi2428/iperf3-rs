@@ -62,24 +62,27 @@ brew install iperf3-rs
 
 ## Release
 
-Publishing a GitHub Release triggers `.github/workflows/release.yml`. The
-workflow checks out the release tag, builds and pushes the multi-arch GHCR image,
-uploads release binaries plus `checksums.txt` and the generated Homebrew formula
-to the GitHub Release, and updates the Homebrew tap formula.
+Release binaries and the Homebrew formula are managed by cargo-dist. Pushing a
+version tag such as `v0.1.0` runs `.github/workflows/release.yml`, builds the
+configured archives, creates the GitHub Release, uploads checksums and release
+artifacts, and publishes the generated formula to the Homebrew tap.
 
-Release assets are built for `darwin-amd64`, `darwin-arm64`, `linux-amd64`, and
-`linux-arm64`. The container image is published as
-`ghcr.io/<owner>/iperf3-rs:<tag>`; non-prerelease releases also update
+Release archives are built for `x86_64-apple-darwin`,
+`aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`, and
+`aarch64-unknown-linux-gnu`. The manual `make dist` target is still available
+for local release-style binaries under `dist/`.
+
+The multi-arch container image is published by
+`.github/workflows/container-release.yml` as
+`ghcr.io/<owner>/iperf3-rs:<tag>`; non-prerelease tags also update
 `ghcr.io/<owner>/iperf3-rs:latest`.
 
-Release builds set `IPERF3_RS_CONFIGURE_ARGS=--without-openssl` so the bundled
-libiperf does not depend on external OpenSSL libraries.
+Release builds set `IPERF3_RS_CONFIGURE_ARGS=--without-openssl` in
+`.github/dist-build-setup.yml` so the bundled libiperf does not depend on
+external OpenSSL libraries.
 
-Homebrew publishing expects a tap repository named `<owner>/homebrew-iperf3-rs`;
-for this repository that is `mi2428/homebrew-iperf3-rs`. Configure a
-`HOMEBREW_TAP_TOKEN` repository secret with push access to that tap. Set the
-`HOMEBREW_TAP_REPOSITORY` repository variable to override the default tap
-repository.
+Homebrew publishing expects `mi2428/homebrew-iperf3-rs` to exist. Configure a
+`HOMEBREW_TAP_TOKEN` repository secret with push access to that tap.
 
 ## Usage
 
