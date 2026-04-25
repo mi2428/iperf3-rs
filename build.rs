@@ -7,6 +7,10 @@ use std::process::Command;
 const CONFIGURE_ARGS_ENV: &str = "IPERF3_RS_CONFIGURE_ARGS";
 
 fn main() {
+    // Build libiperf from the esnet/iperf3 submodule during Cargo's build
+    // script instead of expecting a system package. This keeps the Rust crate
+    // pinned to the vendored upstream revision and makes the FFI surface match
+    // the headers under `iperf3/src`.
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target = env::var("TARGET").unwrap();
@@ -19,6 +23,9 @@ fn main() {
     let libiperf = build_src.join(".libs").join("libiperf.a");
     let makefile = build_src.join("Makefile");
 
+    // Keep Cargo's rebuild triggers focused on the files that define the FFI
+    // contract and on the configure options that affect the native build.
+    // Autotools itself handles the full C dependency graph inside `make`.
     println!("cargo:rerun-if-changed=native/iperf3rs_shim.c");
     println!("cargo:rerun-if-changed=native/iperf3rs_shim.h");
     println!("cargo:rerun-if-changed=iperf3/configure");
@@ -29,8 +36,15 @@ fn main() {
     if !iperf_src.join("iperf.h").exists() {
         panic!("iperf3 source is missing. Run: git submodule update --init --recursive");
     }
+    // libiperf's Autotools build supports out-of-tree builds, but an earlier
+    // in-source `./configure` leaves generated files in the submodule. Clean
+    // those artifacts first so this build script owns the configured state.
     clean_in_source_config_if_needed(&iperf_dir);
 
+    // Build artifacts live under OUT_DIR because Cargo may build this crate
+    // for multiple targets or profiles in the same checkout. The stamp records
+    // the inputs that change configure output, so we can reuse libiperf across
+    // incremental Rust rebuilds without accidentally mixing host/target builds.
     let configure_args = env::var(CONFIGURE_ARGS_ENV).unwrap_or_default();
     let stamp = format!("target={target}\nhost={host}\nconfigure_args={configure_args}\n");
     if !libiperf.exists() || read_stamp(&build_dir).as_deref() != Some(stamp.as_str()) {
@@ -44,6 +58,10 @@ fn main() {
             .unwrap_or_else(|err| panic!("failed to write libiperf build stamp: {err}"));
     }
 
+    // Compile a tiny C shim with Cargo's `cc` integration. The shim keeps Rust
+    // from reaching directly into libiperf internals where the C API needs
+    // callbacks or macro-shaped access, while still linking against upstream
+    // libiperf without patching the submodule.
     let mut shim = cc::Build::new();
     shim.file("native/iperf3rs_shim.c")
         .include(&build_src)
@@ -54,6 +72,10 @@ fn main() {
     }
     shim.compile("iperf3rs_shim");
 
+    // Link the static libiperf archive built above, then mirror any libraries
+    // discovered by `configure` such as libm or optional feature libraries.
+    // Reading the generated Makefile keeps this script aligned with upstream
+    // configure checks instead of hard-coding platform-specific linker flags.
     println!(
         "cargo:rustc-link-search=native={}",
         libiperf.parent().unwrap().display()
@@ -72,16 +94,25 @@ fn configure_and_build_iperf(
     fs::create_dir_all(build_dir)
         .unwrap_or_else(|err| panic!("failed to create libiperf build directory: {err}"));
 
+    // Configure in OUT_DIR with static output only. The final Rust binary links
+    // libiperf directly, which is what allows the release Docker image to be a
+    // scratch image containing only the iperf3-rs executable plus minimal
+    // runtime filesystem.
     let mut configure = Command::new(iperf_dir.join("configure"));
     configure
         .current_dir(build_dir)
         .arg("--enable-static")
         .arg("--disable-shared");
 
+    // Release and integration builds can pass upstream configure switches such
+    // as `--without-openssl` without teaching this script every libiperf option.
     for arg in extra_args.split_whitespace() {
         configure.arg(arg);
     }
 
+    // When Cargo is cross-compiling, Autotools needs its own host triple and C
+    // compiler. Reusing the `cc` crate here makes the native libiperf build use
+    // the same target-aware compiler selection as the shim build.
     if host != target {
         configure.arg(format!("--host={}", configure_host(target)));
         add_target_compiler_env(&mut configure, target);
@@ -90,6 +121,8 @@ fn configure_and_build_iperf(
     run(configure, "configure iperf3");
 
     let mut make = Command::new("make");
+    // Build only libiperf, not the upstream iperf3 CLI, because the Rust binary
+    // is the frontend and only needs the library archive for FFI.
     make.current_dir(build_dir.join("src")).arg("libiperf.la");
     if let Ok(jobs) = env::var("CARGO_BUILD_JOBS") {
         make.arg(format!("-j{jobs}"));
