@@ -14,6 +14,7 @@ DOCKER     ?= docker
 COMPOSE    ?= $(shell if $(DOCKER) compose version >/dev/null 2>&1; then printf '%s compose' '$(DOCKER)'; elif command -v docker-compose >/dev/null 2>&1; then command -v docker-compose; else printf '%s compose' '$(DOCKER)'; fi)
 REMOTE     ?= origin
 MAIN_BRANCH ?= main
+GITHUB_REPOSITORY ?= $(shell $(GIT) remote get-url $(REMOTE) 2>/dev/null | awk '{ gsub(/^git@github.com:/, ""); gsub(/^ssh:\/\/git@github.com\//, ""); gsub(/^https:\/\/github.com\//, ""); gsub(/\.git$$/, ""); print tolower($$0) }')
 
 APP        := iperf3-rs
 BINDIR     := bin
@@ -44,6 +45,14 @@ HOST_OS := $(shell uname -s)
 
 RELEASE_CONFIGURE_ARGS ?= --without-openssl
 MAIN_REMOTE_REF := refs/remotes/$(REMOTE)/$(MAIN_BRANCH)
+GHCR_REGISTRY ?= ghcr.io
+GHCR_REPOSITORY ?= $(GITHUB_REPOSITORY)
+GHCR_IMAGE ?= $(GHCR_REGISTRY)/$(GHCR_REPOSITORY)
+GHCR_USER ?= $(firstword $(subst /, ,$(GHCR_REPOSITORY)))
+GHCR_PLATFORMS ?= linux/amd64,linux/arm64
+GHCR_TAGS ?= $(TAG)
+GHCR_TARGET ?= release
+GHCR_LOGIN ?= true
 
 ##@ Development
 
@@ -138,6 +147,13 @@ _docker-check:
 		exit 1; \
 	}
 
+.PHONY: _docker-buildx-check
+_docker-buildx-check: _docker-check
+	@$(DOCKER) buildx version >/dev/null 2>&1 || { \
+		echo "Docker buildx is required to publish multi-arch images" >&2; \
+		exit 1; \
+	}
+
 define TARGET_RULE
 .PHONY: _target.$(1)
 _target.$(1):
@@ -193,8 +209,8 @@ $(foreach arch,$(LINUX_ARCHS),$(eval $(call LINUX_DIST_RULE,$(arch))))
 
 ##@ Release
 
-.PHONY: _publish-release
-_publish-release:
+.PHONY: _release-check
+_release-check:
 	@command -v $(GH) >/dev/null 2>&1 || { \
 		echo "gh is required to publish a release" >&2; \
 		exit 1; \
@@ -219,14 +235,76 @@ _publish-release:
 		echo "No release assets found in $(DISTDIR). Run make dist first." >&2; \
 		exit 1; \
 	fi
+
+.PHONY: _ghcr-login
+_ghcr-login:
+	@if [ "$(GHCR_LOGIN)" != "true" ]; then \
+		exit 0; \
+	fi; \
+	command -v $(GH) >/dev/null 2>&1 || { \
+		echo "gh is required to log in to GHCR" >&2; \
+		exit 1; \
+	}; \
+	if [ -z "$(GHCR_USER)" ]; then \
+		echo "GHCR_USER is required to log in to GHCR" >&2; \
+		exit 1; \
+	fi; \
+	printf 'Logging in to %s as %s\n' "$(GHCR_REGISTRY)" "$(GHCR_USER)"; \
+	$(GH) auth token | $(DOCKER) login "$(GHCR_REGISTRY)" -u "$(GHCR_USER)" --password-stdin >/dev/null
+
+.PHONY: _publish-release-image
+_publish-release-image: _docker-buildx-check _ghcr-login
+	@if [ -z "$(TAG)" ]; then \
+		echo "TAG is required for the release image publish step" >&2; \
+		exit 1; \
+	fi
+	@if [ -z "$(TARGET_SHA)" ]; then \
+		echo "TARGET_SHA is required for the release image publish step" >&2; \
+		exit 1; \
+	fi
+	@if [ -z "$(GHCR_REPOSITORY)" ]; then \
+		echo "GHCR_REPOSITORY is required for the release image publish step" >&2; \
+		exit 1; \
+	fi
+	@if [ -z "$(GHCR_TAGS)" ]; then \
+		echo "GHCR_TAGS is required for the release image publish step" >&2; \
+		exit 1; \
+	fi
+	@repo="$(GHCR_REPOSITORY)"; \
+	tag_args=(); \
+	for image_tag in $$(printf '%s' "$(GHCR_TAGS)" | tr ',' ' '); do \
+		tag_args+=(--tag "$(GHCR_IMAGE):$$image_tag"); \
+	done; \
+	if [ "$${#tag_args[@]}" -eq 0 ]; then \
+		echo "GHCR_TAGS did not contain any image tags" >&2; \
+		exit 1; \
+	fi; \
+	printf 'Publishing multi-arch image %s for %s on %s\n' "$(GHCR_IMAGE)" "$(TAG)" "$(GHCR_PLATFORMS)"; \
+	$(DOCKER) buildx build \
+		--platform "$(GHCR_PLATFORMS)" \
+		--target "$(GHCR_TARGET)" \
+		--push \
+		--label "org.opencontainers.image.source=https://github.com/$$repo" \
+		--label "org.opencontainers.image.revision=$(TARGET_SHA)" \
+		--label "org.opencontainers.image.version=$(TAG)" \
+		"$${tag_args[@]}" \
+		.
+
+.PHONY: _publish-release
+_publish-release: _release-check
 	@printf 'Creating GitHub release %s at %s\n' "$(TAG)" "$(TARGET_SHA)"
 	@$(GH) release create "$(TAG)" "$(DISTDIR)"/$(APP)-* "$(DISTDIR)"/checksums.txt \
 		--target "$(TARGET_SHA)" \
 		--title "$(TAG)" \
 		--notes "Release $(TAG) built from $(TARGET_SHA)"
 
+.PHONY: release-image
+release-image: ## Build and push the GHCR multi-arch release image for the current checkout
+	@target_sha="$$($(GIT) rev-parse HEAD)"; \
+	$(MAKE) _publish-release-image TAG="$(TAG)" TARGET_SHA="$$target_sha"
+
 .PHONY: release
-release: ## Build all binaries for the version on origin/main and publish a GitHub Release
+release: ## Build binaries for origin/main, publish a GitHub Release, and push the GHCR multi-arch image
 	@command -v $(GIT) >/dev/null 2>&1 || { \
 		echo "git is required to create a release" >&2; \
 		exit 1; \
@@ -249,6 +327,10 @@ release: ## Build all binaries for the version on origin/main and publish a GitH
 	tag="v$$release_version"; \
 	printf 'Building release assets for %s\n' "$$tag"; \
 	"$$make_bin" -f "$(CURDIR)/Makefile" -C "$$tmpdir" dist OS=darwin,linux ARCH=amd64,arm64; \
+	printf 'Checking release state for %s\n' "$$tag"; \
+	"$$make_bin" -f "$(CURDIR)/Makefile" -C "$$tmpdir" _release-check TAG="$$tag" TARGET_SHA="$$main_sha"; \
+	printf 'Publishing GHCR image for %s\n' "$$tag"; \
+	"$$make_bin" -f "$(CURDIR)/Makefile" -C "$$tmpdir" _publish-release-image TAG="$$tag" TARGET_SHA="$$main_sha"; \
 	printf 'Publishing %s\n' "$$tag"; \
 	"$$make_bin" -f "$(CURDIR)/Makefile" -C "$$tmpdir" _publish-release TAG="$$tag" TARGET_SHA="$$main_sha"
 
@@ -267,11 +349,16 @@ help: ## Show this help message
 	@printf "  \033[36mOS\033[0m       Release OS list: \033[36mdarwin,linux\033[0m\n"
 	@printf "  \033[36mARCH\033[0m     Release arch list: \033[36mamd64,arm64\033[0m\n"
 	@printf "  \033[36mTAG\033[0m      GitHub release tag, defaults to \033[36mv%s\033[0m\n" "$(VERSION)"
+	@printf "  \033[36mGHCR_IMAGE\033[0m Release image, defaults to \033[36m%s\033[0m\n" "$(GHCR_IMAGE)"
+	@printf "  \033[36mGHCR_PLATFORMS\033[0m Release image platforms, defaults to \033[36m%s\033[0m\n" "$(GHCR_PLATFORMS)"
+	@printf "  \033[36mGHCR_TAGS\033[0m Release image tags, defaults to \033[36m%s\033[0m\n" "$(GHCR_TAGS)"
+	@printf "  \033[36mGHCR_LOGIN\033[0m Log in to GHCR with gh auth token before pushing, defaults to \033[36m%s\033[0m\n" "$(GHCR_LOGIN)"
 	@printf "\n\033[1mExamples:\033[0m\n"
 	@printf "  \033[36mmake build\033[0m\n"
 	@printf "  \033[36mmake check\033[0m\n"
 	@printf "  \033[36mmake integration-test\033[0m\n"
 	@printf "  \033[36mmake dist OS=darwin ARCH=arm64\033[0m\n"
 	@printf "  \033[36mmake dist OS=darwin,linux ARCH=amd64,arm64\033[0m\n"
+	@printf "  \033[36mmake release-image TAG=v%s\033[0m\n" "$(VERSION)"
 	@printf "  \033[36mmake -n release\033[0m\n"
 	@printf "  \033[36mmake release\033[0m\n"
