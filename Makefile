@@ -123,6 +123,10 @@ completion-check: ## Syntax-check shell completion files when shells are availab
 		printf 'Skipping fish completion check; fish not found\n'; \
 	fi
 
+.PHONY: kani
+kani: ## Run Kani model checking harnesses
+	@$(CARGO_ENV) $(CARGO) kani
+
 .PHONY: integration-test
 integration-test: ## Run Docker Compose integration tests
 	@COMPOSE="$(COMPOSE)" DOCKER="$(DOCKER)" $(CARGO_ENV) $(CARGO) test --test integration_test -- --ignored --nocapture --test-threads=1
@@ -406,6 +410,7 @@ help: ## Show this help message
 	@printf "  \033[36mmake install\033[0m\n"
 	@printf "  \033[36mmake install-completions\033[0m\n"
 	@printf "  \033[36mmake check\033[0m\n"
+	@printf "  \033[36mmake kani\033[0m\n"
 	@printf "  \033[36mmake integration-test\033[0m\n"
 	@printf "  \033[36mmake dist OS=darwin ARCH=arm64\033[0m\n"
 	@printf "  \033[36mmake dist OS=darwin,linux ARCH=amd64,arm64\033[0m\n"

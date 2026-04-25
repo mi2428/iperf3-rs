@@ -36,6 +36,7 @@ Useful development targets:
 ```sh
 make help
 make check
+make kani
 make dist OS=darwin ARCH=arm64
 ```
 

@@ -106,7 +106,11 @@ struct PushAttemptError {
 }
 
 fn is_retryable_status(status: StatusCode) -> bool {
-    status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS
+    is_retryable_status_code(status.as_u16())
+}
+
+fn is_retryable_status_code(status: u16) -> bool {
+    (500..=599).contains(&status) || status == 429
 }
 
 fn retry_delay(attempt: u32) -> Duration {
@@ -222,6 +226,27 @@ mod verification {
             assert_ne!(encoded.bytes[i], b'/');
             assert_ne!(encoded.bytes[i], b' ');
         }
+    }
+
+    #[kani::proof]
+    fn retryable_status_codes_match_pushgateway_retry_policy() {
+        let status: u16 = kani::any();
+        let expected = status == 429 || (500..=599).contains(&status);
+
+        assert_eq!(is_retryable_status_code(status), expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(12)]
+    fn retry_delay_is_bounded_for_configured_retry_counts() {
+        let attempt: u32 = kani::any();
+        kani::assume(attempt <= 10);
+
+        let delay = retry_delay(attempt);
+
+        assert!(delay >= PUSH_RETRY_BASE_DELAY);
+        assert!(delay <= PUSH_RETRY_MAX_DELAY);
+        assert!(!delay.is_zero());
     }
 }
 

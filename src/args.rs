@@ -9,6 +9,13 @@ const DEFAULT_PUSH_METRIC_PREFIX: &str = "iperf3";
 const DEFAULT_PUSH_RETRIES: u32 = 0;
 const MAX_PUSH_RETRIES: u32 = 10;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DurationUnit {
+    Milliseconds,
+    Seconds,
+    Minutes,
+}
+
 #[derive(Debug)]
 pub struct AppOptions {
     pub push_url: Option<Url>,
@@ -249,17 +256,29 @@ fn parse_duration_option(option: &str, raw: &str) -> Result<Duration> {
     }
 
     let duration = if let Some(number) = raw.strip_suffix("ms") {
-        Duration::from_millis(parse_duration_number(option, raw, number)?)
-    } else if let Some(number) = raw.strip_suffix('s') {
-        Duration::from_secs(parse_duration_number(option, raw, number)?)
-    } else if let Some(number) = raw.strip_suffix('m') {
-        Duration::from_secs(
-            parse_duration_number(option, raw, number)?
-                .checked_mul(60)
-                .ok_or_else(|| anyhow!("{option} is too large: {raw}"))?,
+        duration_from_number(
+            parse_duration_number(option, raw, number)?,
+            DurationUnit::Milliseconds,
         )
+        .expect("millisecond durations cannot overflow")
+    } else if let Some(number) = raw.strip_suffix('s') {
+        duration_from_number(
+            parse_duration_number(option, raw, number)?,
+            DurationUnit::Seconds,
+        )
+        .expect("second durations cannot overflow")
+    } else if let Some(number) = raw.strip_suffix('m') {
+        duration_from_number(
+            parse_duration_number(option, raw, number)?,
+            DurationUnit::Minutes,
+        )
+        .ok_or_else(|| anyhow!("{option} is too large: {raw}"))?
     } else {
-        Duration::from_secs(parse_duration_number(option, raw, raw)?)
+        duration_from_number(
+            parse_duration_number(option, raw, raw)?,
+            DurationUnit::Seconds,
+        )
+        .expect("second durations cannot overflow")
     };
 
     if duration.is_zero() {
@@ -277,15 +296,27 @@ fn parse_duration_number(option: &str, raw: &str, number: &str) -> Result<u64> {
         .map_err(|_| anyhow!("invalid {option} duration: {raw}"))
 }
 
+fn duration_from_number(number: u64, unit: DurationUnit) -> Option<Duration> {
+    match unit {
+        DurationUnit::Milliseconds => Some(Duration::from_millis(number)),
+        DurationUnit::Seconds => Some(Duration::from_secs(number)),
+        DurationUnit::Minutes => number.checked_mul(60).map(Duration::from_secs),
+    }
+}
+
 fn parse_retries(option: &str, raw: &str) -> Result<u32> {
     let retries = raw
         .trim()
         .parse::<u32>()
         .map_err(|_| anyhow!("{option} must be an integer between 0 and {MAX_PUSH_RETRIES}"))?;
-    if retries > MAX_PUSH_RETRIES {
+    if !is_valid_retry_count(retries) {
         bail!("{option} must be at most {MAX_PUSH_RETRIES}");
     }
     Ok(retries)
+}
+
+fn is_valid_retry_count(retries: u32) -> bool {
+    retries <= MAX_PUSH_RETRIES
 }
 
 fn parse_user_agent(option: &str, raw: &str) -> Result<String> {
@@ -327,7 +358,7 @@ fn parse_label(raw: &str) -> Result<(String, String)> {
     if !is_valid_label_name(name) {
         bail!("invalid --push.label name '{name}'");
     }
-    if matches!(name, "job" | "iperf_mode") {
+    if is_reserved_label_name(name) {
         bail!("--push.label name '{name}' is reserved");
     }
     if value.is_empty() {
@@ -339,6 +370,14 @@ fn parse_label(raw: &str) -> Result<(String, String)> {
 
 fn is_valid_label_name(name: &str) -> bool {
     is_valid_label_name_bytes(name.as_bytes())
+}
+
+fn is_reserved_label_name(name: &str) -> bool {
+    is_reserved_label_name_bytes(name.as_bytes())
+}
+
+fn is_reserved_label_name_bytes(name: &[u8]) -> bool {
+    name == b"job" || name == b"iperf_mode"
 }
 
 fn is_valid_label_name_bytes(name: &[u8]) -> bool {
@@ -398,6 +437,7 @@ mod verification {
     use super::*;
 
     const MAX_LABEL_NAME_BYTES: usize = 4;
+    const MAX_RESERVED_LABEL_NAME_BYTES: usize = 10;
 
     #[kani::proof]
     #[kani::unwind(6)]
@@ -418,6 +458,52 @@ mod verification {
         };
 
         assert_eq!(is_valid_label_name_bytes(name), expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(12)]
+    fn reserved_label_name_matches_reserved_grouping_keys_for_bounded_ascii() {
+        let len: usize = kani::any();
+        kani::assume(len <= MAX_RESERVED_LABEL_NAME_BYTES);
+        let bytes: [u8; MAX_RESERVED_LABEL_NAME_BYTES] = kani::any();
+
+        let name = &bytes[..len];
+        let expected = name == b"job" || name == b"iperf_mode";
+
+        assert_eq!(is_reserved_label_name_bytes(name), expected);
+    }
+
+    #[kani::proof]
+    fn duration_from_small_number_matches_unit_arithmetic() {
+        let number: u16 = kani::any();
+        let number = u64::from(number);
+
+        assert_eq!(
+            duration_from_number(number, DurationUnit::Milliseconds),
+            Some(Duration::from_millis(number))
+        );
+        assert_eq!(
+            duration_from_number(number, DurationUnit::Seconds),
+            Some(Duration::from_secs(number))
+        );
+
+        let minutes = duration_from_number(number, DurationUnit::Minutes);
+        assert_eq!(minutes, Some(Duration::from_secs(number * 60)));
+    }
+
+    #[kani::proof]
+    fn minute_duration_rejects_multiplication_overflow() {
+        let number: u64 = kani::any();
+        kani::assume(number > u64::MAX / 60);
+
+        assert!(duration_from_number(number, DurationUnit::Minutes).is_none());
+    }
+
+    #[kani::proof]
+    fn retry_count_acceptance_matches_configured_limit() {
+        let retries: u32 = kani::any();
+
+        assert_eq!(is_valid_retry_count(retries), retries <= MAX_PUSH_RETRIES);
     }
 }
 
