@@ -31,25 +31,10 @@ jobs:
 
       - name: Compute image metadata
         id: meta
-        shell: bash
-        run: |
-          image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          tag="${{ github.event.release.tag_name }}"
-          {
-            printf 'tags<<EOF\n'
-            printf '%s:%s\n' "${image}" "${tag}"
-            if [ "${{ github.event.release.prerelease }}" != "true" ]; then
-              printf '%s:latest\n' "${image}"
-            fi
-            printf 'EOF\n'
-            printf 'source=https://github.com/%s\n' "${GITHUB_REPOSITORY}"
-            printf 'revision=%s\n' "$(git rev-parse HEAD)"
-            printf 'version=%s\n' "${tag}"
-            printf 'git_describe=%s\n' "$(git describe --tags --always --dirty=-dirty)"
-            printf 'git_commit=%s\n' "$(git rev-parse HEAD)"
-            printf 'git_commit_date=%s\n' "$(git show -s --format=%cI HEAD)"
-            printf 'build_date=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          } >> "${GITHUB_OUTPUT}"
+        env:
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: .github/scripts/release_metadata.sh
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -180,10 +165,10 @@ jobs:
 
       - name: Generate Homebrew formula
         run: |
-          bash scripts/generate-homebrew-formula.sh \
-            "${{ github.event.release.tag_name }}" \
-            dist/checksums.txt \
-            dist/iperf3-rs.rb
+          python3 .github/scripts/generate_homebrew_formula.py \
+            --tag "${{ github.event.release.tag_name }}" \
+            --checksums dist/checksums.txt \
+            --output dist/iperf3-rs.rb
 
       - name: Upload binaries to GitHub Release
         env:
@@ -198,34 +183,8 @@ jobs:
 
       - name: Publish Homebrew tap formula
         env:
+          FORMULA_PATH: dist/iperf3-rs.rb
           HOMEBREW_TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
-            echo "::error::HOMEBREW_TAP_TOKEN is required to publish the Homebrew formula"
-            exit 1
-          fi
-
-          tap_repository="${HOMEBREW_TAP_REPOSITORY:-${GITHUB_REPOSITORY_OWNER}/homebrew-iperf3-rs}"
-          workdir="$(mktemp -d)"
-          trap 'rm -rf "${workdir}"' EXIT
-
-          git clone \
-            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${tap_repository}.git" \
-            "${workdir}"
-          mkdir -p "${workdir}/Formula"
-          cp dist/iperf3-rs.rb "${workdir}/Formula/iperf3-rs.rb"
-
-          git -C "${workdir}" config user.name "github-actions[bot]"
-          git -C "${workdir}" config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "${workdir}" add Formula/iperf3-rs.rb
-
-          if git -C "${workdir}" diff --cached --quiet; then
-            echo "Homebrew formula is already up to date"
-            exit 0
-          fi
-
-          git -C "${workdir}" commit -m "iperf3-rs ${RELEASE_TAG}"
-          git -C "${workdir}" push
+        run: .github/scripts/publish_homebrew_tap.sh
