@@ -8,6 +8,7 @@ use anyhow::{Context, Result, anyhow, bail};
 mod ffi {
     use super::{c_char, c_int};
 
+    // libiperf owns this object; Rust only passes the opaque pointer back to C.
     #[repr(C)]
     pub struct iperf_test {
         _private: [u8; 0],
@@ -69,6 +70,8 @@ impl IperfTest {
     }
 
     pub fn parse_arguments(&mut self, args: &[String]) -> Result<()> {
+        // libiperf parses synchronously, so the CString backing storage only
+        // needs to stay alive for this call.
         let cstrings = args
             .iter()
             .map(|arg| {
@@ -92,6 +95,8 @@ impl IperfTest {
 
     pub fn enable_json_metrics(&mut self, callback: ffi::JsonCallback) {
         unsafe {
+            // The shim enables JSON stream output even when the user did not ask
+            // for visible JSON, then routes each stream event to the Rust callback.
             ffi::iperf3rs_enable_json_stream(self.as_ptr());
             ffi::iperf3rs_set_json_callback(self.as_ptr(), Some(callback));
         }
@@ -124,6 +129,8 @@ impl IperfTest {
 
     fn run_server(&mut self) -> Result<()> {
         loop {
+            // Upstream server mode handles one accepted test at a time and then
+            // resets the same iperf_test so a long-running server can accept more.
             let rc = unsafe { ffi::iperf3rs_run_server_once(self.as_ptr()) };
             if rc < 0 {
                 let error = current_error();
@@ -138,6 +145,8 @@ impl IperfTest {
             let one_off = unsafe { ffi::iperf_get_test_one_off(self.as_ptr()) } != 0;
             let auth_error = unsafe { ffi::iperf3rs_is_auth_test_error() } != 0;
             if one_off && rc != 2 {
+                // Keep upstream's special-case behavior: authentication failures
+                // in one-off mode should not terminate the server loop.
                 if rc < 0 && auth_error {
                     continue;
                 }

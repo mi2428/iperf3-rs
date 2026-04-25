@@ -27,6 +27,8 @@ fn main() -> ExitCode {
 
 fn run() -> Result<()> {
     let raw_args: Vec<String> = env::args().collect();
+    // Split wrapper-only push options before handing argv to libiperf's own
+    // parser, preserving upstream iperf3 option compatibility.
     let (app, iperf_args) = extract_app_options(raw_args).map_err(|err| {
         eprintln!("{err:#}");
         std::process::exit(EXIT_OPTION_ERROR.into());
@@ -36,6 +38,8 @@ fn run() -> Result<()> {
     test.parse_arguments(&iperf_args)?;
 
     let reporter = if let Some(push_url) = app.push_url {
+        // Role is known only after libiperf parses argv, so the automatic
+        // `iperf_mode` grouping label is attached here.
         let mode = match test.role() {
             Role::Client => "client",
             Role::Server => "server",
@@ -59,6 +63,8 @@ fn run() -> Result<()> {
 
     test.run()?;
 
+    // Dropping the reporter unregisters the C callback and drains the worker
+    // thread after libiperf has stopped producing JSON events.
     drop(reporter);
     Ok(())
 }

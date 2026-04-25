@@ -28,6 +28,8 @@ pub struct JsonMetricsReporter {
 
 impl JsonMetricsReporter {
     pub fn attach(test: &mut IperfTest, sink: PushGateway, mirror_json: bool) -> Result<Self> {
+        // The C callback must stay quick and nonblocking; a size-one channel is
+        // enough because only the newest interval matters for Pushgateway gauges.
         let (tx, rx) = bounded::<String>(1);
         let test_key = test.as_ptr() as usize;
         callbacks()
@@ -44,6 +46,8 @@ impl JsonMetricsReporter {
 
         test.enable_json_metrics(json_callback);
 
+        // Network I/O happens off the libiperf callback path so slow or
+        // unavailable Pushgateway writes do not stall the iperf test itself.
         let worker = thread::spawn(move || {
             for line in rx {
                 let Some(metrics) = metrics_from_json_line(&line) else {
@@ -82,6 +86,8 @@ struct CallbackTarget {
 static CALLBACKS: OnceLock<Mutex<HashMap<usize, CallbackTarget>>> = OnceLock::new();
 
 fn callbacks() -> &'static Mutex<HashMap<usize, CallbackTarget>> {
+    // The same extern callback is registered for every test, so dispatch by the
+    // iperf_test pointer passed back from C.
     CALLBACKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -111,6 +117,7 @@ fn enqueue_latest(target: &CallbackTarget, line: String) {
     match target.tx.try_send(line) {
         Ok(()) => {}
         Err(TrySendError::Full(line)) => {
+            // Prefer freshness over completeness when pushes fall behind.
             let _ = target.rx.try_recv();
             let _ = target.tx.try_send(line);
         }
@@ -124,6 +131,8 @@ fn metrics_from_json_line(line: &str) -> Option<Metrics> {
         return None;
     }
 
+    // Normal TCP/UDP reports use `sum`; bidirectional reverse reports use a
+    // separate aggregate, and older/edge JSON shapes may only have streams.
     let sum = event
         .data
         .sum

@@ -24,6 +24,8 @@ impl PushGateway {
     pub fn new(config: PushGatewayConfig) -> Result<Self> {
         let mut url = config.endpoint;
         let mut path = url.path().trim_end_matches('/').to_owned();
+        // Pushgateway represents grouping labels as path segments:
+        // /metrics/job/<job>/<label>/<value>/...
         path.push_str("/metrics/job/");
         path.push_str(&encode_path_segment(&config.job));
         for (name, value) in config.labels {
@@ -35,6 +37,8 @@ impl PushGateway {
         url.set_path(&path);
 
         let client = Client::builder()
+            // Metrics are best-effort; a stuck gateway should not hold the iperf
+            // process indefinitely.
             .timeout(PUSH_TIMEOUT)
             .build()
             .context("failed to build HTTP client")?;
@@ -86,6 +90,8 @@ fn gauge(out: &mut String, name: &str, value: f64) {
 }
 
 fn encode_path_segment(raw: &str) -> String {
+    // Path segments cannot be delegated to Url::path_segments_mut here because
+    // the Pushgateway grouping path is assembled onto any existing base path.
     let mut encoded = String::new();
     for byte in raw.bytes() {
         match byte {

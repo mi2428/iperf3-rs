@@ -19,6 +19,8 @@ fn extract_app_options_with_env(
     args: Vec<String>,
     mut get_env: impl FnMut(&str) -> Option<String>,
 ) -> Result<(AppOptions, Vec<String>)> {
+    // iperf3-rs options are consumed here so libiperf receives an argv that still
+    // looks like the upstream iperf3 CLI.
     let mut pass_through = Vec::with_capacity(args.len());
     let mut iter = args.into_iter();
     let program = iter.next().ok_or_else(|| anyhow!("missing argv[0]"))?;
@@ -39,6 +41,7 @@ fn extract_app_options_with_env(
     while i < rest.len() {
         let arg = &rest[i];
         if arg == "--" {
+            // After `--`, every token belongs to libiperf exactly as written.
             pass_through.extend(rest[i..].iter().cloned());
             break;
         }
@@ -120,6 +123,8 @@ fn take_value(args: &[String], index: &mut usize, option: &str) -> Result<String
 }
 
 fn parse_url(raw: &str) -> Result<Url> {
+    // Keep local development terse: `localhost:9091` means the normal HTTP
+    // Pushgateway endpoint unless a scheme is explicitly provided.
     let with_scheme = if raw.starts_with("http://") || raw.starts_with("https://") {
         raw.to_owned()
     } else {
@@ -143,6 +148,8 @@ fn parse_label(raw: &str) -> Result<(String, String)> {
     let (name, value) = raw
         .split_once('=')
         .ok_or_else(|| anyhow!("--push.label requires KEY=VALUE"))?;
+    // Pushgateway grouping keys become Prometheus labels, so reject names that
+    // would fail ingestion or conflict with labels managed by this wrapper.
     if !is_valid_label_name(name) {
         bail!("invalid --push.label name '{name}'");
     }
