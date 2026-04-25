@@ -15,24 +15,24 @@ const PUSHGATEWAY_URL: &str = "http://pushgateway:9091";
 fn compose_interop_and_pushgateway_metrics() {
     let project = ComposeProject::new();
 
-    project.run_compose(&["build", "runner"]);
-    project.run_compose(&["up", "-d", "sut", "reference", "pushgateway"]);
+    project.run_compose(&["build", "client-rs"]);
+    project.run_compose(&["up", "-d", "server-rs", "reference", "pushgateway"]);
 
     wait_for("pushgateway readiness", || {
-        project.integration_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/-/ready")])
+        project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/-/ready")])
     });
 
     let upstream_to_iperf3rs = retry_json_client("upstream client to iperf3-rs server", || {
-        project.integration_output(&["iperf3", "-c", "sut", "-t", "1", "-J"])
+        project.client_output(&["iperf3", "-c", "server-rs", "-t", "1", "-J"])
     });
     assert_iperf_summary_has_traffic(&upstream_to_iperf3rs);
 
     let iperf3rs_to_upstream = retry_json_client("iperf3-rs client to upstream server", || {
-        project.integration_output(&["iperf3-rs", "-c", "reference", "-t", "1", "-J"])
+        project.client_output(&["iperf3-rs", "-c", "reference", "-t", "1", "-J"])
     });
     assert_iperf_summary_has_traffic(&iperf3rs_to_upstream);
 
-    project.run_integration(&[
+    project.run_client(&[
         "iperf3-rs",
         "--push-gateway",
         PUSHGATEWAY_URL,
@@ -43,7 +43,7 @@ fn compose_interop_and_pushgateway_metrics() {
         "--scenario",
         "tcp",
         "-c",
-        "sut",
+        "server-rs",
         "-t",
         "3",
         "-i",
@@ -53,7 +53,7 @@ fn compose_interop_and_pushgateway_metrics() {
 
     wait_for("pushgateway metrics", || {
         let output =
-            project.integration_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
+            project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
         if !output.status.success() {
             return output;
         }
@@ -109,13 +109,13 @@ impl ComposeProject {
         assert!(status.success(), "docker compose failed with {status}");
     }
 
-    fn run_integration(&self, args: &[&str]) {
-        let output = self.integration_output(args);
+    fn run_client(&self, args: &[&str]) {
+        let output = self.client_output(args);
         assert_success(args, &output);
     }
 
-    fn integration_output(&self, args: &[&str]) -> Output {
-        let mut compose_args = vec!["run", "--rm", "runner"];
+    fn client_output(&self, args: &[&str]) -> Output {
+        let mut compose_args = vec!["run", "--rm", "client-rs"];
         compose_args.extend_from_slice(args);
         self.output(&compose_args)
     }

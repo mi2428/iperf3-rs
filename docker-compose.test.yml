@@ -1,7 +1,7 @@
 name: iperf3-rs-test
 
 services:
-  sut:
+  server-rs:
     image: iperf3-rs:test
     command: ["iperf3-rs", "-s"]
 
@@ -12,12 +12,12 @@ services:
   pushgateway:
     image: prom/pushgateway:v1.11.2
 
-  runner:
+  client-rs:
     build:
       context: .
       dockerfile: Dockerfile.test
     image: iperf3-rs:test
     depends_on:
-      - sut
+      - server-rs
       - reference
       - pushgateway
