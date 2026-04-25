@@ -21,4 +21,3 @@ services:
       - iperf3rs-server
       - upstream-server
       - pushgateway
-    command: ["tests/integration/compose.sh"]

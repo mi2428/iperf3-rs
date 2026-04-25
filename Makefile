@@ -73,11 +73,7 @@ test: ## Run unit tests
 
 .PHONY: integration-test
 integration-test: ## Run Docker Compose integration tests
-	@status=0; \
-	cleanup() { $(COMPOSE) -f "$(TEST_COMPOSE)" down --volumes --remove-orphans; }; \
-	trap cleanup EXIT; \
-	$(COMPOSE) -f "$(TEST_COMPOSE)" up --build --abort-on-container-exit --exit-code-from integration integration || status=$$?; \
-	exit $$status
+	@COMPOSE="$(COMPOSE)" $(CARGO_ENV) $(CARGO) test --test integration_test -- --ignored --nocapture
 
 .PHONY: check
 check: fmt-check lint test ## Run formatting, lint, and tests
