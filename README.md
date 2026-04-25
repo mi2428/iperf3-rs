@@ -6,12 +6,15 @@ The CLI keeps iperf3 compatibility by passing iperf options to upstream
 `iperf_parse_arguments()`. Only iperf3-rs specific options are stripped before
 that call:
 
-- `--push-gateway URL`
-- `--job NAME`
-- `--test NAME`
-- `--scenario NAME`
+- `--push.url URL`
+- `--push.job NAME`
+- `--push.label KEY=VALUE`
+- `--push.timeout DURATION`
+- `--push.retries N`
+- `--push.user-agent VALUE`
+- `--push.metric-prefix PREFIX`
 
-When `--push-gateway` is set, iperf3-rs enables libiperf JSON stream output
+When `--push.url` is set, iperf3-rs enables libiperf JSON stream output
 internally, receives interval events through `iperf_set_test_json_callback()`,
 converts each interval into Prometheus text format, and sends it to Pushgateway.
 
@@ -65,10 +68,10 @@ Push interval metrics:
 ```sh
 target/debug/iperf3-rs \
   -c 127.0.0.1 -t 10 \
-  --push-gateway http://127.0.0.1:9091 \
-  --job iperf3 \
-  --test testrun \
-  --scenario sample1
+  --push.url http://127.0.0.1:9091 \
+  --push.job iperf3 \
+  --push.label test=testrun \
+  --push.label scenario=sample1
 ```
 
 The grouping path is:
@@ -77,7 +80,22 @@ The grouping path is:
 /metrics/job/{job}/test/{test}/scenario/{scenario}/iperf_mode/{client|server}
 ```
 
-Exported gauges currently match the iperf3-go names:
+Pushgateway behavior can be tuned per run:
+
+```sh
+target/debug/iperf3-rs \
+  -c 127.0.0.1 -t 10 \
+  --push.url http://127.0.0.1:9091 \
+  --push.timeout 500ms \
+  --push.retries 2 \
+  --push.user-agent iperf3-rs/lab \
+  --push.metric-prefix nettest
+```
+
+`--push.timeout` accepts `500ms`, `5s`, `1m`, or a bare seconds value. Retries
+apply to failed requests after the initial Pushgateway attempt.
+
+With the default `--push.metric-prefix iperf3`, exported gauges are:
 
 - `iperf3_bytes`
 - `iperf3_bandwidth`
