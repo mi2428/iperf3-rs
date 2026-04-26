@@ -55,21 +55,16 @@ pub struct WindowMetrics {
     pub omitted_intervals: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MetricsMode {
     /// Do not register the libiperf interval callback.
+    #[default]
     Disabled,
     /// Emit one event for every libiperf interval sample.
     Interval,
     /// Aggregate interval samples into fixed-duration summary windows.
     Window(Duration),
-}
-
-impl Default for MetricsMode {
-    fn default() -> Self {
-        Self::Disabled
-    }
 }
 
 impl MetricsMode {
