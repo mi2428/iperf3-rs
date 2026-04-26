@@ -96,6 +96,44 @@ fn command_spawn_streams_window_metrics_against_one_off_server() {
 }
 
 #[test]
+fn command_run_collects_interval_metrics_in_result() {
+    let port = free_loopback_port();
+    let _server = OneOffServer::start(port);
+
+    let result = run_library_client_blocking(port, MetricsMode::Interval);
+    let samples = result
+        .metrics()
+        .iter()
+        .filter_map(|event| match event {
+            MetricEvent::Interval(sample) => Some(sample),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(!samples.is_empty(), "blocking run should retain samples");
+    assert!(samples.iter().any(|sample| sample.bytes > 0.0));
+}
+
+#[test]
+fn command_run_collects_window_metrics_in_result() {
+    let port = free_loopback_port();
+    let _server = OneOffServer::start(port);
+
+    let result = run_library_client_blocking(port, MetricsMode::Window(Duration::from_secs(2)));
+    let windows = result
+        .metrics()
+        .iter()
+        .filter_map(|event| match event {
+            MetricEvent::Window(window) => Some(window),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(!windows.is_empty(), "blocking run should retain windows");
+    assert!(windows.iter().any(|window| window.transferred_bytes > 0.0));
+}
+
+#[test]
 fn command_run_with_pushgateway_pushes_interval_metrics() {
     let port = free_loopback_port();
     let _server = OneOffServer::start(port);
@@ -251,6 +289,35 @@ fn run_library_client(port: u16, mode: MetricsMode) -> (iperf3_rs::IperfResult, 
         }
     }
     panic!("client should complete: {last_error}");
+}
+
+fn run_library_client_blocking(port: u16, mode: MetricsMode) -> iperf3_rs::IperfResult {
+    let mut last_error = String::new();
+    for _ in 0..20 {
+        match try_run_library_client_blocking(port, mode) {
+            Ok(result) => return result,
+            Err(err) => {
+                last_error = err.to_string();
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+    }
+    panic!("blocking client should complete: {last_error}");
+}
+
+fn try_run_library_client_blocking(
+    port: u16,
+    mode: MetricsMode,
+) -> iperf3_rs::Result<iperf3_rs::IperfResult> {
+    let mut command = IperfCommand::client("127.0.0.1");
+    command
+        .port(port)
+        .duration(Duration::from_secs(1))
+        .report_interval(Duration::from_secs(1))
+        .json()
+        .metrics(mode);
+
+    command.run()
 }
 
 fn try_run_library_client(

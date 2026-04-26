@@ -541,7 +541,12 @@ fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Re
         }
     };
 
-    notify_ready(ready, Ok(setup.stream.take()));
+    let ready_stream = if ready.is_some() {
+        setup.stream.take()
+    } else {
+        None
+    };
+    notify_ready(ready, Ok(ready_stream));
 
     let result = setup.test.run();
     let json_output = setup.test.json_output();
