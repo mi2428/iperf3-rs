@@ -676,7 +676,7 @@ fn decimal_seconds_arg(duration: Duration) -> String {
 
 fn milliseconds_arg(duration: Duration) -> String {
     let millis = duration.as_millis();
-    let has_fractional_millis = duration.subsec_nanos() % 1_000_000 != 0;
+    let has_fractional_millis = !duration.subsec_nanos().is_multiple_of(1_000_000);
     if has_fractional_millis {
         millis.saturating_add(1).to_string()
     } else {
