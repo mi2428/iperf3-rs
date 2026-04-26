@@ -11,6 +11,22 @@ A Rust frontend for `libiperf` that adds live observability while keeping iperf3
 
 ## Installation
 
+### Cargo (crates.io)
+
+Install the CLI from crates.io with Cargo:
+
+```console
+$ cargo install iperf3-rs
+```
+
+To install a specific version:
+
+```console
+$ cargo install iperf3-rs --version 1.0.0
+```
+
+Cargo builds the vendored `libiperf` source, so the host needs a C compiler, `make`, and `pkg-config`.
+
 ### macOS (Homebrew)
 
 Prebuilt macOS binaries are available from the Homebrew tap:
