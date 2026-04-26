@@ -4,10 +4,10 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, bail};
 use url::Url;
 
-const DEFAULT_PUSH_JOB: &str = "iperf3";
-const DEFAULT_PUSH_METRIC_PREFIX: &str = "iperf3";
-const DEFAULT_PUSH_RETRIES: u32 = 0;
-const MAX_PUSH_RETRIES: u32 = 10;
+use crate::pushgateway::{
+    PushGatewayConfig, is_reserved_label_name, is_valid_label_name, validate_metric_prefix,
+    validate_retries, validate_user_agent,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DurationUnit {
@@ -51,12 +51,12 @@ fn extract_app_options_with_env(
         return Ok((
             AppOptions {
                 push_url: None,
-                push_job: DEFAULT_PUSH_JOB.to_owned(),
+                push_job: PushGatewayConfig::DEFAULT_JOB.to_owned(),
                 push_labels: Vec::new(),
-                push_timeout: default_push_timeout(),
-                push_retries: DEFAULT_PUSH_RETRIES,
-                push_user_agent: default_push_user_agent(),
-                push_metric_prefix: DEFAULT_PUSH_METRIC_PREFIX.to_owned(),
+                push_timeout: PushGatewayConfig::default_timeout(),
+                push_retries: PushGatewayConfig::DEFAULT_RETRIES,
+                push_user_agent: PushGatewayConfig::default_user_agent(),
+                push_metric_prefix: PushGatewayConfig::DEFAULT_METRIC_PREFIX.to_owned(),
                 push_interval: None,
                 show_help,
                 show_version,
@@ -66,7 +66,8 @@ fn extract_app_options_with_env(
     }
 
     let mut push_url = get_env("PUSH_URL");
-    let mut push_job = get_env("PUSH_JOB").unwrap_or_else(|| DEFAULT_PUSH_JOB.to_owned());
+    let mut push_job =
+        get_env("PUSH_JOB").unwrap_or_else(|| PushGatewayConfig::DEFAULT_JOB.to_owned());
     let mut push_labels = get_env("PUSH_LABELS")
         .map(|raw| parse_env_labels(&raw))
         .transpose()?
@@ -74,19 +75,19 @@ fn extract_app_options_with_env(
     let mut push_timeout = get_env("PUSH_TIMEOUT")
         .map(|raw| parse_duration_option("PUSH_TIMEOUT", &raw))
         .transpose()?
-        .unwrap_or_else(default_push_timeout);
+        .unwrap_or_else(PushGatewayConfig::default_timeout);
     let mut push_retries = get_env("PUSH_RETRIES")
         .map(|raw| parse_retries("PUSH_RETRIES", &raw))
         .transpose()?
-        .unwrap_or(DEFAULT_PUSH_RETRIES);
+        .unwrap_or(PushGatewayConfig::DEFAULT_RETRIES);
     let mut push_user_agent = get_env("PUSH_USER_AGENT")
         .map(|raw| parse_user_agent("PUSH_USER_AGENT", &raw))
         .transpose()?
-        .unwrap_or_else(default_push_user_agent);
+        .unwrap_or_else(PushGatewayConfig::default_user_agent);
     let mut push_metric_prefix = get_env("PUSH_METRIC_PREFIX")
         .map(|raw| parse_metric_prefix("PUSH_METRIC_PREFIX", &raw))
         .transpose()?
-        .unwrap_or_else(|| DEFAULT_PUSH_METRIC_PREFIX.to_owned());
+        .unwrap_or_else(|| PushGatewayConfig::DEFAULT_METRIC_PREFIX.to_owned());
     let mut push_interval = get_env("PUSH_INTERVAL")
         .map(|raw| parse_duration_option("PUSH_INTERVAL", &raw))
         .transpose()?;
@@ -240,22 +241,7 @@ fn take_value(args: &[String], index: &mut usize, option: &str) -> Result<String
 }
 
 fn parse_url(raw: &str) -> Result<Url> {
-    // Keep local development terse: `localhost:9091` means the normal HTTP
-    // Pushgateway endpoint unless a scheme is explicitly provided.
-    let with_scheme = if raw.starts_with("http://") || raw.starts_with("https://") {
-        raw.to_owned()
-    } else {
-        format!("http://{raw}")
-    };
-    Url::parse(&with_scheme).map_err(|err| anyhow!("invalid --push.url URL: {err}"))
-}
-
-fn default_push_timeout() -> Duration {
-    Duration::from_secs(5)
-}
-
-fn default_push_user_agent() -> String {
-    format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    PushGatewayConfig::parse_endpoint(raw).map_err(|err| anyhow!("invalid --push.url URL: {err}"))
 }
 
 fn parse_duration_option(option: &str, raw: &str) -> Result<Duration> {
@@ -314,36 +300,41 @@ fn duration_from_number(number: u64, unit: DurationUnit) -> Option<Duration> {
 }
 
 fn parse_retries(option: &str, raw: &str) -> Result<u32> {
-    let retries = raw
-        .trim()
-        .parse::<u32>()
-        .map_err(|_| anyhow!("{option} must be an integer between 0 and {MAX_PUSH_RETRIES}"))?;
-    if !is_valid_retry_count(retries) {
-        bail!("{option} must be at most {MAX_PUSH_RETRIES}");
-    }
+    let retries = raw.trim().parse::<u32>().map_err(|_| {
+        anyhow!(
+            "{option} must be an integer between 0 and {}",
+            PushGatewayConfig::MAX_RETRIES
+        )
+    })?;
+    validate_retries(retries).map_err(|_| {
+        anyhow!(
+            "{option} must be at most {}",
+            PushGatewayConfig::MAX_RETRIES
+        )
+    })?;
     Ok(retries)
 }
 
+#[cfg(kani)]
 fn is_valid_retry_count(retries: u32) -> bool {
-    retries <= MAX_PUSH_RETRIES
+    retries <= PushGatewayConfig::MAX_RETRIES
 }
 
 fn parse_user_agent(option: &str, raw: &str) -> Result<String> {
     let value = raw.trim();
-    if value.is_empty() {
-        bail!("{option} must not be empty");
-    }
-    if value.chars().any(char::is_control) {
-        bail!("{option} must not contain control characters");
-    }
+    validate_user_agent(value).map_err(|err| {
+        anyhow!(
+            "{}",
+            err.to_string().replace("Pushgateway User-Agent", option)
+        )
+    })?;
     Ok(value.to_owned())
 }
 
 fn parse_metric_prefix(option: &str, raw: &str) -> Result<String> {
     let value = raw.trim();
-    if !is_valid_label_name(value) {
-        bail!("invalid {option} metric prefix '{value}'");
-    }
+    validate_metric_prefix(value)
+        .map_err(|_| anyhow!("invalid {option} metric prefix '{value}'"))?;
     Ok(value.to_owned())
 }
 
@@ -375,33 +366,6 @@ fn parse_label(raw: &str) -> Result<(String, String)> {
     }
 
     Ok((name.to_owned(), value.to_owned()))
-}
-
-fn is_valid_label_name(name: &str) -> bool {
-    is_valid_label_name_bytes(name.as_bytes())
-}
-
-fn is_reserved_label_name(name: &str) -> bool {
-    is_reserved_label_name_bytes(name.as_bytes())
-}
-
-fn is_reserved_label_name_bytes(name: &[u8]) -> bool {
-    name == b"job"
-}
-
-fn is_valid_label_name_bytes(name: &[u8]) -> bool {
-    let Some((&first, rest)) = name.split_first() else {
-        return false;
-    };
-    if !(first.is_ascii_alphabetic() || first == b'_') {
-        return false;
-    }
-    for &byte in rest {
-        if !(byte.is_ascii_alphanumeric() || byte == b'_') {
-            return false;
-        }
-    }
-    true
 }
 
 fn reject_duplicate_labels(labels: &[(String, String)]) -> Result<()> {
@@ -439,6 +403,8 @@ fn is_help_option(arg: &str) -> bool {
 
 #[cfg(kani)]
 mod verification {
+    use crate::pushgateway::{is_reserved_label_name_bytes, is_valid_label_name_bytes};
+
     use super::*;
 
     const MAX_LABEL_NAME_BYTES: usize = 4;

@@ -38,6 +38,128 @@ pub struct PushGatewayConfig {
     pub metric_prefix: String,
 }
 
+impl PushGatewayConfig {
+    /// Default Pushgateway job name used by the CLI and builder.
+    pub const DEFAULT_JOB: &'static str = "iperf3";
+    /// Default metric prefix used by the CLI and builder.
+    pub const DEFAULT_METRIC_PREFIX: &'static str = "iperf3";
+    /// Default number of Pushgateway retries after the first failed request.
+    pub const DEFAULT_RETRIES: u32 = 0;
+    /// Maximum supported retry count.
+    pub const MAX_RETRIES: u32 = 10;
+
+    /// Build a config with production-safe defaults for every field except the
+    /// Pushgateway endpoint.
+    pub fn new(endpoint: Url) -> Self {
+        Self {
+            endpoint,
+            job: Self::DEFAULT_JOB.to_owned(),
+            labels: Vec::new(),
+            timeout: Self::default_timeout(),
+            retries: Self::DEFAULT_RETRIES,
+            user_agent: Self::default_user_agent(),
+            metric_prefix: Self::DEFAULT_METRIC_PREFIX.to_owned(),
+        }
+    }
+
+    /// Parse a Pushgateway endpoint, defaulting bare `host:port` values to HTTP.
+    pub fn parse_endpoint(raw: &str) -> Result<Url> {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return Err(Error::invalid_argument(
+                "Pushgateway endpoint must not be empty",
+            ));
+        }
+
+        // Keep local development terse: `localhost:9091` means the normal HTTP
+        // Pushgateway endpoint unless a scheme is explicitly provided.
+        let with_scheme = if raw.starts_with("http://") || raw.starts_with("https://") {
+            raw.to_owned()
+        } else {
+            format!("http://{raw}")
+        };
+        Url::parse(&with_scheme).map_err(|err| {
+            Error::with_source(
+                ErrorKind::InvalidArgument,
+                "invalid Pushgateway endpoint URL",
+                err,
+            )
+        })
+    }
+
+    /// Default per-request timeout.
+    pub const fn default_timeout() -> Duration {
+        Duration::from_secs(5)
+    }
+
+    /// Default HTTP `User-Agent`.
+    pub fn default_user_agent() -> String {
+        format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    }
+
+    /// Set the Pushgateway job name.
+    pub fn job(mut self, job: impl Into<String>) -> Self {
+        self.job = job.into();
+        self
+    }
+
+    /// Add one grouping label.
+    pub fn label(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.labels.push((name.into(), value.into()));
+        self
+    }
+
+    /// Replace grouping labels.
+    pub fn labels<I, K, V>(mut self, labels: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.labels = labels
+            .into_iter()
+            .map(|(name, value)| (name.into(), value.into()))
+            .collect();
+        self
+    }
+
+    /// Set the per-request HTTP timeout.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Set the number of retries after the first failed request.
+    pub fn retries(mut self, retries: u32) -> Self {
+        self.retries = retries;
+        self
+    }
+
+    /// Set the HTTP `User-Agent`.
+    pub fn user_agent(mut self, user_agent: impl Into<String>) -> Self {
+        self.user_agent = user_agent.into();
+        self
+    }
+
+    /// Set the Prometheus metric name prefix.
+    pub fn metric_prefix(mut self, metric_prefix: impl Into<String>) -> Self {
+        self.metric_prefix = metric_prefix.into();
+        self
+    }
+
+    /// Validate this config before it is used for HTTP delivery.
+    pub fn validate(&self) -> Result<()> {
+        validate_endpoint(&self.endpoint)?;
+        validate_job(&self.job)?;
+        validate_labels(&self.labels)?;
+        validate_timeout(self.timeout)?;
+        validate_retries(self.retries)?;
+        validate_user_agent(&self.user_agent)?;
+        validate_metric_prefix(&self.metric_prefix)?;
+        Ok(())
+    }
+}
+
 /// HTTP sink for pushing iperf metrics to Prometheus Pushgateway.
 pub struct PushGateway {
     client: Client,
@@ -49,6 +171,8 @@ pub struct PushGateway {
 impl PushGateway {
     /// Build a Pushgateway sink from validated configuration.
     pub fn new(config: PushGatewayConfig) -> Result<Self> {
+        config.validate()?;
+
         let mut url = config.endpoint;
         let mut path = url.path().trim_end_matches('/').to_owned();
         // Pushgateway represents grouping labels as path segments:
@@ -133,6 +257,142 @@ impl PushGateway {
 
         Ok(())
     }
+}
+
+fn validate_endpoint(endpoint: &Url) -> Result<()> {
+    match endpoint.scheme() {
+        "http" | "https" => {}
+        scheme => {
+            return Err(Error::invalid_argument(format!(
+                "Pushgateway endpoint scheme must be http or https, got '{scheme}'"
+            )));
+        }
+    }
+    if endpoint.host_str().is_none() {
+        return Err(Error::invalid_argument(
+            "Pushgateway endpoint must include a host",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_job(job: &str) -> Result<()> {
+    if job.is_empty() {
+        return Err(Error::invalid_argument(
+            "Pushgateway job name must not be empty",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_labels(labels: &[(String, String)]) -> Result<()> {
+    for (name, value) in labels {
+        validate_label(name, value)?;
+    }
+    reject_duplicate_labels(labels)?;
+    Ok(())
+}
+
+pub(crate) fn validate_label(name: &str, value: &str) -> Result<()> {
+    if !is_valid_label_name(name) {
+        return Err(Error::invalid_argument(format!(
+            "invalid Pushgateway label name '{name}'"
+        )));
+    }
+    if is_reserved_label_name(name) {
+        return Err(Error::invalid_argument(format!(
+            "Pushgateway label name '{name}' is reserved"
+        )));
+    }
+    if value.is_empty() {
+        return Err(Error::invalid_argument(format!(
+            "Pushgateway label value for '{name}' must not be empty"
+        )));
+    }
+    Ok(())
+}
+
+fn reject_duplicate_labels(labels: &[(String, String)]) -> Result<()> {
+    for (index, (name, _)) in labels.iter().enumerate() {
+        if labels[..index]
+            .iter()
+            .any(|(previous_name, _)| previous_name == name)
+        {
+            return Err(Error::invalid_argument(format!(
+                "duplicate Pushgateway label name '{name}'"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_timeout(timeout: Duration) -> Result<()> {
+    if timeout.is_zero() {
+        return Err(Error::invalid_argument(
+            "Pushgateway timeout must be greater than zero",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_retries(retries: u32) -> Result<()> {
+    if retries > PushGatewayConfig::MAX_RETRIES {
+        return Err(Error::invalid_argument(format!(
+            "Pushgateway retries must be at most {}",
+            PushGatewayConfig::MAX_RETRIES
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_user_agent(value: &str) -> Result<()> {
+    if value.is_empty() {
+        return Err(Error::invalid_argument(
+            "Pushgateway User-Agent must not be empty",
+        ));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(Error::invalid_argument(
+            "Pushgateway User-Agent must not contain control characters",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_metric_prefix(prefix: &str) -> Result<()> {
+    if !is_valid_label_name(prefix) {
+        return Err(Error::invalid_argument(format!(
+            "invalid Pushgateway metric prefix '{prefix}'"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn is_valid_label_name(name: &str) -> bool {
+    is_valid_label_name_bytes(name.as_bytes())
+}
+
+pub(crate) fn is_reserved_label_name(name: &str) -> bool {
+    is_reserved_label_name_bytes(name.as_bytes())
+}
+
+pub(crate) fn is_reserved_label_name_bytes(name: &[u8]) -> bool {
+    name == b"job"
+}
+
+pub(crate) fn is_valid_label_name_bytes(name: &[u8]) -> bool {
+    let Some((&first, rest)) = name.split_first() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == b'_') {
+        return false;
+    }
+    for &byte in rest {
+        if !(byte.is_ascii_alphanumeric() || byte == b'_') {
+            return false;
+        }
+    }
+    true
 }
 
 #[derive(Debug)]
@@ -490,25 +750,93 @@ mod tests {
 
     #[test]
     fn builds_pushgateway_grouping_url() {
-        let gateway = PushGateway::new(PushGatewayConfig {
-            endpoint: Url::parse("http://127.0.0.1:9091/base/").unwrap(),
-            job: "iperf job".to_owned(),
-            labels: vec![
-                ("test".to_owned(), "test/one".to_owned()),
-                ("scenario".to_owned(), "sample#1".to_owned()),
-                ("mode".to_owned(), "client".to_owned()),
-            ],
-            timeout: Duration::from_secs(5),
-            retries: 0,
-            user_agent: "iperf3-rs/test".to_owned(),
-            metric_prefix: "iperf3".to_owned(),
-        })
-        .unwrap();
+        let config = PushGatewayConfig::new(Url::parse("http://127.0.0.1:9091/base/").unwrap())
+            .job("iperf job")
+            .label("test", "test/one")
+            .label("scenario", "sample#1")
+            .label("mode", "client")
+            .user_agent("iperf3-rs/test");
+        let gateway = PushGateway::new(config).unwrap();
 
         assert_eq!(
             gateway.url.as_str(),
             "http://127.0.0.1:9091/base/metrics/job/iperf%20job/test/test%2Fone/scenario/sample%231/mode/client"
         );
+    }
+
+    #[test]
+    fn config_builder_sets_defaults() {
+        let config = PushGatewayConfig::new(Url::parse("http://localhost:9091").unwrap());
+
+        assert_eq!(config.job, PushGatewayConfig::DEFAULT_JOB);
+        assert!(config.labels.is_empty());
+        assert_eq!(config.timeout, PushGatewayConfig::default_timeout());
+        assert_eq!(config.retries, PushGatewayConfig::DEFAULT_RETRIES);
+        assert_eq!(config.user_agent, PushGatewayConfig::default_user_agent());
+        assert_eq!(
+            config.metric_prefix,
+            PushGatewayConfig::DEFAULT_METRIC_PREFIX
+        );
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn config_validation_rejects_values_cli_would_reject() {
+        let endpoint = Url::parse("http://localhost:9091").unwrap();
+
+        for (label, config, expected) in [
+            (
+                "empty job",
+                PushGatewayConfig::new(endpoint.clone()).job(""),
+                "job name",
+            ),
+            (
+                "bad label",
+                PushGatewayConfig::new(endpoint.clone()).label("9bad", "value"),
+                "label name",
+            ),
+            (
+                "reserved label",
+                PushGatewayConfig::new(endpoint.clone()).label("job", "value"),
+                "reserved",
+            ),
+            (
+                "duplicate label",
+                PushGatewayConfig::new(endpoint.clone())
+                    .label("site", "a")
+                    .label("site", "b"),
+                "duplicate",
+            ),
+            (
+                "zero timeout",
+                PushGatewayConfig::new(endpoint.clone()).timeout(Duration::ZERO),
+                "timeout",
+            ),
+            (
+                "too many retries",
+                PushGatewayConfig::new(endpoint.clone())
+                    .retries(PushGatewayConfig::MAX_RETRIES + 1),
+                "retries",
+            ),
+            (
+                "bad prefix",
+                PushGatewayConfig::new(endpoint.clone()).metric_prefix("bad-prefix"),
+                "metric prefix",
+            ),
+        ] {
+            let err = config.validate().expect_err(label);
+            assert!(
+                err.to_string().contains(expected),
+                "{label} should mention {expected:?}, got {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_bare_pushgateway_endpoint_as_http() {
+        let url = PushGatewayConfig::parse_endpoint("localhost:9091").unwrap();
+
+        assert_eq!(url.as_str(), "http://localhost:9091/");
     }
 
     #[test]
