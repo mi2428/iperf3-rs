@@ -3,7 +3,31 @@
 This document collects development, verification, and release details for
 `iperf3-rs`. The README is intentionally focused on user-facing behavior.
 
-## Local setup
+> [!TIP]
+> Most local changes should pass `make check`. Changes that affect libiperf,
+> Docker, metrics export, release packaging, or examples should also run
+> `make integration`, `make integration EXAMPLES=bwcheck`, and `make kani` as
+> appropriate.
+
+## Table of Contents
+
+- [Setup](#setup)
+- [Developer Commands](#developer-commands)
+  - [Shell completions](#shell-completions)
+- [Architecture](#architecture)
+  - [Project layout](#project-layout)
+  - [Native build flow](#native-build-flow)
+- [Quality Gates](#quality-gates)
+  - [Tests](#tests)
+  - [Kani](#kani)
+- [Release Operations](#release-operations)
+  - [Release workflow](#release-workflow)
+  - [Container publishing](#container-publishing)
+  - [Homebrew tap](#homebrew-tap)
+- [GitHub Actions](#github-actions)
+- [Maintainer Checklist](#maintainer-checklist)
+
+## Setup
 
 Clone the repository with the upstream iperf3 submodule:
 
@@ -18,7 +42,11 @@ If the checkout already exists:
 git submodule update --init --recursive
 ```
 
-## Useful commands
+The repository uses the Rust toolchain specified in `rust-toolchain.toml`.
+Docker is required for integration tests and Linux release-style builds. Kani is
+required only for `make kani`.
+
+## Developer Commands
 
 ```sh
 make help
@@ -37,17 +65,84 @@ make dist OS=darwin,linux ARCH=amd64,arm64
 make multipass
 ```
 
-`make check` runs formatting, clippy, rustdoc, unit tests, and shell completion
-syntax checks.
+Common command groups:
 
-`make check integration kani` is the broad local quality gate. It requires Kani
-and a running Docker daemon.
+- `make check` runs formatting, clippy, rustdoc, unit tests, and shell
+  completion syntax checks.
+- `make integration` runs the main Docker Compose interop and Pushgateway test.
+- `make integration EXAMPLES=bwcheck` runs the library-example integration test.
+- `make check integration kani` is the broad local release-blocking quality
+  gate. It requires Kani and a running Docker daemon.
+- `make dist OS=linux ARCH=arm64` builds a Raspberry Pi-style Linux arm64
+  artifact and smoke-tests startup in an old-glibc Debian container.
+- `make multipass` creates a Linux VM helper for manual investigation. It is not
+  part of the normal quality gate.
 
-## Build internals
+### Shell completions
+
+Completion scripts are checked in under `completions/`:
+
+- `completions/iperf3-rs.bash`
+- `completions/_iperf3-rs`
+- `completions/iperf3-rs.fish`
+
+Syntax checks run as part of `make check`.
+
+Install locally:
+
+```sh
+make install COMPLETION=1
+```
+
+The install directories are configurable:
+
+- `BASH_COMPLETION_DIR`
+- `ZSH_COMPLETION_DIR`
+- `FISH_COMPLETION_DIR`
+
+For zsh, the Makefile prefers a writable `site-functions` directory that is
+already in `$fpath`, falling back to `$(INSTALL_PREFIX)/share/zsh/site-functions`
+and printing a note if the fallback is not in `$fpath`.
+
+## Architecture
+
+`iperf3-rs` has two public surfaces:
+
+- a CLI that behaves like upstream iperf3 plus `--push.*` metrics options;
+- a Rust library API centered on `IperfCommand`, `MetricsMode`, and
+  `PushGateway`.
 
 The upstream `esnet/iperf3` source is vendored as the `./iperf3` git submodule.
 The Rust build script compiles `libiperf` from that submodule instead of linking
 to a system iperf3 package.
+
+### Project layout
+
+```text
+.
+|-- src/
+|   |-- args.rs          # iperf3-rs option extraction and validation
+|   |-- cli.rs           # CLI orchestration over the library modules
+|   |-- command.rs       # public Rust command API over libiperf
+|   |-- help.rs          # wrapper help inserted into upstream help text
+|   |-- iperf.rs         # Rust wrapper around libiperf FFI
+|   |-- lib.rs           # public crate entry point and re-exports
+|   |-- main.rs          # CLI entry point
+|   |-- metrics.rs       # interval callback, event streams, and window aggregation
+|   |-- pushgateway.rs   # Pushgateway URL construction, rendering, and HTTP writes
+|   `-- version.rs       # one-line version rendering
+|-- native/              # small C shim over libiperf
+|-- iperf3/              # esnet/iperf3 git submodule
+|-- completions/         # bash, zsh, and fish completions
+|-- docker/              # Prometheus and Grafana provisioning
+|-- examples/            # library-crate usage examples with their own tests
+|-- tests/               # Docker Compose integration tests
+|-- Dockerfile           # build, integration-test, and release image stages
+|-- docker-compose.yml   # local observability stack
+`-- docker-compose.test.yml
+```
+
+### Native build flow
 
 At build time, `build.rs`:
 
@@ -82,33 +177,9 @@ This avoids a runtime OpenSSL dependency in the bundled libiperf build. The
 Pushgateway HTTP client uses Rustls with webpki roots, so HTTPS Pushgateway
 requests still work from the scratch release image.
 
-## Project layout
+## Quality Gates
 
-```text
-.
-|-- src/
-|   |-- args.rs          # iperf3-rs option extraction and validation
-|   |-- cli.rs           # CLI orchestration over the library modules
-|   |-- command.rs       # public Rust command API over libiperf
-|   |-- help.rs          # wrapper help inserted into upstream help text
-|   |-- iperf.rs         # Rust wrapper around libiperf FFI
-|   |-- lib.rs           # public crate entry point and re-exports
-|   |-- main.rs          # CLI entry point
-|   |-- metrics.rs       # interval callback, event streams, and window aggregation
-|   |-- pushgateway.rs   # Pushgateway URL construction, rendering, and HTTP writes
-|   `-- version.rs       # one-line version rendering
-|-- native/              # small C shim over libiperf
-|-- iperf3/              # esnet/iperf3 git submodule
-|-- completions/         # bash, zsh, and fish completions
-|-- docker/              # Prometheus and Grafana provisioning
-|-- examples/            # library-crate usage examples with their own tests
-|-- tests/               # Docker Compose integration tests
-|-- Dockerfile           # build, integration-test, and release image stages
-|-- docker-compose.yml   # local observability stack
-`-- docker-compose.test.yml
-```
-
-## Tests
+### Tests
 
 Unit tests cover the argument splitter, label validation, duration parsing,
 version rendering, Pushgateway URL construction, Prometheus rendering, window
@@ -148,13 +219,12 @@ one from the repository root with:
 make integration EXAMPLES=bwcheck
 ```
 
-Use `EXAMPLES=all` to run every example directory that has both a
-`Cargo.toml` and `integration_test.rs`. The bwcheck example protects
-library-crate usage by importing `iperf3-rs`, running UDP clients through
-`IperfCommand`, consuming live interval metrics, and checking bandwidth/loss
-threshold behavior.
+Use `EXAMPLES=all` to run every example directory that has both a `Cargo.toml`
+and `integration_test.rs`. The bwcheck example protects library-crate usage by
+importing `iperf3-rs`, running UDP clients through `IperfCommand`, consuming
+live interval metrics, and checking bandwidth/loss threshold behavior.
 
-## Kani
+### Kani
 
 Run:
 
@@ -169,7 +239,7 @@ Kani currently checks selected pure logic:
 - retry delay is bounded for configured retry counts;
 - Prometheus label-name validation matches the intended ASCII shape;
 - reserved label-name detection matches the configured reserved keys;
-- duration arithmetic handles minute overflow.
+- duration arithmetic handles minute overflow;
 - command metrics-window validation rejects zero-duration windows;
 - metrics callback mode selection matches the requested stream mode;
 - window aggregation keeps counter summaries nonnegative and gauge summaries
@@ -178,33 +248,9 @@ Kani currently checks selected pure logic:
 Kani is not a replacement for integration tests here; it is used to lock down
 small, security-sensitive or correctness-sensitive parsing and encoding rules.
 
-## Shell completions
+## Release Operations
 
-Completion scripts are checked in under `completions/`:
-
-- `completions/iperf3-rs.bash`
-- `completions/_iperf3-rs`
-- `completions/iperf3-rs.fish`
-
-Syntax checks run as part of `make check`.
-
-Install locally:
-
-```sh
-make install COMPLETION=1
-```
-
-The install directories are configurable:
-
-- `BASH_COMPLETION_DIR`
-- `ZSH_COMPLETION_DIR`
-- `FISH_COMPLETION_DIR`
-
-For zsh, the Makefile prefers a writable `site-functions` directory that is
-already in `$fpath`, falling back to `$(INSTALL_PREFIX)/share/zsh/site-functions`
-and printing a note if the fallback is not in `$fpath`.
-
-## Release process
+### Release workflow
 
 Releases are driven by cargo-dist.
 
@@ -233,7 +279,7 @@ smoke-tested in `debian:bullseye-slim` with `-h` and `--version`. This keeps the
 glibc baseline low enough for older Raspberry Pi OS / Debian bullseye systems
 and catches binaries that build successfully but cannot start.
 
-## Container release
+### Container publishing
 
 GHCR publishing is handled by `.github/workflows/ghcr.yml` when a GitHub Release
 is published.
@@ -250,7 +296,7 @@ The workflow:
 It uses the automatically provided `GITHUB_TOKEN` with `packages: write`. No
 separate GHCR token is required.
 
-## Homebrew tap
+### Homebrew tap
 
 The tap repository is:
 
@@ -265,8 +311,8 @@ brew tap mi2428/iperf3-rs
 brew install iperf3-rs
 ```
 
-The release workflow pushes generated formula updates to the tap. The
-Homebrew publishing step requires this repository secret on `mi2428/iperf3-rs`:
+The release workflow pushes generated formula updates to the tap. The Homebrew
+publishing step requires this repository secret on `mi2428/iperf3-rs`:
 
 ```text
 HOMEBREW_TAP_TOKEN
@@ -298,7 +344,7 @@ Workflows:
 of invoking Makefile targets so CI behavior does not silently change when the
 Makefile is refactored.
 
-## Maintainer checklist
+## Maintainer Checklist
 
 Before publishing a release:
 

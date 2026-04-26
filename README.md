@@ -2,53 +2,67 @@
 
 [![Release](https://github.com/mi2428/iperf3-rs/actions/workflows/release.yml/badge.svg)](https://github.com/mi2428/iperf3-rs/actions/workflows/release.yml) [![GHCR](https://github.com/mi2428/iperf3-rs/actions/workflows/ghcr.yml/badge.svg)](https://github.com/mi2428/iperf3-rs/actions/workflows/ghcr.yml)
 
-Rust frontend for upstream `libiperf` with live Prometheus Pushgateway export.
+Rust API for `libiperf` with iperf3 compatibility and live Prometheus
+Pushgateway export.
 
-`iperf3-rs` is intentionally not a shell wrapper around the `iperf3` executable.
-It links the `esnet/iperf3` `libiperf` library directly through FFI, lets
-upstream parse and execute normal iperf3 tests, and observes libiperf interval
-results while the test is still running.
+> [!TIP]
+> `iperf3-rs` is not a shell wrapper around `iperf3`. It links upstream
+> `esnet/iperf3` `libiperf` directly, lets libiperf parse and run normal iperf3
+> tests, and exposes live interval metrics to Rust code and Pushgateway while
+> tests are still running.
 
-That gives the project two goals:
+## Table of Contents
+
+- [Project Overview](#project-overview)
+  - [Why libiperf](#why-libiperf)
+  - [Compatibility](#compatibility)
+  - [Live metrics model](#live-metrics-model)
+- [Install](#install)
+- [Use as a CLI](#use-as-a-cli)
+- [Use as a Rust Library](#use-as-a-rust-library)
+- [Export Metrics](#export-metrics)
+  - [Pushgateway configuration](#pushgateway-configuration)
+  - [Metric names](#metric-names)
+- [Local Observability Stack](#local-observability-stack)
+- [Build Notes and Caveats](#build-notes-and-caveats)
+- [License](#license)
+
+## Project Overview
+
+`iperf3-rs` has two goals:
 
 - Preserve iperf3 wire compatibility by using upstream `libiperf` and upstream
   option parsing.
-- Provide a flexible Rust frontend for live metrics, packaging, and future
-  operational behavior that would be awkward to bolt onto the stock CLI.
+- Make libiperf useful from Rust applications, including live metrics export,
+  labeling, packaging, and automation logic that would be awkward to bolt onto
+  the stock CLI from the outside.
 
-## Why this exists
+### Why libiperf
 
-There are many iperf helper tools that run `iperf3` as a child process and parse
-the final JSON output. That works for post-run summaries, but it is a weak fit
-for live observability:
+Many iperf helper tools run `iperf3` as a child process and parse the final JSON
+output. That is fine for post-run summaries, but it is a weak fit for live
+observability:
 
-- final JSON arrives after the test has already finished;
+- final JSON arrives after the test has finished;
 - parsing human output is brittle;
 - long-running server mode is hard to enrich cleanly from outside the process;
 - retry, timeout, User-Agent, labeling, and packaging behavior become wrapper
   logic around an opaque child process.
 
-`iperf3-rs` takes a different path. It embeds the upstream library and registers
-a Rust-managed callback on libiperf's reporting path. By default, each interval
-is converted to Prometheus text format and pushed to Pushgateway immediately;
-with `--push.interval`, iperf3-rs pushes window summary metrics instead. In
-practice, this means Prometheus-backed views can update during the test, not
-only after it.
+`iperf3-rs` embeds upstream `libiperf` and registers a Rust-managed callback on
+libiperf's reporting path. The network test itself remains upstream iperf3; the
+Rust layer owns orchestration, metrics, Pushgateway writes, shell completions,
+Docker images, tests, and release packaging.
 
-Because the frontend is Rust, the wrapper-specific pieces are normal Rust code:
-argument extraction, URL validation, Pushgateway HTTP behavior, metric
-rendering, shell completions, Docker images, tests, and model-checking harnesses.
-The network test itself still belongs to upstream iperf3.
-
-## Compatibility model
+### Compatibility
 
 The compatibility rule is simple: `iperf3-rs` strips only its own `--push.*`
 options, then passes the remaining argv to upstream `iperf_parse_arguments()`.
 
-This means upstream iperf3 options such as `-s`, `-c`, `-u`, `-R`, `--bidir`,
+That means upstream iperf3 options such as `-s`, `-c`, `-u`, `-R`, `--bidir`,
 `-b`, `-t`, `-i`, `-P`, `-J`, authentication options, bind options, and the rest
 of the esnet/iperf3 CLI are parsed by libiperf itself. The Rust layer does not
-try to maintain a separate clone of the iperf3 option grammar.
+maintain a separate clone of the iperf3 option grammar.
 
 The wire protocol is upstream iperf3 as well. You can mix `iperf3-rs` and the
 reference `iperf3` binary in either direction:
@@ -68,23 +82,23 @@ iperf3-rs metrics export, window metric aggregation, UDP, reverse TCP,
 bidirectional TCP, server-side metrics, and live interval visibility before the
 client exits.
 
-## How live metrics work
+### Live metrics model
 
-When `--push.url` or `PUSH_URL` is set, iperf3-rs:
+When metrics are enabled, iperf3-rs:
 
 1. lets libiperf parse the iperf3 arguments;
-2. installs an interval metrics callback without changing the user-requested
-   output mode;
-3. receives the latest libiperf interval summary from the reporting path;
-4. maps each interval summary to Prometheus gauges;
-5. sends either the newest interval sample or an aggregated window summary to
+2. installs an interval metrics callback without changing the requested stdout
+   mode;
+3. receives libiperf interval summaries from the reporting path;
+4. maps interval summaries to Rust `Metrics` values and Prometheus gauges;
+5. sends either immediate interval samples or aggregated window summaries to
    Pushgateway.
 
-The callback path is deliberately nonblocking. In the default immediate mode,
-it sends interval metrics into a size-one channel and a worker thread performs
-HTTP writes. If Pushgateway is slow and interval events arrive faster than they
-can be pushed, the queued sample is replaced with the newest interval. For
-gauges, freshness is more useful than replaying stale samples.
+The callback path is deliberately nonblocking. In default immediate mode, it
+sends interval metrics into a size-one channel and a worker thread performs HTTP
+writes. If Pushgateway is slow and interval events arrive faster than they can
+be pushed, the queued sample is replaced with the newest interval. For gauges,
+freshness is more useful than replaying stale samples.
 
 Metrics are emitted once per libiperf reporting interval. Use normal iperf3
 interval controls such as `-i 1` when you want one-second pushes.
@@ -94,8 +108,7 @@ the worker thread and pushes representative `*_window_*` gauges once per window.
 The final partial window is flushed when the iperf test exits. This is not a
 historical datapoint replay mechanism; Pushgateway still stores the latest
 sample for the grouping key, and iperf3-rs performs the aggregation before the
-push. If the same grouping key previously received immediate metrics,
-Pushgateway can show that older body until the first window summary is pushed.
+push.
 
 ## Install
 
@@ -159,17 +172,10 @@ Install shell completions as well:
 make install COMPLETION=1
 ```
 
-Completion install directories are configurable:
+Completion install directories are configurable with `BASH_COMPLETION_DIR`,
+`ZSH_COMPLETION_DIR`, and `FISH_COMPLETION_DIR`.
 
-- `BASH_COMPLETION_DIR`
-- `ZSH_COMPLETION_DIR`
-- `FISH_COMPLETION_DIR`
-
-For zsh, the Makefile prefers a writable `site-functions` directory already in
-`$fpath`, because zsh only loads completion functions from directories in that
-path.
-
-## Basic usage
+## Use as a CLI
 
 Run iperf3-rs the same way you would run iperf3:
 
@@ -180,10 +186,10 @@ iperf3-rs -s
 # One-off server
 iperf3-rs -s -1
 
-# Client
+# TCP client
 iperf3-rs -c 127.0.0.1 -t 10 -i 1
 
-# UDP
+# UDP client
 iperf3-rs -c 127.0.0.1 -u -b 10M -t 10 -i 1
 
 # Reverse mode
@@ -226,7 +232,7 @@ iperf3-rs --version
 The help output includes the iperf3-rs push options first, then the upstream
 iperf3 option list rendered by libiperf.
 
-## Rust library API
+## Use as a Rust Library
 
 The same libiperf frontend is available as a Rust crate. This is intended for
 programs that want to start iperf tests directly from Rust instead of spawning
@@ -238,24 +244,18 @@ them to upstream `iperf_parse_arguments()`:
 ```rust
 use iperf3_rs::{IperfCommand, MetricEvent, MetricsMode};
 
-fn run_client() -> anyhow::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut command = IperfCommand::new();
     command
         .args(["-c", "127.0.0.1", "-t", "10", "-i", "1"])
         .metrics(MetricsMode::Interval);
 
     let mut running = command.spawn()?;
-    let mut metrics = running.take_metrics().expect("metrics enabled");
+    let metrics = running.take_metrics().expect("metrics enabled");
 
     while let Some(event) = metrics.recv() {
-        match event {
-            MetricEvent::Interval(sample) => {
-                println!("{} bit/s", sample.bandwidth_bits_per_second);
-            }
-            MetricEvent::Window(window) => {
-                println!("{} bytes", window.transferred_bytes);
-            }
-            _ => {}
+        if let MetricEvent::Interval(sample) = event {
+            println!("{} bit/s", sample.bandwidth_bits_per_second);
         }
     }
 
@@ -266,12 +266,11 @@ fn run_client() -> anyhow::Result<()> {
 
 Use `MetricsMode::Window(duration)` to receive the same representative window
 summaries used by `--push.interval`. `PushGateway` and `PushGatewayConfig` are
-also exported for applications that want to push the collected metrics
-themselves.
+also exported for applications that want to push collected metrics themselves.
 
 See
 [examples/bwcheck](https://github.com/mi2428/iperf3-rs/tree/main/examples/bwcheck)
-for a small library crate application that receives `HOST:PORT` endpoints, runs
+for a complete example application. It accepts `HOST:PORT` endpoints, runs
 fixed UDP iperf tests, consumes live interval metrics, and fails when bandwidth
 or loss thresholds are not met.
 
@@ -280,7 +279,9 @@ process because libiperf still has process-global error, signal, and output
 state. For local client/server interop tests, run the peer as a separate
 process, container, or VM.
 
-## Pushgateway export
+## Export Metrics
+
+### Pushgateway configuration
 
 Start an iperf3-rs server:
 
@@ -319,7 +320,7 @@ iperf3-rs \
   --push.label scenario=server
 ```
 
-### Push options
+Push options:
 
 ```text
 --push.url URL
@@ -351,8 +352,6 @@ iperf3-rs \
     iperf3-rs pushes immediate interval metrics.
 ```
 
-### Environment variables
-
 Every push option has an environment default:
 
 ```text
@@ -369,17 +368,6 @@ PUSH_INTERVAL=DURATION
 CLI values override environment defaults. `PUSH_LABELS` are applied before
 `--push.label` values. Duplicate label names are rejected.
 
-This is convenient for containerized test runners:
-
-```sh
-PUSH_URL=http://pushgateway:9091 \
-PUSH_JOB=integration \
-PUSH_LABELS=test=self,scenario=tcp \
-iperf3-rs -c server-rs -t 10 -i 1
-```
-
-### Grouping labels
-
 Pushgateway grouping labels are encoded into the request path:
 
 ```text
@@ -394,14 +382,10 @@ User labels may use any Prometheus-style label name:
 [a-zA-Z_][a-zA-Z0-9_]*
 ```
 
-The reserved label names are:
+The reserved label name is `job`. Label values must be non-empty. Path segments
+are percent-encoded, so values can contain characters such as `/` or spaces.
 
-- `job`
-
-Label values must be non-empty. Path segments are percent-encoded, so values can
-contain characters such as `/` or spaces.
-
-## Exported metrics
+### Metric names
 
 With the default `--push.metric-prefix iperf3`, iperf3-rs emits immediate
 interval gauges when `--push.interval` is not set:
@@ -518,7 +502,7 @@ iperf3-rs \
 
 This emits `nettest_bytes`, `nettest_bandwidth`, and so on.
 
-## Observability stack
+## Local Observability Stack
 
 `docker-compose.yml` starts only the observability services:
 
@@ -582,7 +566,7 @@ Remove persisted Prometheus and Grafana volumes as well:
 docker compose down -v
 ```
 
-## Build notes
+## Build Notes and Caveats
 
 The upstream `esnet/iperf3` source is vendored as the `./iperf3` git submodule.
 The Rust build script compiles `libiperf` from that submodule instead of linking
@@ -593,12 +577,7 @@ The final Rust binary links a static `libiperf.a` plus a small C shim from
 the bundled libiperf build, while Pushgateway HTTPS support comes from Rustls
 with webpki roots.
 
-See the repository's
-[CONTRIBUTING.md](https://github.com/mi2428/iperf3-rs/blob/main/CONTRIBUTING.md)
-for local development commands, integration tests, Kani checks, release workflow
-details, and maintainer setup.
-
-## Current caveats
+Current caveats:
 
 - Metrics export is attached to libiperf's reporting path through the local C
   shim. This keeps stdout behavior aligned with upstream iperf3 while still
@@ -610,6 +589,11 @@ details, and maintainer setup.
   for service-level or batch-style metrics, but it is not a long-term time
   series database. Prometheus is expected to scrape it.
 - TCP retransmit metrics depend on what libiperf and the runtime OS can report.
+
+See the repository's
+[CONTRIBUTING.md](https://github.com/mi2428/iperf3-rs/blob/main/CONTRIBUTING.md)
+for local development commands, integration tests, Kani checks, release workflow
+details, and maintainer setup.
 
 ## License
 
