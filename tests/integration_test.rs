@@ -12,6 +12,8 @@ const PUSHGATEWAY_URL: &str = "http://pushgateway:9091";
 const PUSH_JOB: &str = "integration";
 const PUSH_TEST: &str = "self";
 const CLIENT_SCENARIO: &str = "tcp";
+const FILE_SCENARIO: &str = "tcp-file";
+const DELETE_SCENARIO: &str = "tcp-delete";
 const SERVER_SCENARIO: &str = "tcp-server";
 const LIVE_SCENARIO: &str = "tcp-live";
 const WINDOW_SCENARIO: &str = "tcp-window";
@@ -53,6 +55,10 @@ const BIDIR_SCENARIO: &str = "tcp-bidir";
 // - a metrics-enabled iperf3-rs client without `-J` keeps normal
 //   human-readable stdout;
 // - client metrics appear in Pushgateway while a longer run is still active;
+// - CLI file metrics can be written in Prometheus format without replacing
+//   normal iperf stdout, while Pushgateway export still receives the same run;
+// - `--push.delete-on-exit` publishes live metrics during a run and removes the
+//   retained Pushgateway group after the run exits;
 // - `--push.interval` publishes aggregated `iperf3_window_*` metrics instead
 //   of the immediate interval metric families for that grouping key;
 // - the long-running iperf3-rs server continues pushing metrics after a later
@@ -213,6 +219,79 @@ fn compose_interop_and_pushgateway_metrics() {
         "live client exited before interval metrics were observed"
     );
     assert_child_success(&live_args, live_client);
+
+    // File metrics check: use the same Compose service that has Pushgateway
+    // defaults to prove the callback fan-out can write a Prometheus metrics file
+    // and still leave normal iperf stdout untouched.
+    let file_output = project.client_output(&[
+        "sh",
+        "-eu",
+        "-c",
+        r#"
+metrics=/tmp/iperf3-rs-file.prom
+stdout=/tmp/iperf3-rs-file.out
+iperf3-rs \
+  --push.label scenario=tcp-file \
+  --metrics.file "$metrics" \
+  --metrics.format prometheus \
+  -c server-rs -t 3 -i 1 > "$stdout"
+test -s "$metrics"
+awk '$1 == "iperf3_bytes" && $2 > 0 { found=1 } END { exit found ? 0 : 1 }' "$metrics" || {
+  echo "missing positive iperf3_bytes in metrics file" >&2
+  cat "$metrics" >&2
+  exit 1
+}
+awk '$1 == "iperf3_bandwidth" && $2 > 0 { found=1 } END { exit found ? 0 : 1 }' "$metrics" || {
+  echo "missing positive iperf3_bandwidth in metrics file" >&2
+  cat "$metrics" >&2
+  exit 1
+}
+! grep -q '"event":"interval"' "$metrics"
+cat "$stdout"
+"#,
+    ]);
+    assert_success(
+        &["iperf3-rs Prometheus metrics file and Pushgateway fan-out"],
+        &file_output,
+    );
+    assert_human_iperf_output(&file_output);
+    wait_for_pushgateway_metrics(
+        &project,
+        FILE_SCENARIO,
+        &["iperf3_bytes", "iperf3_bandwidth"],
+    );
+
+    // Delete-on-exit check: require retained metrics to appear while the client
+    // is still running, then require the same grouping key to disappear after
+    // the process exits and sends DELETE to Pushgateway.
+    let delete_args = [
+        "iperf3-rs",
+        "--push.label",
+        "scenario=tcp-delete",
+        "--push.delete-on-exit",
+        "-c",
+        "server-rs",
+        "-t",
+        "6",
+        "-i",
+        "1",
+    ];
+    let mut delete_client = project.spawn_client(&delete_args);
+    wait_for_pushgateway_metrics(
+        &project,
+        DELETE_SCENARIO,
+        &["iperf3_bytes", "iperf3_bandwidth"],
+    );
+    assert!(
+        delete_client
+            .try_wait()
+            .expect("failed to poll delete-on-exit client")
+            .is_none(),
+        "delete-on-exit client exited before live metrics were observed"
+    );
+    assert_child_success(&delete_args, delete_client);
+    wait_for_metric_absent(&project, "iperf3_bytes", DELETE_SCENARIO);
+    assert_metric_absent(&project, "iperf3_bandwidth", DELETE_SCENARIO);
 
     // Window push check: `--push.interval` intentionally changes the exported
     // metric family names. The Pushgateway should retain representative window
@@ -883,6 +962,26 @@ fn assert_metric_absent(project: &ComposeProject, name: &str, scenario: &str) {
     assert!(
         metric_value(&metrics, name, scenario).is_none(),
         "metric {name} should be absent for {scenario}\nmetrics:\n{metrics}"
+    );
+}
+
+fn wait_for_metric_absent(project: &ComposeProject, name: &str, scenario: &str) {
+    wait_for(
+        &format!("pushgateway {name} for {scenario} to be absent"),
+        || {
+            let output =
+                project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
+            if !output.status.success() {
+                return output;
+            }
+
+            let metrics = String::from_utf8_lossy(&output.stdout);
+            if metric_value(&metrics, name, scenario).is_none() {
+                output
+            } else {
+                failed_output_like(output)
+            }
+        },
     );
 }
 
