@@ -175,6 +175,14 @@ impl IperfCommand {
         self.arg("-u")
     }
 
+    /// Enable SCTP mode with iperf's `--sctp` option.
+    ///
+    /// This option is available only when the linked libiperf was built with
+    /// SCTP support; otherwise libiperf reports the unsupported option.
+    pub fn sctp(&mut self) -> &mut Self {
+        self.arg("--sctp")
+    }
+
     /// Set target bitrate in bits per second with iperf's `-b` option.
     pub fn bitrate_bits_per_second(&mut self, bits_per_second: u64) -> &mut Self {
         self.arg("-b").arg(bits_per_second.to_string())
@@ -836,6 +844,22 @@ mod tests {
                 "-c".to_owned(),
                 "192.0.2.10".to_owned(),
                 "--bidir".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn sctp_helper_appends_long_option() {
+        let mut command = IperfCommand::client("192.0.2.10");
+        command.sctp();
+
+        assert_eq!(
+            command.argv(),
+            vec![
+                "iperf3-rs".to_owned(),
+                "-c".to_owned(),
+                "192.0.2.10".to_owned(),
+                "--sctp".to_owned()
             ]
         );
     }

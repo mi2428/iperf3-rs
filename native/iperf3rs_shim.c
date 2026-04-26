@@ -85,6 +85,8 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
         protocol = 1;
     } else if (test->protocol->id == Pudp) {
         protocol = 2;
+    } else if (test->protocol->id == Psctp) {
+        protocol = 3;
     }
 
     SLIST_FOREACH(stream, &test->streams, streams) {

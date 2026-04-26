@@ -274,7 +274,7 @@ fn main() -> Result<()> {
 
 Typed helpers cover common roles and options such as `client`, `server_once`,
 `port`, `duration`, `report_interval`, `logfile`, `connect_timeout`, `omit`,
-`bind`, `udp`, `bitrate_bits_per_second`, `reverse`, `bidirectional`,
+`bind`, `udp`, `sctp`, `bitrate_bits_per_second`, `reverse`, `bidirectional`,
 `no_delay`, `zerocopy`, `congestion_control`, and `json`. Use `arg()` or
 `args()` for any upstream iperf3 option that does not need a dedicated Rust
 helper.
@@ -289,6 +289,8 @@ also exported for applications that want to push collected metrics themselves.
 Protocol-specific fields such as TCP RTT or UDP jitter are exposed as
 `Option<f64>`, so application code can distinguish an observed zero from a
 metric that libiperf did not report for that protocol or traffic direction.
+SCTP runs are identified as `TransportProtocol::Sctp` when libiperf reports
+that protocol.
 
 Applications that want to use their own delivery path can reuse the same
 encoding and file output as the CLI. `PrometheusEncoder` renders interval and

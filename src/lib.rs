@@ -7,7 +7,7 @@
 //! and run them, and can stream the same live interval metrics used by the CLI's
 //! Pushgateway exporter.
 //! Protocol-specific metrics are optional, so callers can distinguish a real
-//! zero from values that libiperf did not report for a TCP/UDP direction.
+//! zero from values that libiperf did not report for a TCP, UDP, or SCTP run.
 //!
 //! This crate is useful when a Rust program needs to run iperf tests directly,
 //! for example from a bot, controller, or test harness, without spawning an

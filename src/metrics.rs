@@ -29,6 +29,8 @@ pub enum TransportProtocol {
     Tcp,
     /// UDP mode.
     Udp,
+    /// SCTP mode.
+    Sctp,
     /// Another upstream protocol id.
     Other(i32),
 }
@@ -38,6 +40,7 @@ impl TransportProtocol {
         match value {
             1 => Self::Tcp,
             2 => Self::Udp,
+            3 => Self::Sctp,
             0 => Self::Unknown,
             other => Self::Other(other),
         }
@@ -1025,6 +1028,30 @@ mod verification {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transport_protocol_maps_callback_values() {
+        assert_eq!(
+            TransportProtocol::from_callback_value(0),
+            TransportProtocol::Unknown
+        );
+        assert_eq!(
+            TransportProtocol::from_callback_value(1),
+            TransportProtocol::Tcp
+        );
+        assert_eq!(
+            TransportProtocol::from_callback_value(2),
+            TransportProtocol::Udp
+        );
+        assert_eq!(
+            TransportProtocol::from_callback_value(3),
+            TransportProtocol::Sctp
+        );
+        assert_eq!(
+            TransportProtocol::from_callback_value(99),
+            TransportProtocol::Other(99)
+        );
+    }
 
     #[test]
     fn enqueue_latest_replaces_queued_metric() {
