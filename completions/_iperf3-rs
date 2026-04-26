@@ -73,9 +73,10 @@ _arguments -s -S \
   '--push.timeout[per-request Pushgateway timeout]:duration:(500ms 1s 5s 10s 30s 1m)' \
   '--push.retries[retry failed Pushgateway requests]:retries:(0 1 2 3 5 10)' \
   '--push.user-agent[HTTP User-Agent for Pushgateway requests]:value:' \
-  '--push.metric-prefix[Prometheus metric name prefix]:prefix:(iperf3)' \
+  '--metrics.prefix[Prometheus metric name prefix]:prefix:(iperf3)' \
+  '--push.metric-prefix[deprecated alias for --metrics.prefix]:prefix:(iperf3)' \
   '--push.interval[aggregate interval samples before pushing window metrics]:duration:(500ms 1s 5s 10s 30s 1m)' \
-  '--push.delete-on-exit[delete this Pushgateway grouping key after the run exits]' \
+  '--push.delete-on-exit[best-effort delete of this Pushgateway grouping key after the run exits]' \
   '--metrics.file[write live interval metrics to a file]:file:_files' \
   '--metrics.format[metrics file format]:format:(jsonl prometheus)' \
   '*--metrics.label[add a Prometheus file sample label]:KEY=VALUE:' \

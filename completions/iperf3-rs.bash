@@ -73,6 +73,7 @@ _iperf3_rs()
         --push.timeout
         --push.retries
         --push.user-agent
+        --metrics.prefix
         --push.metric-prefix
         --push.interval
         --push.delete-on-exit
@@ -92,6 +93,10 @@ _iperf3_rs()
             ;;
         --push.metric-prefix=*)
             COMPREPLY=($(compgen -P "--push.metric-prefix=" -W "iperf3" -- "${cur#*=}"))
+            return
+            ;;
+        --metrics.prefix=*)
+            COMPREPLY=($(compgen -P "--metrics.prefix=" -W "iperf3" -- "${cur#*=}"))
             return
             ;;
         --push.interval=*)
@@ -144,6 +149,10 @@ _iperf3_rs()
             return
             ;;
         --push.metric-prefix)
+            COMPREPLY=($(compgen -W "iperf3" -- "${cur}"))
+            return
+            ;;
+        --metrics.prefix)
             COMPREPLY=($(compgen -W "iperf3" -- "${cur}"))
             return
             ;;
