@@ -130,6 +130,8 @@ jobs:
           fi
       - name: "Prepare libiperf build inputs"
         run: |
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}/iperf3"
           git submodule update --init --recursive
           echo "CARGO_INCREMENTAL=0" >> "${GITHUB_ENV}"
         shell: "bash"
