@@ -68,54 +68,54 @@ _iperf3_rs()
         --username
         --rsa-public-key-path
         --push.url
+        --push.delete-on-exit
+        --push.interval
         --push.job
         --push.label
-        --push.timeout
         --push.retries
+        --push.timeout
         --push.user-agent
-        --metrics.prefix
-        --push.interval
-        --push.delete-on-exit
         --metrics.file
         --metrics.format
         --metrics.label
+        --metrics.prefix
     "
 
     case "${cur}" in
-        --push.timeout=*)
-            COMPREPLY=($(compgen -P "--push.timeout=" -W "500ms 1s 5s 10s 30s 1m" -- "${cur#*=}"))
-            return
-            ;;
-        --push.retries=*)
-            COMPREPLY=($(compgen -P "--push.retries=" -W "0 1 2 3 5 10" -- "${cur#*=}"))
-            return
-            ;;
-        --metrics.prefix=*)
-            COMPREPLY=($(compgen -P "--metrics.prefix=" -W "iperf3" -- "${cur#*=}"))
-            return
-            ;;
-        --push.interval=*)
-            COMPREPLY=($(compgen -P "--push.interval=" -W "500ms 1s 5s 10s 30s 1m" -- "${cur#*=}"))
+        --push.url=*)
+            COMPREPLY=($(compgen -P "--push.url=" -W "http://127.0.0.1:9091 http://localhost:9091" -- "${cur#*=}"))
             return
             ;;
         --push.delete-on-exit=*)
             COMPREPLY=($(compgen -P "--push.delete-on-exit=" -W "true false 1 0 yes no on off" -- "${cur#*=}"))
             return
             ;;
+        --push.interval=*)
+            COMPREPLY=($(compgen -P "--push.interval=" -W "500ms 1s 5s 10s 30s 1m" -- "${cur#*=}"))
+            return
+            ;;
         --push.label=*)
             COMPREPLY=($(compgen -P "--push.label=" -W "test= scenario= site= host=" -- "${cur#*=}"))
+            return
+            ;;
+        --push.retries=*)
+            COMPREPLY=($(compgen -P "--push.retries=" -W "0 1 2 3 5 10" -- "${cur#*=}"))
+            return
+            ;;
+        --push.timeout=*)
+            COMPREPLY=($(compgen -P "--push.timeout=" -W "500ms 1s 5s 10s 30s 1m" -- "${cur#*=}"))
+            return
+            ;;
+        --metrics.format=*)
+            COMPREPLY=($(compgen -P "--metrics.format=" -W "jsonl prometheus" -- "${cur#*=}"))
             return
             ;;
         --metrics.label=*)
             COMPREPLY=($(compgen -P "--metrics.label=" -W "site= host= scenario= run=" -- "${cur#*=}"))
             return
             ;;
-        --push.url=*)
-            COMPREPLY=($(compgen -P "--push.url=" -W "http://127.0.0.1:9091 http://localhost:9091" -- "${cur#*=}"))
-            return
-            ;;
-        --metrics.format=*)
-            COMPREPLY=($(compgen -P "--metrics.format=" -W "jsonl prometheus" -- "${cur#*=}"))
+        --metrics.prefix=*)
+            COMPREPLY=($(compgen -P "--metrics.prefix=" -W "iperf3" -- "${cur#*=}"))
             return
             ;;
     esac
@@ -135,44 +135,44 @@ _iperf3_rs()
             COMPREPLY=($(compgen -W "k m g t K M G T" -- "${cur}"))
             return
             ;;
-        --push.timeout)
-            COMPREPLY=($(compgen -W "500ms 1s 5s 10s 30s 1m" -- "${cur}"))
-            return
-            ;;
-        --push.retries)
-            COMPREPLY=($(compgen -W "0 1 2 3 5 10" -- "${cur}"))
-            return
-            ;;
-        --metrics.prefix)
-            COMPREPLY=($(compgen -W "iperf3" -- "${cur}"))
+        --push.url)
+            COMPREPLY=($(compgen -W "http://127.0.0.1:9091 http://localhost:9091" -- "${cur}"))
             return
             ;;
         --push.interval)
             COMPREPLY=($(compgen -W "500ms 1s 5s 10s 30s 1m" -- "${cur}"))
             return
             ;;
+        --push.job)
+            COMPREPLY=($(compgen -W "iperf3" -- "${cur}"))
+            return
+            ;;
         --push.label)
             COMPREPLY=($(compgen -W "test= scenario= site= host=" -- "${cur}"))
             return
             ;;
-        --metrics.label)
-            COMPREPLY=($(compgen -W "site= host= scenario= run=" -- "${cur}"))
+        --push.retries)
+            COMPREPLY=($(compgen -W "0 1 2 3 5 10" -- "${cur}"))
             return
             ;;
-        --push.url)
-            COMPREPLY=($(compgen -W "http://127.0.0.1:9091 http://localhost:9091" -- "${cur}"))
+        --push.timeout)
+            COMPREPLY=($(compgen -W "500ms 1s 5s 10s 30s 1m" -- "${cur}"))
             return
             ;;
-        --push.job)
-            COMPREPLY=($(compgen -W "iperf3" -- "${cur}"))
+        --metrics.file)
+            compopt -o default 2>/dev/null || true
             return
             ;;
         --metrics.format)
             COMPREPLY=($(compgen -W "jsonl prometheus" -- "${cur}"))
             return
             ;;
-        --metrics.file)
-            compopt -o default 2>/dev/null || true
+        --metrics.label)
+            COMPREPLY=($(compgen -W "site= host= scenario= run=" -- "${cur}"))
+            return
+            ;;
+        --metrics.prefix)
+            COMPREPLY=($(compgen -W "iperf3" -- "${cur}"))
             return
             ;;
         -p|--port|--rcv-timeout|--server-bitrate-limit|--idle-timeout|--server-max-duration|--time-skew-threshold|--connect-timeout|-b|--bitrate|--pacing-timer|-t|--time|-n|--bytes|-k|--blockcount|-l|--length|--cport|-P|--parallel|-w|--window|-M|--set-mss|-S|--tos|--dscp|-O|--omit|-T|--title|--extra-data|--username|--bind-dev|--push.user-agent)

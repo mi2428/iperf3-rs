@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-const HELP_VALUE_WIDTH: usize = 25;
+const HELP_MIN_VALUE_WIDTH: usize = 25;
 const UPSTREAM_FIRST_SECTION: &str = "Server or Client:\n";
 
 struct HelpRow<'a> {
@@ -24,6 +24,16 @@ pub fn render_wrapper_help() -> String {
                 continuation: &["bare host:port values default to http://"],
             },
             HelpRow {
+                value: "--push.delete-on-exit",
+                description: "delete this Pushgateway grouping key after the run exits",
+                continuation: &[],
+            },
+            HelpRow {
+                value: "--push.interval DURATION",
+                description: "aggregate interval samples before pushing window metrics",
+                continuation: &[],
+            },
+            HelpRow {
                 value: "--push.job JOB",
                 description: "Pushgateway job name (default: iperf3)",
                 continuation: &[],
@@ -34,33 +44,18 @@ pub fn render_wrapper_help() -> String {
                 continuation: &[],
             },
             HelpRow {
-                value: "--push.timeout DURATION",
-                description: "per-request timeout: 500ms, 5s, 1m, or seconds (default: 5s)",
-                continuation: &[],
-            },
-            HelpRow {
                 value: "--push.retries N",
                 description: "retry failed Pushgateway requests N times (default: 0)",
                 continuation: &[],
             },
             HelpRow {
+                value: "--push.timeout DURATION",
+                description: "per-request timeout: 500ms, 5s, 1m, or seconds (default: 5s)",
+                continuation: &[],
+            },
+            HelpRow {
                 value: "--push.user-agent VALUE",
                 description: "HTTP User-Agent for Pushgateway requests",
-                continuation: &[],
-            },
-            HelpRow {
-                value: "--metrics.prefix P",
-                description: "Prometheus metric name prefix (default: iperf3)",
-                continuation: &[],
-            },
-            HelpRow {
-                value: "--push.interval DURATION",
-                description: "aggregate interval samples before pushing window metrics",
-                continuation: &[],
-            },
-            HelpRow {
-                value: "--push.delete-on-exit",
-                description: "delete this Pushgateway grouping key after the run exits",
                 continuation: &[],
             },
             HelpRow {
@@ -78,6 +73,11 @@ pub fn render_wrapper_help() -> String {
                 description: "add a Prometheus file sample label; repeatable",
                 continuation: &["requires --metrics.format prometheus"],
             },
+            HelpRow {
+                value: "--metrics.prefix P",
+                description: "Prometheus metric name prefix (default: iperf3)",
+                continuation: &[],
+            },
         ],
     );
     help.push('\n');
@@ -91,6 +91,16 @@ pub fn render_wrapper_help() -> String {
                 continuation: &[],
             },
             HelpRow {
+                value: "IPERF3_PUSH_DELETE_ON_EXIT=BOOL",
+                description: "default value for --push.delete-on-exit",
+                continuation: &[],
+            },
+            HelpRow {
+                value: "IPERF3_PUSH_INTERVAL=DURATION",
+                description: "default value for --push.interval",
+                continuation: &[],
+            },
+            HelpRow {
                 value: "IPERF3_PUSH_JOB=JOB",
                 description: "default value for --push.job",
                 continuation: &[],
@@ -101,33 +111,18 @@ pub fn render_wrapper_help() -> String {
                 continuation: &[],
             },
             HelpRow {
-                value: "IPERF3_PUSH_TIMEOUT=DURATION",
-                description: "default value for --push.timeout",
-                continuation: &[],
-            },
-            HelpRow {
                 value: "IPERF3_PUSH_RETRIES=N",
                 description: "default value for --push.retries",
                 continuation: &[],
             },
             HelpRow {
+                value: "IPERF3_PUSH_TIMEOUT=DURATION",
+                description: "default value for --push.timeout",
+                continuation: &[],
+            },
+            HelpRow {
                 value: "IPERF3_PUSH_USER_AGENT=VALUE",
                 description: "default value for --push.user-agent",
-                continuation: &[],
-            },
-            HelpRow {
-                value: "IPERF3_METRICS_PREFIX=P",
-                description: "default value for --metrics.prefix",
-                continuation: &[],
-            },
-            HelpRow {
-                value: "IPERF3_PUSH_INTERVAL=DURATION",
-                description: "default value for --push.interval",
-                continuation: &[],
-            },
-            HelpRow {
-                value: "IPERF3_PUSH_DELETE_ON_EXIT=BOOL",
-                description: "default value for --push.delete-on-exit",
                 continuation: &[],
             },
             HelpRow {
@@ -143,6 +138,11 @@ pub fn render_wrapper_help() -> String {
             HelpRow {
                 value: "IPERF3_METRICS_LABELS=KEY=VALUE,...",
                 description: "default labels for Prometheus file output",
+                continuation: &[],
+            },
+            HelpRow {
+                value: "IPERF3_METRICS_PREFIX=P",
+                description: "default value for --metrics.prefix",
                 continuation: &[],
             },
         ],
@@ -171,15 +171,17 @@ pub fn render_full_help(upstream_help: &str) -> String {
 }
 
 fn write_rows(help: &mut String, rows: &[HelpRow<'_>]) {
+    let value_width = rows
+        .iter()
+        .map(|row| row.value.len())
+        .max()
+        .unwrap_or(0)
+        .max(HELP_MIN_VALUE_WIDTH);
+
     for row in rows {
-        writeln!(
-            help,
-            "  {:<HELP_VALUE_WIDTH$} {}",
-            row.value, row.description
-        )
-        .unwrap();
+        writeln!(help, "  {:<value_width$} {}", row.value, row.description).unwrap();
         for line in row.continuation {
-            writeln!(help, "  {:<HELP_VALUE_WIDTH$} {}", "", line).unwrap();
+            writeln!(help, "  {:<value_width$} {}", "", line).unwrap();
         }
     }
 }
@@ -193,25 +195,50 @@ mod tests {
         let help = render_wrapper_help();
 
         assert!(help.contains("iperf3-rs options:"));
-        assert!(help.contains("--push.url URL"));
-        assert!(help.contains("--push.job JOB"));
-        assert!(help.contains("--push.label KEY=VALUE"));
-        assert!(help.contains("--push.timeout DURATION"));
-        assert!(help.contains("--push.retries N"));
-        assert!(help.contains("--push.user-agent VALUE"));
-        assert!(help.contains("--metrics.prefix P"));
-        assert!(help.contains("--push.interval DURATION"));
-        assert!(help.contains("--push.delete-on-exit"));
-        assert!(help.contains("--metrics.file PATH"));
-        assert!(help.contains("--metrics.format FORMAT"));
-        assert!(help.contains("--metrics.label KEY=VALUE"));
-        assert!(help.contains("IPERF3_PUSH_LABELS=KEY=VALUE,..."));
-        assert!(help.contains("IPERF3_METRICS_PREFIX=P"));
-        assert!(help.contains("IPERF3_PUSH_INTERVAL=DURATION"));
-        assert!(help.contains("IPERF3_PUSH_DELETE_ON_EXIT=BOOL"));
-        assert!(help.contains("IPERF3_METRICS_FILE=PATH"));
-        assert!(help.contains("IPERF3_METRICS_FORMAT=FORMAT"));
-        assert!(help.contains("IPERF3_METRICS_LABELS=KEY=VALUE,..."));
+        assert_substrings_in_order(
+            &help,
+            &[
+                "--push.url URL",
+                "--push.delete-on-exit",
+                "--push.interval DURATION",
+                "--push.job JOB",
+                "--push.label KEY=VALUE",
+                "--push.retries N",
+                "--push.timeout DURATION",
+                "--push.user-agent VALUE",
+                "--metrics.file PATH",
+                "--metrics.format FORMAT",
+                "--metrics.label KEY=VALUE",
+                "--metrics.prefix P",
+            ],
+        );
+        assert_substrings_in_order(
+            &help,
+            &[
+                "IPERF3_PUSH_URL=URL",
+                "IPERF3_PUSH_DELETE_ON_EXIT=BOOL",
+                "IPERF3_PUSH_INTERVAL=DURATION",
+                "IPERF3_PUSH_JOB=JOB",
+                "IPERF3_PUSH_LABELS=KEY=VALUE,...",
+                "IPERF3_PUSH_RETRIES=N",
+                "IPERF3_PUSH_TIMEOUT=DURATION",
+                "IPERF3_PUSH_USER_AGENT=VALUE",
+                "IPERF3_METRICS_FILE=PATH",
+                "IPERF3_METRICS_FORMAT=FORMAT",
+                "IPERF3_METRICS_LABELS=KEY=VALUE,...",
+                "IPERF3_METRICS_PREFIX=P",
+            ],
+        );
+    }
+
+    fn assert_substrings_in_order(haystack: &str, needles: &[&str]) {
+        let mut offset = 0;
+        for needle in needles {
+            let Some(index) = haystack[offset..].find(needle) else {
+                panic!("missing `{needle}` after byte {offset}");
+            };
+            offset += index + needle.len();
+        }
     }
 
     #[test]

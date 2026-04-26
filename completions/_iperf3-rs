@@ -68,15 +68,15 @@ _arguments -s -S \
   '--username[username for authentication]:username:' \
   '--rsa-public-key-path[path to RSA public key]:file:_files' \
   '--push.url[push interval metrics to a Pushgateway URL]:URL:_urls' \
+  '--push.delete-on-exit[best-effort delete of this Pushgateway grouping key after the run exits]' \
+  '--push.interval[aggregate interval samples before pushing window metrics]:duration:(500ms 1s 5s 10s 30s 1m)' \
   '--push.job[Pushgateway job name]:job:(iperf3)' \
   '*--push.label[add a Pushgateway grouping label]:KEY=VALUE:' \
-  '--push.timeout[per-request Pushgateway timeout]:duration:(500ms 1s 5s 10s 30s 1m)' \
   '--push.retries[retry failed Pushgateway requests]:retries:(0 1 2 3 5 10)' \
+  '--push.timeout[per-request Pushgateway timeout]:duration:(500ms 1s 5s 10s 30s 1m)' \
   '--push.user-agent[HTTP User-Agent for Pushgateway requests]:value:' \
-  '--metrics.prefix[Prometheus metric name prefix]:prefix:(iperf3)' \
-  '--push.interval[aggregate interval samples before pushing window metrics]:duration:(500ms 1s 5s 10s 30s 1m)' \
-  '--push.delete-on-exit[best-effort delete of this Pushgateway grouping key after the run exits]' \
   '--metrics.file[write live interval metrics to a file]:file:_files' \
   '--metrics.format[metrics file format]:format:(jsonl prometheus)' \
   '*--metrics.label[add a Prometheus file sample label]:KEY=VALUE:' \
+  '--metrics.prefix[Prometheus metric name prefix]:prefix:(iperf3)' \
   '*:argument:_default'

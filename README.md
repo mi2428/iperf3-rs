@@ -454,39 +454,35 @@ Wrapper metrics options:
 --push.url URL
     Pushgateway URL. Required to enable metrics export.
 
---push.job JOB
-    Pushgateway job name. Defaults to iperf3.
-
---push.label KEY=VALUE
-    Add a Pushgateway grouping label. Repeatable.
-
---push.timeout DURATION
-    Per-request HTTP timeout. Accepts values like 500ms, 5s, 1m, or bare
-    seconds. Defaults to 5s.
-
---push.retries N
-    Retry failed Pushgateway requests. Defaults to 0. The maximum is 10.
-    HTTP 429 and 5xx responses are retryable.
-
-Pushgateway push and delete requests are best-effort. Failures are reported on
-stderr, but they do not make the CLI fail when the iperf run itself succeeds.
-Use `--metrics.file` for required artifacts that must affect the exit status.
-
---push.user-agent VALUE
-    HTTP User-Agent for Pushgateway requests. Defaults to iperf3-rs/<version>.
-
---metrics.prefix PREFIX
-    Prometheus metric name prefix for Pushgateway and Prometheus file output.
-    Defaults to iperf3.
+--push.delete-on-exit
+    Best-effort deletion of this Pushgateway grouping key after the iperf run
+    exits.
 
 --push.interval DURATION
     Aggregate libiperf interval samples for this duration before pushing window
     metrics. Accepts values like 500ms, 10s, 1m, or bare seconds. When omitted,
     iperf3-rs pushes immediate interval metrics.
 
---push.delete-on-exit
-    Best-effort deletion of this Pushgateway grouping key after the iperf run
-    exits.
+--push.job JOB
+    Pushgateway job name. Defaults to iperf3.
+
+--push.label KEY=VALUE
+    Add a Pushgateway grouping label. Repeatable.
+
+--push.retries N
+    Retry failed Pushgateway requests. Defaults to 0. The maximum is 10.
+    HTTP 429 and 5xx responses are retryable.
+
+--push.timeout DURATION
+    Per-request HTTP timeout. Accepts values like 500ms, 5s, 1m, or bare
+    seconds. Defaults to 5s.
+
+--push.user-agent VALUE
+    HTTP User-Agent for Pushgateway requests. Defaults to iperf3-rs/<version>.
+
+Pushgateway push and delete requests are best-effort. Failures are reported on
+stderr, but they do not make the CLI fail when the iperf run itself succeeds.
+Use `--metrics.file` for required artifacts that must affect the exit status.
 
 --metrics.file PATH
     Write live interval metrics to a file without changing iperf stdout.
@@ -497,23 +493,27 @@ Use `--metrics.file` for required artifacts that must affect the exit status.
 --metrics.label KEY=VALUE
     Add a Prometheus sample label to metrics file output. Repeatable.
     Requires --metrics.format prometheus.
+
+--metrics.prefix PREFIX
+    Prometheus metric name prefix for Pushgateway and Prometheus file output.
+    Defaults to iperf3.
 ```
 
 Every wrapper environment default uses the `IPERF3_` namespace:
 
 ```text
 IPERF3_PUSH_URL=URL
+IPERF3_PUSH_DELETE_ON_EXIT=BOOL
+IPERF3_PUSH_INTERVAL=DURATION
 IPERF3_PUSH_JOB=JOB
 IPERF3_PUSH_LABELS=KEY=VALUE,...
-IPERF3_PUSH_TIMEOUT=DURATION
 IPERF3_PUSH_RETRIES=N
+IPERF3_PUSH_TIMEOUT=DURATION
 IPERF3_PUSH_USER_AGENT=VALUE
-IPERF3_METRICS_PREFIX=PREFIX
-IPERF3_PUSH_INTERVAL=DURATION
-IPERF3_PUSH_DELETE_ON_EXIT=BOOL
 IPERF3_METRICS_FILE=PATH
 IPERF3_METRICS_FORMAT=FORMAT
 IPERF3_METRICS_LABELS=KEY=VALUE,...
+IPERF3_METRICS_PREFIX=PREFIX
 ```
 
 CLI values override environment defaults. `IPERF3_PUSH_LABELS` and `IPERF3_METRICS_LABELS`
