@@ -92,8 +92,8 @@ requests still work from the scratch release image.
 |   |-- help.rs          # wrapper help inserted into upstream help text
 |   |-- iperf.rs         # Rust wrapper around libiperf FFI
 |   |-- main.rs          # CLI entry point
-|   |-- metrics.rs       # interval metrics callback and Pushgateway handoff
-|   |-- pushgateway.rs   # Pushgateway URL construction and HTTP writes
+|   |-- metrics.rs       # interval callback, window aggregation, and Pushgateway handoff
+|   |-- pushgateway.rs   # Pushgateway URL construction, rendering, and HTTP writes
 |   `-- version.rs       # one-line version rendering
 |-- native/              # small C shim over libiperf
 |-- iperf3/              # esnet/iperf3 git submodule
@@ -108,8 +108,8 @@ requests still work from the scratch release image.
 ## Tests
 
 Unit tests cover the argument splitter, label validation, duration parsing,
-version rendering, Pushgateway URL construction, Prometheus rendering, JSON
-interval parsing, and selected libiperf argument parsing behavior.
+version rendering, Pushgateway URL construction, Prometheus rendering, window
+metric aggregation, and selected libiperf argument parsing behavior.
 
 The Docker Compose integration test is ignored by default because it requires
 Docker:
@@ -126,6 +126,7 @@ It verifies:
 - upstream `iperf3` client to `iperf3-rs` server interoperability;
 - `iperf3-rs` client to upstream `iperf3` server interoperability;
 - `iperf3-rs` client to `iperf3-rs` server metrics;
+- aggregated window metrics from `--push.interval`;
 - server-mode metrics from the long-running `iperf3-rs` server;
 - interval metrics are visible while a longer client run is still active;
 - server callbacks continue to work across multiple accepted tests;

@@ -29,9 +29,11 @@ for live observability:
   logic around an opaque child process.
 
 `iperf3-rs` takes a different path. It embeds the upstream library and registers
-a Rust-managed callback on libiperf's reporting path. Each interval is converted
-to Prometheus text format and pushed to Pushgateway immediately. In practice,
-this means Prometheus-backed views can update during the test, not only after it.
+a Rust-managed callback on libiperf's reporting path. By default, each interval
+is converted to Prometheus text format and pushed to Pushgateway immediately;
+with `--push.interval`, iperf3-rs pushes window summary metrics instead. In
+practice, this means Prometheus-backed views can update during the test, not
+only after it.
 
 Because the frontend is Rust, the wrapper-specific pieces are normal Rust code:
 argument extraction, URL validation, Pushgateway HTTP behavior, metric
@@ -62,8 +64,9 @@ iperf3-rs -c <server>
 ```
 
 The integration test suite exercises both directions, plus iperf3-rs to
-iperf3-rs metrics export, UDP, reverse TCP, bidirectional TCP, server-side
-metrics, and live interval visibility before the client exits.
+iperf3-rs metrics export, window metric aggregation, UDP, reverse TCP,
+bidirectional TCP, server-side metrics, and live interval visibility before the
+client exits.
 
 ## How live metrics work
 
@@ -91,7 +94,8 @@ the worker thread and pushes representative `*_window_*` gauges once per window.
 The final partial window is flushed when the iperf test exits. This is not a
 historical datapoint replay mechanism; Pushgateway still stores the latest
 sample for the grouping key, and iperf3-rs performs the aggregation before the
-push.
+push. If the same grouping key previously received immediate metrics,
+Pushgateway can show that older body until the first window summary is pushed.
 
 ## Install
 
