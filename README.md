@@ -182,6 +182,29 @@ iperf3-rs -c 127.0.0.1 -R -t 10 -i 1
 iperf3-rs -c 127.0.0.1 --bidir -t 10 -i 1
 ```
 
+For a quick local smoke test, start a server in one terminal:
+
+```sh
+iperf3-rs -s
+```
+
+Then run a TCP measurement from another terminal:
+
+```sh
+iperf3-rs -c 127.0.0.1 -t 10 -i 1
+```
+
+Run a UDP measurement the same way, adding `-u` and an explicit target bitrate:
+
+```sh
+iperf3-rs -c 127.0.0.1 -u -b 10M -t 10 -i 1
+```
+
+For remote hosts, make sure UDP traffic to the server port is allowed as well
+as TCP. The default iperf3 port is `5201`, and UDP tests need `5201/udp`; a
+successful TCP control connection alone does not prove that UDP datagrams can
+reach the server.
+
 Upstream help is available through the same flags:
 
 ```sh
