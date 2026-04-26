@@ -2,10 +2,11 @@
 
 use std::env;
 use std::ffi::OsString;
+use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
@@ -296,6 +297,30 @@ fn unique_suffix() -> String {
 pub(crate) fn retry_json_client(label: &str, run: impl FnMut() -> Output) -> Value {
     let output = retry_json_client_output(label, run);
     parse_iperf_summary(&output).expect("iperf JSON should be valid after successful retry")
+}
+
+// The Docker integration remains one Rust test for setup cost, so explicit
+// markers make the inner scenario progress visible under `--nocapture`.
+pub(crate) fn scenario<T>(name: &str, run: impl FnOnce() -> T) -> T {
+    let started = Instant::now();
+    eprintln!("\n[integration] START {name}");
+
+    match panic::catch_unwind(AssertUnwindSafe(run)) {
+        Ok(value) => {
+            eprintln!(
+                "[integration] PASS  {name} ({:.1}s)",
+                started.elapsed().as_secs_f64()
+            );
+            value
+        }
+        Err(payload) => {
+            eprintln!(
+                "[integration] FAIL  {name} ({:.1}s)",
+                started.elapsed().as_secs_f64()
+            );
+            panic::resume_unwind(payload);
+        }
+    }
 }
 
 pub(crate) fn retry_json_client_output(label: &str, mut run: impl FnMut() -> Output) -> Output {
