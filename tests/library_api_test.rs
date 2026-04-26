@@ -35,7 +35,13 @@ fn command_spawn_streams_interval_metrics_against_one_off_server() {
     let port = free_loopback_port();
     let _server = OneOffServer::start(port);
 
-    let (_result, events) = run_library_client(port, MetricsMode::Interval);
+    let (result, events) = run_library_client(port, MetricsMode::Interval);
+    let json = result
+        .json_value()
+        .expect("json output should be retained")
+        .expect("json output should parse");
+    assert!(json.get("end").is_some());
+
     let samples = events
         .iter()
         .filter_map(|event| match event {
@@ -251,6 +257,7 @@ fn try_run_library_client(
         .port(port)
         .duration(Duration::from_secs(1))
         .report_interval(Duration::from_secs(1))
+        .json()
         .args(["--logfile", logfile.as_ref()]);
 
     let (running, mut metrics) = command.spawn_with_metrics(mode)?;

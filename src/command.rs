@@ -326,6 +326,16 @@ impl IperfResult {
         self.json_output.as_deref()
     }
 
+    /// Parse the retained upstream JSON result as a [`serde_json::Value`].
+    ///
+    /// Returns `None` when JSON output was not requested with
+    /// [`IperfCommand::json`]. The raw string remains available through
+    /// [`IperfResult::json_output`] for callers that prefer their own parser.
+    #[cfg(feature = "serde")]
+    pub fn json_value(&self) -> Option<std::result::Result<serde_json::Value, serde_json::Error>> {
+        self.json_output.as_deref().map(serde_json::from_str)
+    }
+
     /// Metric events collected by `IperfCommand::run`.
     ///
     /// Spawned commands deliver live metrics through `RunningIperf` instead, so

@@ -277,6 +277,10 @@ Typed helpers cover common roles and options such as `client`, `server_once`,
 `reverse`, `bidirectional`, and `json`. Use `arg()` or `args()` for any upstream
 iperf3 option that does not need a dedicated Rust helper.
 
+When `json()` is enabled, the completed `IperfResult` retains upstream iperf3
+JSON. `json_output()` returns the raw string, and `json_value()` parses it as a
+`serde_json::Value` when the `serde` feature is enabled.
+
 Use `MetricsMode::Window(duration)` to receive the same representative window
 summaries used by `--push.interval`. `PushGateway` and `PushGatewayConfig` are
 also exported for applications that want to push collected metrics themselves.
