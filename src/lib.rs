@@ -6,6 +6,7 @@
 mod args;
 #[doc(hidden)]
 pub mod cli;
+pub mod command;
 mod help;
 
 pub mod iperf;
@@ -13,6 +14,10 @@ pub mod metrics;
 pub mod pushgateway;
 pub mod version;
 
+pub use command::{IperfCommand, IperfResult, RunningIperf};
 pub use iperf::{Role, libiperf_version, usage_long};
-pub use metrics::{Metrics, WindowGaugeStats, WindowMetrics, aggregate_window};
+pub use metrics::{
+    MetricEvent, Metrics, MetricsMode, MetricsStream, WindowGaugeStats, WindowMetrics,
+    aggregate_window,
+};
 pub use pushgateway::{PushGateway, PushGatewayConfig};

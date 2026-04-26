@@ -46,6 +46,7 @@ mod ffi {
         pub fn iperf_reset_test(test: *mut iperf_test);
         pub fn iperf_get_test_role(test: *mut iperf_test) -> c_char;
         pub fn iperf_get_test_one_off(test: *mut iperf_test) -> c_int;
+        pub fn iperf_get_test_json_output_string(test: *mut iperf_test) -> *const c_char;
         pub fn iperf_get_iperf_version() -> *const c_char;
 
         pub fn iperf3rs_enable_interval_metrics(
@@ -125,6 +126,18 @@ impl IperfTest {
             's' => Role::Server,
             other => Role::Unknown(other as i8),
         }
+    }
+
+    pub fn json_output(&self) -> Option<String> {
+        let ptr = unsafe { ffi::iperf_get_test_json_output_string(self.as_ptr()) };
+        if ptr.is_null() {
+            return None;
+        }
+        Some(
+            unsafe { CStr::from_ptr(ptr) }
+                .to_string_lossy()
+                .into_owned(),
+        )
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -227,6 +240,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(test.role(), Role::Server);
+        assert!(test.json_output().is_none());
     }
 
     #[test]

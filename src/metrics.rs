@@ -10,7 +10,7 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError, bounde
 use crate::iperf::{IperfTest, RawIperfTest};
 use crate::pushgateway::PushGateway;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Metrics {
     pub bytes: f64,
     pub bandwidth_bits_per_second: f64,
@@ -55,8 +55,75 @@ pub struct WindowMetrics {
     pub omitted_intervals: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MetricsMode {
+    Disabled,
+    Interval,
+    Window(Duration),
+}
+
+impl Default for MetricsMode {
+    fn default() -> Self {
+        Self::Disabled
+    }
+}
+
+impl MetricsMode {
+    pub const fn is_enabled(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    pub(crate) const fn callback_queue(self) -> Option<MetricsQueue> {
+        match self {
+            Self::Disabled => None,
+            // Library consumers should receive every sample. The freshness-only
+            // replacement queue is reserved for immediate Pushgateway writes.
+            Self::Interval | Self::Window(_) => Some(MetricsQueue::All),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum MetricEvent {
+    Interval(Metrics),
+    Window(WindowMetrics),
+}
+
+#[derive(Debug)]
+pub struct MetricsStream {
+    rx: Receiver<MetricEvent>,
+}
+
+impl MetricsStream {
+    fn new(rx: Receiver<MetricEvent>) -> Self {
+        Self { rx }
+    }
+
+    pub fn recv(&self) -> Option<MetricEvent> {
+        self.rx.recv().ok()
+    }
+
+    pub fn recv_timeout(&self, timeout: Duration) -> Option<MetricEvent> {
+        self.rx.recv_timeout(timeout).ok()
+    }
+
+    pub fn try_recv(&self) -> Option<MetricEvent> {
+        self.rx.try_recv().ok()
+    }
+}
+
+impl Iterator for MetricsStream {
+    type Item = MetricEvent;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.recv()
+    }
+}
+
 pub struct IntervalMetricsReporter {
-    test_key: usize,
+    callback: Option<CallbackMetricsReporter>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -66,14 +133,12 @@ impl IntervalMetricsReporter {
         sink: PushGateway,
         push_interval: Option<Duration>,
     ) -> Result<Self> {
-        let (target, rx) = callback_channel(push_interval);
-        let test_key = test.as_ptr() as usize;
-        callbacks()
-            .lock()
-            .map_err(|_| anyhow!("metrics callback registry is poisoned"))?
-            .insert(test_key, target);
-
-        test.enable_interval_metrics(metrics_callback);
+        let queue = if push_interval.is_some() {
+            MetricsQueue::All
+        } else {
+            MetricsQueue::Latest
+        };
+        let (callback, rx) = CallbackMetricsReporter::attach(test, queue)?;
 
         // Network I/O happens off the libiperf callback path so slow or
         // unavailable Pushgateway writes do not stall the iperf test itself.
@@ -83,38 +148,149 @@ impl IntervalMetricsReporter {
         });
 
         Ok(Self {
-            test_key,
+            callback: Some(callback),
             worker: Some(worker),
         })
     }
 }
 
-fn callback_channel(push_interval: Option<Duration>) -> (CallbackTarget, Receiver<Metrics>) {
-    if push_interval.is_some() {
-        // Window aggregation needs every libiperf interval sample in the window.
-        // The worker owns flushing, so use an unbounded channel rather than the
-        // freshness-only replacement queue used for immediate gauges.
-        let (tx, rx) = unbounded::<Metrics>();
-        (
-            CallbackTarget {
-                tx,
-                latest_rx: None,
-            },
-            rx,
-        )
-    } else {
-        // Without window aggregation, Pushgateway stores only the latest value
-        // for a grouping key. Keep the callback nonblocking and replace stale
-        // queued samples if HTTP writes fall behind.
-        let (tx, rx) = bounded::<Metrics>(1);
-        (
-            CallbackTarget {
-                tx,
-                latest_rx: Some(rx.clone()),
-            },
-            rx,
-        )
+pub(crate) struct CallbackMetricsReporter {
+    test_key: usize,
+}
+
+impl CallbackMetricsReporter {
+    pub(crate) fn attach(
+        test: &mut IperfTest,
+        queue: MetricsQueue,
+    ) -> Result<(Self, Receiver<Metrics>)> {
+        let (target, rx) = callback_channel(queue);
+        let test_key = test.as_ptr() as usize;
+        callbacks()
+            .lock()
+            .map_err(|_| anyhow!("metrics callback registry is poisoned"))?
+            .insert(test_key, target);
+
+        test.enable_interval_metrics(metrics_callback);
+
+        Ok((Self { test_key }, rx))
     }
+}
+
+impl Drop for CallbackMetricsReporter {
+    fn drop(&mut self) {
+        if let Ok(mut callbacks) = callbacks().lock() {
+            callbacks.remove(&self.test_key);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MetricsQueue {
+    Latest,
+    All,
+}
+
+fn callback_channel(queue: MetricsQueue) -> (CallbackTarget, Receiver<Metrics>) {
+    match queue {
+        MetricsQueue::All => {
+            // Window aggregation and library streams need every libiperf
+            // interval sample, so use an unbounded channel.
+            let (tx, rx) = unbounded::<Metrics>();
+            (
+                CallbackTarget {
+                    tx,
+                    latest_rx: None,
+                },
+                rx,
+            )
+        }
+        MetricsQueue::Latest => {
+            // Pushgateway stores only the latest value for a grouping key.
+            // Keep the callback nonblocking and replace stale queued samples if
+            // HTTP writes fall behind.
+            let (tx, rx) = bounded::<Metrics>(1);
+            (
+                CallbackTarget {
+                    tx,
+                    latest_rx: Some(rx.clone()),
+                },
+                rx,
+            )
+        }
+    }
+}
+
+pub(crate) fn metric_event_stream(
+    rx: Receiver<Metrics>,
+    mode: MetricsMode,
+) -> (MetricsStream, JoinHandle<()>) {
+    let (tx, event_rx) = unbounded::<MetricEvent>();
+    let worker = thread::spawn(move || match mode {
+        MetricsMode::Disabled => {}
+        MetricsMode::Interval => forward_interval_events(rx, tx),
+        MetricsMode::Window(interval) => forward_window_events(rx, tx, interval),
+    });
+    (MetricsStream::new(event_rx), worker)
+}
+
+fn forward_interval_events(rx: Receiver<Metrics>, tx: Sender<MetricEvent>) {
+    for metrics in rx {
+        if tx.send(MetricEvent::Interval(metrics)).is_err() {
+            break;
+        }
+    }
+}
+
+fn forward_window_events(rx: Receiver<Metrics>, tx: Sender<MetricEvent>, interval: Duration) {
+    let mut window = Vec::new();
+    let mut deadline = None;
+
+    loop {
+        match deadline {
+            Some(flush_at) => {
+                let now = Instant::now();
+                if now >= flush_at {
+                    if !flush_window_event(&tx, &mut window) {
+                        break;
+                    }
+                    deadline = None;
+                    continue;
+                }
+
+                match rx.recv_timeout(flush_at - now) {
+                    Ok(metrics) => window.push(metrics),
+                    Err(RecvTimeoutError::Timeout) => {
+                        if !flush_window_event(&tx, &mut window) {
+                            break;
+                        }
+                        deadline = None;
+                    }
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            }
+            None => match rx.recv() {
+                Ok(metrics) => {
+                    window.push(metrics);
+                    deadline = Some(
+                        Instant::now()
+                            .checked_add(interval)
+                            .unwrap_or_else(Instant::now),
+                    );
+                }
+                Err(_) => break,
+            },
+        }
+    }
+
+    let _ = flush_window_event(&tx, &mut window);
+}
+
+fn flush_window_event(tx: &Sender<MetricEvent>, window: &mut Vec<Metrics>) -> bool {
+    let Some(metrics) = aggregate_window(window) else {
+        return true;
+    };
+    window.clear();
+    tx.send(MetricEvent::Window(metrics)).is_ok()
 }
 
 fn push_interval_metrics(rx: Receiver<Metrics>, sink: PushGateway) {
@@ -178,9 +354,7 @@ fn flush_window_metrics(sink: &PushGateway, window: &mut Vec<Metrics>) {
 
 impl Drop for IntervalMetricsReporter {
     fn drop(&mut self) {
-        if let Ok(mut callbacks) = callbacks().lock() {
-            callbacks.remove(&self.test_key);
-        }
+        drop(self.callback.take());
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -395,6 +569,19 @@ mod verification {
     }
 
     #[kani::proof]
+    fn metrics_mode_callback_policy_matches_variant() {
+        let variant: u8 = kani::any();
+        let mode = match variant % 3 {
+            0 => MetricsMode::Disabled,
+            1 => MetricsMode::Interval,
+            _ => MetricsMode::Window(Duration::from_secs(1)),
+        };
+
+        assert_eq!(mode.is_enabled(), !matches!(mode, MetricsMode::Disabled));
+        assert_eq!(mode.callback_queue().is_some(), mode.is_enabled());
+    }
+
+    #[kani::proof]
     #[kani::unwind(3)]
     fn window_counters_are_nonnegative_for_bounded_inputs() {
         let sample = Metrics {
@@ -511,6 +698,55 @@ mod tests {
 
         assert_eq!(rx.try_recv().unwrap().bytes, 2.0);
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn metric_event_stream_forwards_interval_samples() {
+        let (tx, rx) = unbounded::<Metrics>();
+        let sample = Metrics {
+            bytes: 42.0,
+            ..Metrics::default()
+        };
+        let (mut stream, worker) = metric_event_stream(rx, MetricsMode::Interval);
+
+        tx.send(sample.clone()).unwrap();
+        drop(tx);
+
+        assert_eq!(stream.next(), Some(MetricEvent::Interval(sample)));
+        worker.join().unwrap();
+        assert_eq!(stream.next(), None);
+    }
+
+    #[test]
+    fn metric_event_stream_flushes_final_window() {
+        let (tx, rx) = unbounded::<Metrics>();
+        let (mut stream, worker) =
+            metric_event_stream(rx, MetricsMode::Window(Duration::from_secs(60)));
+
+        tx.send(Metrics {
+            bytes: 4.0,
+            bandwidth_bits_per_second: 32.0,
+            interval_duration_seconds: 1.0,
+            ..Metrics::default()
+        })
+        .unwrap();
+        tx.send(Metrics {
+            bytes: 8.0,
+            bandwidth_bits_per_second: 64.0,
+            interval_duration_seconds: 1.0,
+            ..Metrics::default()
+        })
+        .unwrap();
+        drop(tx);
+
+        let Some(MetricEvent::Window(window)) = stream.next() else {
+            panic!("expected a final window event");
+        };
+        assert_eq!(window.transferred_bytes, 12.0);
+        assert_eq!(window.duration_seconds, 2.0);
+        assert_eq!(window.bandwidth_bytes_per_second.mean, 6.0);
+        worker.join().unwrap();
+        assert_eq!(stream.next(), None);
     }
 
     #[test]

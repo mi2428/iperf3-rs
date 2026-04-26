@@ -1,0 +1,296 @@
+use std::sync::{Mutex, OnceLock};
+use std::thread::{self, JoinHandle};
+
+use anyhow::{Context, Result, anyhow, bail};
+use crossbeam_channel::{Sender, bounded};
+
+use crate::iperf::{IperfTest, Role};
+use crate::metrics::{
+    CallbackMetricsReporter, MetricEvent, MetricsMode, MetricsStream, metric_event_stream,
+};
+
+static RUN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+pub struct IperfCommand {
+    program: String,
+    args: Vec<String>,
+    metrics_mode: MetricsMode,
+}
+
+impl IperfCommand {
+    pub fn new() -> Self {
+        Self {
+            program: "iperf3-rs".to_owned(),
+            args: Vec::new(),
+            metrics_mode: MetricsMode::Disabled,
+        }
+    }
+
+    pub fn program(&mut self, program: impl Into<String>) -> &mut Self {
+        self.program = program.into();
+        self
+    }
+
+    pub fn arg(&mut self, arg: impl Into<String>) -> &mut Self {
+        self.args.push(arg.into());
+        self
+    }
+
+    pub fn args<I, S>(&mut self, args: I) -> &mut Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn metrics(&mut self, mode: MetricsMode) -> &mut Self {
+        self.metrics_mode = mode;
+        self
+    }
+
+    pub fn run(&mut self) -> Result<IperfResult> {
+        run_command(self.clone(), None)
+    }
+
+    pub fn spawn(&mut self) -> Result<RunningIperf> {
+        let command = self.clone();
+        let (ready_tx, ready_rx) = bounded::<ReadyMessage>(1);
+        let handle = thread::spawn(move || run_command(command, Some(ready_tx)));
+
+        match ready_rx.recv() {
+            Ok(Ok(metrics)) => Ok(RunningIperf { handle, metrics }),
+            Ok(Err(err)) => {
+                let _ = handle.join();
+                bail!("{err}");
+            }
+            Err(err) => {
+                let _ = handle.join();
+                bail!("iperf worker exited before setup completed: {err}");
+            }
+        }
+    }
+
+    fn argv(&self) -> Vec<String> {
+        let mut argv = Vec::with_capacity(self.args.len() + 1);
+        argv.push(self.program.clone());
+        argv.extend(self.args.iter().cloned());
+        argv
+    }
+}
+
+impl Default for IperfCommand {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug)]
+pub struct IperfResult {
+    role: Role,
+    json_output: Option<String>,
+    metrics: Vec<MetricEvent>,
+}
+
+impl IperfResult {
+    pub fn role(&self) -> Role {
+        self.role
+    }
+
+    pub fn json_output(&self) -> Option<&str> {
+        self.json_output.as_deref()
+    }
+
+    pub fn metrics(&self) -> &[MetricEvent] {
+        &self.metrics
+    }
+}
+
+#[derive(Debug)]
+pub struct RunningIperf {
+    handle: JoinHandle<Result<IperfResult>>,
+    metrics: Option<MetricsStream>,
+}
+
+impl RunningIperf {
+    pub fn metrics(&self) -> Option<&MetricsStream> {
+        self.metrics.as_ref()
+    }
+
+    pub fn take_metrics(&mut self) -> Option<MetricsStream> {
+        self.metrics.take()
+    }
+
+    pub fn wait(self) -> Result<IperfResult> {
+        self.handle
+            .join()
+            .map_err(|_| anyhow!("iperf worker thread panicked"))?
+    }
+}
+
+type ReadyMessage = std::result::Result<Option<MetricsStream>, String>;
+
+struct RunSetup {
+    test: IperfTest,
+    role: Role,
+    callback: Option<CallbackMetricsReporter>,
+    stream: Option<MetricsStream>,
+    worker: Option<JoinHandle<()>>,
+}
+
+fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Result<IperfResult> {
+    let _guard = run_lock()
+        .lock()
+        .map_err(|_| anyhow!("libiperf run lock is poisoned"))?;
+
+    let mut setup = match setup_run(command) {
+        Ok(setup) => setup,
+        Err(err) => {
+            notify_ready(ready, Err(format!("{err:#}")));
+            return Err(err);
+        }
+    };
+
+    notify_ready(ready, Ok(setup.stream.take()));
+
+    let result = setup.test.run();
+    let json_output = setup.test.json_output();
+
+    // Removing the callback first closes the raw metrics channel, allowing the
+    // event worker to flush any final window and exit before the result returns.
+    drop(setup.callback.take());
+    if let Some(worker) = setup.worker.take() {
+        let _ = worker.join();
+    }
+
+    let metrics = setup
+        .stream
+        .map(|stream| stream.collect())
+        .unwrap_or_default();
+
+    result?;
+    Ok(IperfResult {
+        role: setup.role,
+        json_output,
+        metrics,
+    })
+}
+
+fn setup_run(command: IperfCommand) -> Result<RunSetup> {
+    validate_metrics_mode(command.metrics_mode)?;
+
+    let mut test = IperfTest::new().context("failed to create iperf test")?;
+    test.parse_arguments(&command.argv())?;
+    let role = test.role();
+
+    let (callback, stream, worker) = match command.metrics_mode.callback_queue() {
+        Some(queue) => {
+            let (callback, rx) = CallbackMetricsReporter::attach(&mut test, queue)?;
+            let (stream, worker) = metric_event_stream(rx, command.metrics_mode);
+            (Some(callback), Some(stream), Some(worker))
+        }
+        None => (None, None, None),
+    };
+
+    Ok(RunSetup {
+        test,
+        role,
+        callback,
+        stream,
+        worker,
+    })
+}
+
+fn notify_ready(ready: Option<Sender<ReadyMessage>>, message: ReadyMessage) {
+    if let Some(ready) = ready {
+        let _ = ready.send(message);
+    }
+}
+
+fn run_lock() -> &'static Mutex<()> {
+    // libiperf still has process-global state, including its current error and
+    // signal/output hooks. Serialize high-level command runs until a broader
+    // concurrency contract is deliberately designed and tested.
+    RUN_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn validate_metrics_mode(mode: MetricsMode) -> Result<()> {
+    if metrics_mode_is_valid(mode) {
+        Ok(())
+    } else {
+        bail!("metrics window interval must be greater than zero");
+    }
+}
+
+fn metrics_mode_is_valid(mode: MetricsMode) -> bool {
+    !matches!(mode, MetricsMode::Window(interval) if interval.is_zero())
+}
+
+#[cfg(kani)]
+mod verification {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[kani::proof]
+    fn zero_window_interval_is_the_only_invalid_metrics_mode() {
+        let seconds: u8 = kani::any();
+        let mode = MetricsMode::Window(Duration::from_secs(u64::from(seconds)));
+
+        assert_eq!(metrics_mode_is_valid(mode), seconds != 0);
+        assert!(metrics_mode_is_valid(MetricsMode::Disabled));
+        assert!(metrics_mode_is_valid(MetricsMode::Interval));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn argv_includes_program_name_before_iperf_arguments() {
+        let mut command = IperfCommand::new();
+        command.arg("-c").arg("127.0.0.1");
+
+        assert_eq!(
+            command.argv(),
+            vec![
+                "iperf3-rs".to_owned(),
+                "-c".to_owned(),
+                "127.0.0.1".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn custom_program_name_is_used_as_argv_zero() {
+        let mut command = IperfCommand::new();
+        command.program("iperf3").arg("-v");
+
+        assert_eq!(command.argv(), vec!["iperf3".to_owned(), "-v".to_owned()]);
+    }
+
+    #[test]
+    fn zero_metrics_window_interval_is_rejected_before_running_iperf() {
+        let mut command = IperfCommand::new();
+        command.metrics(MetricsMode::Window(Duration::ZERO));
+
+        let err = command.run().unwrap_err();
+        assert!(err.to_string().contains("greater than zero"));
+    }
+
+    #[test]
+    fn run_without_client_or_server_role_fails_fast() {
+        let mut command = IperfCommand::new();
+
+        let err = command.run().unwrap_err();
+        assert!(
+            err.to_string().contains("client (-c) or server (-s)"),
+            "{err:#}"
+        );
+    }
+}
