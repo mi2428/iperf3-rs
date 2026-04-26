@@ -768,6 +768,10 @@ Current caveats:
   allowing live interval export without patching the submodule; `IperfCommand`
   library runs are quiet by default unless `inherit_output()` or `logfile()` is
   selected.
+- `RunningIperf` observes worker completion; dropping it detaches the worker and
+  does not stop libiperf. Long-lived `server_unbounded()` runs should live in a
+  process dedicated to serving tests, or in a helper process the application can
+  terminate externally.
 - The Pushgateway path is based on grouping labels. Use labels with bounded
   cardinality, such as `test`, `scenario`, `site`, or `host_role`; avoid
   high-cardinality values that would create unbounded Pushgateway groups.

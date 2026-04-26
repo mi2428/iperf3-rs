@@ -104,7 +104,9 @@ impl IperfCommand {
     /// Create a long-lived server command equivalent to `iperf3 -s`.
     ///
     /// Long-lived servers keep the high-level libiperf lock held until the
-    /// server exits. Use this only for a process dedicated to serving tests.
+    /// server exits. The library does not provide in-process cancellation for
+    /// an active libiperf server, and dropping [`RunningIperf`] detaches rather
+    /// than stops it. Use this only for a process dedicated to serving tests.
     pub fn server_unbounded() -> Self {
         let mut command = Self::new();
         command.arg("-s").allow_unbounded_server(true);
@@ -319,7 +321,9 @@ impl IperfCommand {
     /// this crate's process-wide libiperf lock held. The default is therefore
     /// conservative: server mode must use `-1`/`--one-off` unless this opt-in is
     /// set. The CLI does not use this high-level API, so normal `iperf3-rs -s`
-    /// behavior is unchanged.
+    /// behavior is unchanged. Once started, an unbounded in-process server must
+    /// exit through libiperf itself; this API does not currently expose a safe
+    /// cancellation primitive.
     pub fn allow_unbounded_server(&mut self, allow: bool) -> &mut Self {
         self.allow_unbounded_server = allow;
         self
@@ -333,7 +337,9 @@ impl IperfCommand {
     /// Run iperf on a worker thread and optionally stream metric events live.
     ///
     /// If metrics are enabled, call [`RunningIperf::take_metrics`] before
-    /// [`RunningIperf::wait`] to consume live events.
+    /// [`RunningIperf::wait`] to consume live events. Dropping the returned
+    /// handle detaches the worker and does not cancel the underlying libiperf
+    /// run.
     pub fn spawn(&mut self) -> Result<RunningIperf> {
         let command = self.clone();
         let (ready_tx, ready_rx) = bounded::<ReadyMessage>(1);
@@ -437,6 +443,11 @@ impl IperfResult {
 }
 
 /// Handle for an iperf run executing on a worker thread.
+///
+/// This handle observes completion; it does not own a safe cancellation
+/// mechanism for the underlying libiperf run. Dropping it detaches the worker.
+/// Use one-off server mode or a dedicated helper process when a run must be
+/// externally stopped.
 #[derive(Debug)]
 #[must_use = "dropping RunningIperf detaches the worker; call wait to observe the iperf result"]
 pub struct RunningIperf {
@@ -478,7 +489,9 @@ impl RunningIperf {
     /// Wait up to `timeout` for the worker to finish.
     ///
     /// Returns `Ok(None)` when the timeout expires before the iperf run exits.
-    /// A zero timeout performs a single nonblocking poll.
+    /// A zero timeout performs a single nonblocking poll. Timeout expiration
+    /// does not stop the iperf run; call this again, call [`RunningIperf::wait`],
+    /// or manage cancellation outside this in-process API.
     pub fn wait_timeout(&mut self, timeout: Duration) -> Result<Option<IperfResult>> {
         let deadline = Instant::now()
             .checked_add(timeout)

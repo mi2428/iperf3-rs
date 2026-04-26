@@ -57,8 +57,9 @@
 //! this crate avoids promising in-process parallelism that upstream does not
 //! clearly guarantee. Server runs must use iperf's one-off mode (`-s -1`) by
 //! default; opt in with [`IperfCommand::allow_unbounded_server`] only when the
-//! process is dedicated to that long-lived server. Use separate processes for
-//! parallel independent tests.
+//! process is dedicated to that long-lived server. `RunningIperf` observes
+//! worker completion but does not safely cancel libiperf in-process; use
+//! separate processes for parallel or externally stoppable independent tests.
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 mod args;
