@@ -60,8 +60,6 @@ DOCKER_UID           ?= $(shell id -u)
 DOCKER_GID           ?= $(shell id -g)
 HOST_OS              := $(shell uname -s)
 
-RELEASE_CONFIGURE_ARGS ?= --without-openssl
-
 MULTIPASS_NAME       ?= iperf3-rs-dev
 MULTIPASS_IMAGE      ?= 24.04
 MULTIPASS_CPUS       ?= 2
@@ -359,8 +357,7 @@ _dist.darwin.$(1): _target.$$(DARWIN_$(1)_TARGET)
 	fi
 	@printf 'Building %s for %s\n' "$(APP)" "$$(DARWIN_$(1)_TARGET)"
 	@mkdir -p $(DISTDIR)
-	@IPERF3_RS_CONFIGURE_ARGS="$(RELEASE_CONFIGURE_ARGS)" \
-		$(CARGO_ENV) $(CARGO) build --release --target $$(DARWIN_$(1)_TARGET)
+	@$(CARGO_ENV) $(CARGO) build --release --target $$(DARWIN_$(1)_TARGET)
 	@cp target/$$(DARWIN_$(1)_TARGET)/release/$(APP) $(DISTDIR)/$(APP)-$$(DARWIN_$(1)_SUFFIX)
 	@chmod +x $(DISTDIR)/$(APP)-$$(DARWIN_$(1)_SUFFIX)
 	@printf 'Wrote %s/%s-%s\n' "$(DISTDIR)" "$(APP)" "$$(DARWIN_$(1)_SUFFIX)"
@@ -377,7 +374,6 @@ _dist.linux.$(1): _docker-check
 		-e HOME=/workspace/.home-linux/$(LINUX_CACHE_KEY)/$(1) \
 		-e CARGO_HOME=/workspace/.cargo-linux/$(1) \
 		-e CARGO_TARGET_DIR=/workspace/target/linux-$(1)-$(LINUX_CACHE_KEY) \
-		-e IPERF3_RS_CONFIGURE_ARGS="$(RELEASE_CONFIGURE_ARGS)" \
 		-v "$(CURDIR):/workspace" \
 		-w /workspace \
 		$(LINUX_BUILD_IMAGE) \

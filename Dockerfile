@@ -43,7 +43,7 @@ WORKDIR /workspace
 RUN --mount=type=cache,id=iperf3rs-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=iperf3rs-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=iperf3rs-integration-target,target=/workspace/target,sharing=locked \
-    IPERF3_RS_CONFIGURE_ARGS=--without-openssl cargo build --release --locked \
+    cargo build --release --locked \
  && install -m 0755 target/release/iperf3-rs /usr/local/bin/iperf3-rs
 
 ENV PATH="/usr/local/bin:/opt/iperf3/bin:${PATH}"
@@ -67,7 +67,7 @@ COPY . .
 RUN --mount=type=cache,id=iperf3rs-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=iperf3rs-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=iperf3rs-release-target,target=/workspace/target,sharing=locked \
-    IPERF3_RS_CONFIGURE_ARGS=--without-openssl cargo build --release --locked \
+    cargo build --release --locked \
  && mkdir -p /out \
  && cp target/release/iperf3-rs /out/iperf3-rs \
  && chmod +x /out/iperf3-rs \

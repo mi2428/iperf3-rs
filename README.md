@@ -65,6 +65,8 @@ That means upstream iperf3 options such as `-s`, `-c`, `-u`, `-R`, `--bidir`,
 `-b`, `-t`, `-i`, `-P`, `-J`, authentication options, bind options, and the rest
 of the esnet/iperf3 CLI are parsed by libiperf itself. The Rust layer does not
 maintain a separate clone of the iperf3 option grammar.
+Authentication options require building the vendored libiperf with OpenSSL; the
+default crate build disables OpenSSL to keep native dependencies deterministic.
 
 The wire protocol is upstream iperf3 as well. You can mix `iperf3-rs` and the
 reference `iperf3` binary in either direction:
@@ -769,9 +771,12 @@ The Rust build script compiles `libiperf` from that submodule instead of linking
 to a system iperf3 package.
 
 The final Rust binary links a static `libiperf.a` plus a small C shim from
-`native/`. Release builds use `IPERF3_RS_CONFIGURE_ARGS=--without-openssl` for
-the bundled libiperf build, while Pushgateway HTTPS support comes from Rustls
-with webpki roots.
+`native/`. The bundled libiperf build uses `--without-openssl` by default so a
+host OpenSSL installation does not change whether `iperf3-rs` links libssl or
+libcrypto. Pushgateway HTTPS support comes from Rustls with webpki roots.
+Enable the `openssl` Cargo feature when you need upstream iperf authentication,
+or pass upstream configure options such as
+`IPERF3_RS_CONFIGURE_ARGS=--with-openssl=/opt/openssl`.
 
 Current caveats:
 

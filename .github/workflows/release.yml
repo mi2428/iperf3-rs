@@ -132,7 +132,6 @@ jobs:
         run: |
           git submodule update --init --recursive
           echo "CARGO_INCREMENTAL=0" >> "${GITHUB_ENV}"
-          echo "IPERF3_RS_CONFIGURE_ARGS=--without-openssl" >> "${GITHUB_ENV}"
         shell: "bash"
       - name: "Install Linux build dependencies"
         if: "runner.os == 'Linux'"

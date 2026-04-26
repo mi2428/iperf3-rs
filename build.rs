@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const CONFIGURE_ARGS_ENV: &str = "IPERF3_RS_CONFIGURE_ARGS";
+const OPENSSL_FEATURE_ENV: &str = "CARGO_FEATURE_OPENSSL";
 
 fn main() {
     // Build libiperf from the esnet/iperf3 submodule during Cargo's build
@@ -33,6 +34,7 @@ fn main() {
     println!("cargo:rerun-if-changed=iperf3/src/iperf_api.h");
     println!("cargo:rerun-if-changed=iperf3/src/iperf.h");
     println!("cargo:rerun-if-env-changed={CONFIGURE_ARGS_ENV}");
+    println!("cargo:rerun-if-env-changed={OPENSSL_FEATURE_ENV}");
     emit_build_metadata(&manifest_dir, &host, &target, &profile);
 
     if !iperf_src.join("iperf.h").exists() {
@@ -47,8 +49,9 @@ fn main() {
     // for multiple targets or profiles in the same checkout. The stamp records
     // the inputs that change configure output, so we can reuse libiperf across
     // incremental Rust rebuilds without accidentally mixing host/target builds.
-    let configure_args = env::var(CONFIGURE_ARGS_ENV).unwrap_or_default();
-    let stamp = format!("target={target}\nhost={host}\nconfigure_args={configure_args}\n");
+    let configure_args = effective_configure_args();
+    let configure_args_stamp = configure_args.join(" ");
+    let stamp = format!("target={target}\nhost={host}\nconfigure_args={configure_args_stamp}\n");
     if !libiperf.exists() || read_stamp(&build_dir).as_deref() != Some(stamp.as_str()) {
         if build_dir.exists() {
             fs::remove_dir_all(&build_dir).unwrap_or_else(|err| {
@@ -91,7 +94,7 @@ fn configure_and_build_iperf(
     build_dir: &Path,
     host: &str,
     target: &str,
-    extra_args: &str,
+    extra_args: &[String],
 ) {
     fs::create_dir_all(build_dir)
         .unwrap_or_else(|err| panic!("failed to create libiperf build directory: {err}"));
@@ -106,9 +109,10 @@ fn configure_and_build_iperf(
         .arg("--enable-static")
         .arg("--disable-shared");
 
-    // Release and integration builds can pass upstream configure switches such
-    // as `--without-openssl` without teaching this script every libiperf option.
-    for arg in extra_args.split_whitespace() {
+    // The default vendored libiperf build disables OpenSSL so host installations
+    // do not change the crate's dynamic-link dependencies. Extra upstream
+    // configure switches remain available for users that need auth/OpenSSL.
+    for arg in extra_args {
         configure.arg(arg);
     }
 
@@ -130,6 +134,26 @@ fn configure_and_build_iperf(
         make.arg(format!("-j{jobs}"));
     }
     run(make, "build libiperf");
+}
+
+fn effective_configure_args() -> Vec<String> {
+    let mut extra_args = env::var(CONFIGURE_ARGS_ENV)
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    if env::var_os(OPENSSL_FEATURE_ENV).is_none()
+        && !extra_args.iter().any(|arg| is_openssl_configure_arg(arg))
+    {
+        extra_args.insert(0, "--without-openssl".to_owned());
+    }
+
+    extra_args
+}
+
+fn is_openssl_configure_arg(arg: &str) -> bool {
+    arg == "--without-openssl" || arg == "--with-openssl" || arg.starts_with("--with-openssl=")
 }
 
 fn emit_build_metadata(manifest_dir: &Path, host: &str, target: &str, profile: &str) {

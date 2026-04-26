@@ -30,7 +30,6 @@ RUN --mount=type=cache,id=iperf3rs-example-bwcheck-cargo-registry,target=/usr/lo
     --mount=type=cache,id=iperf3rs-example-bwcheck-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=iperf3rs-example-bwcheck-target,target=/workspace/target/example-bwcheck,sharing=locked \
     CARGO_TARGET_DIR=/workspace/target/example-bwcheck \
-    IPERF3_RS_CONFIGURE_ARGS=--without-openssl \
     cargo build --release --locked --manifest-path examples/bwcheck/Cargo.toml \
  && install -m 0755 \
       target/example-bwcheck/release/iperf3-rs-bwcheck \

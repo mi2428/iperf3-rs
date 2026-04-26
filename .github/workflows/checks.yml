@@ -13,7 +13,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  IPERF3_RS_CONFIGURE_ARGS: --without-openssl
 
 jobs:
   workflow:
@@ -42,6 +41,7 @@ jobs:
             build-essential \
             ca-certificates \
             fish \
+            libssl-dev \
             pkg-config \
             zsh
 
@@ -329,7 +329,6 @@ jobs:
             -e "HOME=/workspace/.home-linux/${LINUX_CACHE_KEY}/${ARCH}" \
             -e "CARGO_HOME=/workspace/.cargo-linux/${ARCH}" \
             -e "CARGO_TARGET_DIR=/workspace/target/linux-${ARCH}-${LINUX_CACHE_KEY}" \
-            -e "IPERF3_RS_CONFIGURE_ARGS=${IPERF3_RS_CONFIGURE_ARGS}" \
             -v "${PWD}:/workspace" \
             -w /workspace \
             "${LINUX_BUILD_IMAGE}" \
