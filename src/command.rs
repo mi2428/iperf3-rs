@@ -452,7 +452,11 @@ fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Re
         let _ = worker.join();
     }
     #[cfg(feature = "pushgateway")]
-    drop(setup.push_reporter.take());
+    let push_result = setup
+        .push_reporter
+        .take()
+        .map(IntervalMetricsReporter::finish)
+        .transpose();
 
     let metrics = setup
         .stream
@@ -460,6 +464,8 @@ fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Re
         .unwrap_or_default();
 
     result?;
+    #[cfg(feature = "pushgateway")]
+    push_result?;
     Ok(IperfResult {
         role: setup.role,
         json_output,

@@ -3,12 +3,15 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
 
 use crate::metrics::{MetricEvent, Metrics, WindowMetrics};
 use crate::prometheus::PrometheusEncoder;
 use crate::{Error, ErrorKind, Result};
+
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// File output format for metrics snapshots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,8 +40,8 @@ impl MetricsFileFormat {
 
 /// Writer for one metrics output file.
 ///
-/// JSONL output appends one object per event. Prometheus output replaces the
-/// file with the latest encoded snapshot on each write.
+/// JSONL output appends one object per event. Prometheus output atomically
+/// replaces the file with the latest encoded snapshot on each write.
 #[derive(Debug, Clone)]
 pub struct MetricsFileSink {
     path: PathBuf,
@@ -123,13 +126,11 @@ impl MetricsFileSink {
     }
 
     fn write_prometheus(&self, metrics: &Metrics) -> Result<()> {
-        fs::write(&self.path, self.encoder.encode_interval(metrics))
-            .map_err(|err| file_error("failed to write metrics file", &self.path, err))
+        atomic_write(&self.path, self.encoder.encode_interval(metrics).as_bytes())
     }
 
     fn write_window_prometheus(&self, metrics: &WindowMetrics) -> Result<()> {
-        fs::write(&self.path, self.encoder.encode_window(metrics))
-            .map_err(|err| file_error("failed to write metrics file", &self.path, err))
+        atomic_write(&self.path, self.encoder.encode_window(metrics).as_bytes())
     }
 }
 
@@ -150,6 +151,39 @@ fn file_error(
         format!("{message}: {}", path.display()),
         source,
     )
+}
+
+fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
+    let temp_path = temp_path_for(path);
+    let result = write_temp_then_rename(&temp_path, path, contents);
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result.map_err(|err| file_error("failed to write metrics file", path, err))
+}
+
+fn write_temp_then_rename(temp_path: &Path, path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp_path)?;
+    file.write_all(contents)?;
+    file.flush()?;
+    drop(file);
+    fs::rename(temp_path, path)
+}
+
+fn temp_path_for(path: &Path) -> PathBuf {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "metrics".into());
+    let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    parent.join(format!(".{file_name}.tmp-{}-{counter}", std::process::id()))
 }
 
 #[cfg(kani)]
@@ -209,6 +243,7 @@ mod tests {
         let contents = fs::read_to_string(&path).unwrap();
         assert!(contents.contains("nettest_bytes 2\n"));
         assert!(!contents.contains("nettest_bytes 1\n"));
+        assert_no_temp_files_for(&path);
         let _ = fs::remove_file(path);
     }
 
@@ -231,6 +266,23 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    #[test]
+    fn write_interval_reports_file_errors() {
+        let path = temp_path("jsonl");
+        let sink = MetricsFileSink::new(&path, MetricsFileFormat::Jsonl).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+
+        let err = sink.write_interval(&sample_metrics(1.0)).unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::MetricsFile);
+        assert!(
+            err.to_string().contains("failed to open metrics file"),
+            "{err:#}"
+        );
+        let _ = fs::remove_dir(path);
+    }
+
     fn sample_metrics(bytes: f64) -> Metrics {
         Metrics {
             bytes,
@@ -249,5 +301,20 @@ mod tests {
             "iperf3-rs-metrics-file-{}-{nonce}.{extension}",
             std::process::id()
         ))
+    }
+
+    fn assert_no_temp_files_for(path: &Path) {
+        let parent = path.parent().unwrap();
+        let file_name = path.file_name().unwrap().to_string_lossy();
+        let prefix = format!(".{file_name}.tmp-");
+        let leftovers = fs::read_dir(parent)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "Prometheus atomic writes should not leave temp files"
+        );
     }
 }

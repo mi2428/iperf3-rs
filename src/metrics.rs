@@ -218,7 +218,7 @@ impl Iterator for MetricsStream {
 #[cfg(feature = "pushgateway")]
 pub(crate) struct IntervalMetricsReporter {
     callback: Option<CallbackMetricsReporter>,
-    worker: Option<JoinHandle<()>>,
+    worker: Option<JoinHandle<Result<()>>>,
 }
 
 #[cfg(feature = "pushgateway")]
@@ -315,6 +315,21 @@ impl IntervalMetricsReporter {
             callback: Some(callback),
             worker: Some(worker),
         })
+    }
+
+    pub(crate) fn finish(mut self) -> Result<()> {
+        self.stop()
+    }
+
+    fn stop(&mut self) -> Result<()> {
+        drop(self.callback.take());
+        if let Some(worker) = self.worker.take() {
+            worker
+                .join()
+                .map_err(|_| Error::worker("metrics sink worker thread panicked"))?
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -460,7 +475,7 @@ fn flush_window_event(tx: &Sender<MetricEvent>, window: &mut Vec<Metrics>) -> bo
 }
 
 #[cfg(feature = "pushgateway")]
-fn run_metrics_sinks(rx: Receiver<Metrics>, sinks: MetricsSinks) {
+fn run_metrics_sinks(rx: Receiver<Metrics>, sinks: MetricsSinks) -> Result<()> {
     match sinks
         .pushgateway
         .as_ref()
@@ -472,19 +487,28 @@ fn run_metrics_sinks(rx: Receiver<Metrics>, sinks: MetricsSinks) {
 }
 
 #[cfg(feature = "pushgateway")]
-fn push_interval_metrics(rx: Receiver<Metrics>, sinks: MetricsSinks) {
+fn push_interval_metrics(rx: Receiver<Metrics>, sinks: MetricsSinks) -> Result<()> {
+    let mut result = Ok(());
     for metrics in rx {
-        #[cfg(feature = "serde")]
-        write_metrics_file(&sinks, &metrics);
+        if let Err(err) = write_metrics_file(&sinks, &metrics) {
+            result = Err(err);
+            break;
+        }
         push_interval_to_gateway(&sinks, &metrics);
     }
     delete_pushgateway_on_finish(&sinks);
+    result
 }
 
 #[cfg(feature = "pushgateway")]
-fn push_window_metrics(rx: Receiver<Metrics>, sinks: MetricsSinks, interval: Duration) {
+fn push_window_metrics(
+    rx: Receiver<Metrics>,
+    sinks: MetricsSinks,
+    interval: Duration,
+) -> Result<()> {
     let mut window = Vec::new();
     let mut deadline = None;
+    let mut result = Ok(());
 
     loop {
         match deadline {
@@ -498,8 +522,10 @@ fn push_window_metrics(rx: Receiver<Metrics>, sinks: MetricsSinks, interval: Dur
 
                 match rx.recv_timeout(flush_at - now) {
                     Ok(metrics) => {
-                        #[cfg(feature = "serde")]
-                        write_metrics_file(&sinks, &metrics);
+                        if let Err(err) = write_metrics_file(&sinks, &metrics) {
+                            result = Err(err);
+                            break;
+                        }
                         window.push(metrics);
                     }
                     Err(RecvTimeoutError::Timeout) => {
@@ -511,8 +537,10 @@ fn push_window_metrics(rx: Receiver<Metrics>, sinks: MetricsSinks, interval: Dur
             }
             None => match rx.recv() {
                 Ok(metrics) => {
-                    #[cfg(feature = "serde")]
-                    write_metrics_file(&sinks, &metrics);
+                    if let Err(err) = write_metrics_file(&sinks, &metrics) {
+                        result = Err(err);
+                        break;
+                    }
                     window.push(metrics);
                     deadline = Some(
                         Instant::now()
@@ -527,8 +555,11 @@ fn push_window_metrics(rx: Receiver<Metrics>, sinks: MetricsSinks, interval: Dur
 
     // The final iperf interval often arrives shortly before the process exits.
     // Flush a partial window so short tests still publish useful summaries.
-    flush_window_metrics(&sinks, &mut window);
+    if result.is_ok() {
+        flush_window_metrics(&sinks, &mut window);
+    }
     delete_pushgateway_on_finish(&sinks);
+    result
 }
 
 #[cfg(feature = "pushgateway")]
@@ -558,11 +589,16 @@ fn flush_window_metrics(sinks: &MetricsSinks, window: &mut Vec<Metrics>) {
 }
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
-fn write_metrics_file(sinks: &MetricsSinks, metrics: &Metrics) {
-    let result = sinks.file.as_ref().map(|file| file.write_interval(metrics));
-    if let Some(Err(err)) = result {
-        eprintln!("failed to write metrics file: {err:#}");
+fn write_metrics_file(sinks: &MetricsSinks, metrics: &Metrics) -> Result<()> {
+    if let Some(file) = &sinks.file {
+        file.write_interval(metrics)?;
     }
+    Ok(())
+}
+
+#[cfg(all(feature = "pushgateway", not(feature = "serde")))]
+fn write_metrics_file(_sinks: &MetricsSinks, _metrics: &Metrics) -> Result<()> {
+    Ok(())
 }
 
 #[cfg(feature = "pushgateway")]
@@ -580,10 +616,7 @@ fn delete_pushgateway_on_finish(sinks: &MetricsSinks) {
 #[cfg(feature = "pushgateway")]
 impl Drop for IntervalMetricsReporter {
     fn drop(&mut self) {
-        drop(self.callback.take());
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+        let _ = self.stop();
     }
 }
 
@@ -1025,6 +1058,43 @@ mod tests {
         assert_eq!(window.bandwidth_bytes_per_second.mean, 6.0);
         worker.join().unwrap();
         assert_eq!(stream.next(), None);
+    }
+
+    #[cfg(all(feature = "pushgateway", feature = "serde"))]
+    #[test]
+    fn metrics_file_errors_are_returned_from_sink_worker() {
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        use crate::metrics_file::{MetricsFileFormat, MetricsFileSink};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "iperf3-rs-metrics-worker-{}-{nonce}.jsonl",
+            std::process::id()
+        ));
+        let sink = MetricsFileSink::new(&path, MetricsFileFormat::Jsonl).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+
+        let mut sinks = MetricsSinks::new();
+        sinks.file(sink);
+        let (tx, rx) = unbounded();
+        tx.send(Metrics {
+            bytes: 1.0,
+            interval_duration_seconds: 1.0,
+            ..Metrics::default()
+        })
+        .unwrap();
+        drop(tx);
+
+        let err = run_metrics_sinks(rx, sinks).unwrap_err();
+
+        assert_eq!(err.kind(), crate::ErrorKind::MetricsFile);
+        let _ = fs::remove_dir(path);
     }
 
     #[test]

@@ -506,8 +506,8 @@ iperf3-rs \
 
 The default `jsonl` format writes one JSON object per libiperf interval. The
 `prometheus` format writes the latest interval as Prometheus text exposition and
-replaces the file on each interval, which is useful for textfile collectors or
-for keeping the final interval snapshot as a CI artifact:
+atomically replaces the file on each interval, which is useful for textfile
+collectors or for keeping the final interval snapshot as a CI artifact:
 
 ```sh
 iperf3-rs \
@@ -521,7 +521,8 @@ iperf3-rs \
 
 File output can be used by itself or together with Pushgateway export. It never
 changes stdout, so normal human output and `-J` JSON behavior remain owned by
-upstream libiperf.
+upstream libiperf. Unlike Pushgateway delivery, file output is required: failing
+to create or write the requested file makes the CLI exit with an error.
 
 ### Metric names
 

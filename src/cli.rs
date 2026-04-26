@@ -76,10 +76,13 @@ fn run() -> Result<()> {
         Some(IntervalMetricsReporter::attach_sinks(&mut test, sinks)?)
     };
 
-    test.run()?;
+    let result = test.run();
 
-    // Dropping the reporter unregisters the C callback and drains the worker
-    // thread after libiperf has stopped reporting interval metrics.
-    drop(reporter);
+    // Finishing the reporter unregisters the C callback, drains the worker
+    // thread, and surfaces required file sink errors after libiperf stops.
+    let reporter_result = reporter.map(IntervalMetricsReporter::finish).transpose();
+
+    result?;
+    reporter_result?;
     Ok(())
 }
