@@ -414,6 +414,11 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_window_returns_none_for_empty_samples() {
+        assert!(aggregate_window(&[]).is_none());
+    }
+
+    #[test]
     fn aggregate_window_summarizes_interval_samples_by_metric_semantics() {
         let window = aggregate_window(&[
             Metrics {
