@@ -26,6 +26,7 @@ make build
 make install COMPLETION=1
 make fmt CHECK_ONLY=1
 make lint
+make doc
 make test
 make check
 make integration
@@ -35,8 +36,8 @@ make dist OS=darwin,linux ARCH=amd64,arm64
 make multipass
 ```
 
-`make check` runs formatting, clippy, unit tests, and shell completion syntax
-checks.
+`make check` runs formatting, clippy, rustdoc, unit tests, and shell completion
+syntax checks.
 
 `make check integration kani` is the broad local quality gate. It requires Kani
 and a running Docker daemon.

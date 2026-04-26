@@ -138,6 +138,10 @@ fmt: ## Format Rust sources. Use CHECK_ONLY=1 to check without writing
 lint: ## Run clippy with warnings treated as errors
 	@$(CARGO_ENV) $(CARGO) clippy --all-targets --all-features -- -D warnings
 
+.PHONY: doc
+doc: ## Build rustdoc with warnings treated as errors
+	@RUSTDOCFLAGS="-D warnings" $(CARGO_ENV) $(CARGO) doc --no-deps
+
 .PHONY: test
 test: ## Run unit tests
 	@$(CARGO_ENV) $(CARGO) test
@@ -154,6 +158,7 @@ integration: ## Run Docker Compose integration tests
 check: ## Run formatting, lint, tests, and completion checks
 	@$(MAKE) --no-print-directory fmt CHECK_ONLY=1
 	@$(MAKE) --no-print-directory lint
+	@$(MAKE) --no-print-directory doc
 	@$(MAKE) --no-print-directory test
 	@$(MAKE) --no-print-directory _completions CHECK_ONLY=1
 
