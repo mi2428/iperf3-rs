@@ -1,4 +1,4 @@
-//! Pushgateway rendering and HTTP delivery helpers.
+//! Pushgateway HTTP delivery helpers.
 //!
 //! The CLI uses these types internally, and library users can also construct a
 //! [`PushGateway`] when they want to push [`crate::Metrics`] or
@@ -10,7 +10,11 @@ use reqwest::StatusCode;
 use reqwest::blocking::Client;
 use url::Url;
 
-use crate::metrics::{Metrics, WindowGaugeStats, WindowMetrics};
+use crate::metrics::{Metrics, WindowMetrics};
+use crate::prometheus::{
+    PrometheusEncoder, render_interval_prometheus as render_prometheus, render_window_prometheus,
+    validate_metric_prefix,
+};
 use crate::{Error, ErrorKind, Result};
 
 const PUSH_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
@@ -44,7 +48,7 @@ impl PushGatewayConfig {
     /// Default Pushgateway job name used by the CLI and builder.
     pub const DEFAULT_JOB: &'static str = "iperf3";
     /// Default metric prefix used by the CLI and builder.
-    pub const DEFAULT_METRIC_PREFIX: &'static str = "iperf3";
+    pub const DEFAULT_METRIC_PREFIX: &'static str = PrometheusEncoder::DEFAULT_PREFIX;
     /// Default number of Pushgateway retries after the first failed request.
     pub const DEFAULT_RETRIES: u32 = 0;
     /// Maximum supported retry count.
@@ -414,15 +418,6 @@ pub(crate) fn validate_user_agent(value: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_metric_prefix(prefix: &str) -> Result<()> {
-    if !is_valid_label_name(prefix) {
-        return Err(Error::invalid_argument(format!(
-            "invalid Pushgateway metric prefix '{prefix}'"
-        )));
-    }
-    Ok(())
-}
-
 pub(crate) fn is_valid_label_name(name: &str) -> bool {
     is_valid_label_name_bytes(name.as_bytes())
 }
@@ -468,208 +463,6 @@ fn retry_delay(attempt: u32) -> Duration {
     PUSH_RETRY_BASE_DELAY
         .saturating_mul(2_u32.saturating_pow(attempt))
         .min(PUSH_RETRY_MAX_DELAY)
-}
-
-pub(crate) fn render_prometheus(metrics: &Metrics, prefix: &str) -> String {
-    let mut out = String::new();
-    gauge(&mut out, &metric_name(prefix, "bytes"), metrics.bytes);
-    gauge(
-        &mut out,
-        &metric_name(prefix, "bandwidth"),
-        metrics.bandwidth_bits_per_second,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "tcp_retransmits"),
-        metrics.tcp_retransmits,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "tcp_rtt_seconds"),
-        metrics.tcp_rtt_seconds,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "tcp_rttvar_seconds"),
-        metrics.tcp_rttvar_seconds,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "tcp_snd_cwnd_bytes"),
-        metrics.tcp_snd_cwnd_bytes,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "tcp_snd_wnd_bytes"),
-        metrics.tcp_snd_wnd_bytes,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "tcp_pmtu_bytes"),
-        metrics.tcp_pmtu_bytes,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "tcp_reorder_events"),
-        metrics.tcp_reorder_events,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "udp_packets"),
-        metrics.udp_packets,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "udp_lost_packets"),
-        metrics.udp_lost_packets,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "udp_jitter_seconds"),
-        metrics.udp_jitter_seconds,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "udp_out_of_order_packets"),
-        metrics.udp_out_of_order_packets,
-    );
-    gauge(&mut out, &metric_name(prefix, "omitted"), metrics.omitted);
-    out
-}
-
-pub(crate) fn render_window_prometheus(metrics: &WindowMetrics, prefix: &str) -> String {
-    let mut out = String::new();
-    gauge(
-        &mut out,
-        &metric_name(prefix, "window_duration_seconds"),
-        metrics.duration_seconds,
-    );
-    gauge(
-        &mut out,
-        &metric_name(prefix, "window_transferred_bytes"),
-        metrics.transferred_bytes,
-    );
-    gauge_stats(
-        &mut out,
-        prefix,
-        "window_bandwidth",
-        "bytes_per_second",
-        metrics.bandwidth_bytes_per_second,
-    );
-    gauge_stats(
-        &mut out,
-        prefix,
-        "window_tcp_rtt",
-        "seconds",
-        metrics.tcp_rtt_seconds,
-    );
-    gauge_stats(
-        &mut out,
-        prefix,
-        "window_tcp_rttvar",
-        "seconds",
-        metrics.tcp_rttvar_seconds,
-    );
-    gauge_stats(
-        &mut out,
-        prefix,
-        "window_tcp_snd_cwnd",
-        "bytes",
-        metrics.tcp_snd_cwnd_bytes,
-    );
-    gauge_stats(
-        &mut out,
-        prefix,
-        "window_tcp_snd_wnd",
-        "bytes",
-        metrics.tcp_snd_wnd_bytes,
-    );
-    gauge_stats(
-        &mut out,
-        prefix,
-        "window_tcp_pmtu",
-        "bytes",
-        metrics.tcp_pmtu_bytes,
-    );
-    gauge_stats(
-        &mut out,
-        prefix,
-        "window_udp_jitter",
-        "seconds",
-        metrics.udp_jitter_seconds,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "window_tcp_retransmits"),
-        metrics.tcp_retransmits,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "window_tcp_reorder_events"),
-        metrics.tcp_reorder_events,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "window_udp_packets"),
-        metrics.udp_packets,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "window_udp_lost_packets"),
-        metrics.udp_lost_packets,
-    );
-    gauge_option(
-        &mut out,
-        &metric_name(prefix, "window_udp_out_of_order_packets"),
-        metrics.udp_out_of_order_packets,
-    );
-    gauge(
-        &mut out,
-        &metric_name(prefix, "window_omitted_intervals"),
-        metrics.omitted_intervals,
-    );
-    out
-}
-
-fn metric_name(prefix: &str, suffix: &str) -> String {
-    format!("{prefix}_{suffix}")
-}
-
-fn gauge_stats(out: &mut String, prefix: &str, stem: &str, unit: &str, stats: WindowGaugeStats) {
-    if stats.samples == 0 {
-        return;
-    }
-    gauge(
-        out,
-        &metric_name(prefix, &format!("{stem}_mean_{unit}")),
-        stats.mean,
-    );
-    gauge(
-        out,
-        &metric_name(prefix, &format!("{stem}_min_{unit}")),
-        stats.min,
-    );
-    gauge(
-        out,
-        &metric_name(prefix, &format!("{stem}_max_{unit}")),
-        stats.max,
-    );
-}
-
-fn gauge(out: &mut String, name: &str, value: f64) {
-    out.push_str("# TYPE ");
-    out.push_str(name);
-    out.push_str(" gauge\n");
-    out.push_str(name);
-    out.push(' ');
-    out.push_str(&value.to_string());
-    out.push('\n');
-}
-
-fn gauge_option(out: &mut String, name: &str, value: Option<f64>) {
-    if let Some(value) = value {
-        gauge(out, name, value);
-    }
 }
 
 fn encode_path_segment(raw: &str) -> String {
@@ -767,6 +560,8 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
+
+    use crate::metrics::WindowGaugeStats;
 
     use super::*;
 

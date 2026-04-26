@@ -51,13 +51,14 @@ url = { version = "2", optional = true }
 serde_json = "1"
 
 [features]
-default = ["pushgateway"]
-pushgateway = ["dep:anyhow", "dep:reqwest", "dep:serde", "dep:serde_json", "dep:url"]
+default = ["pushgateway", "serde"]
+pushgateway = ["dep:anyhow", "dep:reqwest", "dep:url"]
+serde = ["dep:serde", "dep:serde_json"]
 
 [[bin]]
 name = "iperf3-rs"
 path = "src/main.rs"
-required-features = ["pushgateway"]
+required-features = ["pushgateway", "serde"]
 
 [build-dependencies]
 cc = "1"

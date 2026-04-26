@@ -11,7 +11,7 @@ use crossbeam_channel::bounded;
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError, unbounded};
 
 use crate::iperf::{IperfTest, RawIperfTest};
-#[cfg(feature = "pushgateway")]
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 use crate::metrics_file::MetricsFileSink;
 #[cfg(feature = "pushgateway")]
 use crate::pushgateway::PushGateway;
@@ -19,7 +19,7 @@ use crate::{Error, Result};
 
 /// Transport protocol selected by libiperf for a metrics sample.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "pushgateway", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum TransportProtocol {
     /// The protocol was not reported or is not currently recognized.
@@ -45,7 +45,7 @@ impl TransportProtocol {
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
-#[cfg_attr(feature = "pushgateway", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 /// One libiperf interval sample.
 ///
 /// Fields are normalized to Prometheus-friendly units where practical.
@@ -89,7 +89,7 @@ pub struct Metrics {
 
 /// Mean, minimum, and maximum values for a gauge-like metric in a window.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-#[cfg_attr(feature = "pushgateway", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct WindowGaugeStats {
     /// Number of observed samples represented by these statistics.
     pub samples: usize,
@@ -106,7 +106,7 @@ pub struct WindowGaugeStats {
 /// Counter-like fields are accumulated across the window. Gauge-like fields use
 /// [`WindowGaugeStats`].
 #[derive(Debug, Clone, Default, PartialEq)]
-#[cfg_attr(feature = "pushgateway", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct WindowMetrics {
     /// Total interval duration represented by this window.
     pub duration_seconds: f64,
@@ -171,7 +171,7 @@ impl MetricsMode {
 
 /// Metric event emitted by a running iperf test.
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "pushgateway", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum MetricEvent {
     /// A raw libiperf interval sample.
@@ -224,6 +224,7 @@ pub(crate) struct IntervalMetricsReporter {
 #[cfg(feature = "pushgateway")]
 pub(crate) struct MetricsSinks {
     pushgateway: Option<PushGatewaySink>,
+    #[cfg(feature = "serde")]
     file: Option<MetricsFileSink>,
 }
 
@@ -232,6 +233,7 @@ impl MetricsSinks {
     pub(crate) fn new() -> Self {
         Self {
             pushgateway: None,
+            #[cfg(feature = "serde")]
             file: None,
         }
     }
@@ -243,16 +245,18 @@ impl MetricsSinks {
         });
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) fn file(&mut self, sink: MetricsFileSink) {
         self.file = Some(sink);
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) fn is_empty(&self) -> bool {
-        self.pushgateway.is_none() && self.file.is_none()
+        self.pushgateway.is_none() && self.file_is_empty()
     }
 
     fn queue(&self) -> MetricsQueue {
-        if self.file.is_some()
+        if self.file_is_present()
             || self
                 .pushgateway
                 .as_ref()
@@ -263,6 +267,21 @@ impl MetricsSinks {
         } else {
             MetricsQueue::Latest
         }
+    }
+
+    #[cfg(feature = "serde")]
+    fn file_is_empty(&self) -> bool {
+        self.file.is_none()
+    }
+
+    #[cfg(feature = "serde")]
+    fn file_is_present(&self) -> bool {
+        self.file.is_some()
+    }
+
+    #[cfg(not(feature = "serde"))]
+    fn file_is_present(&self) -> bool {
+        false
     }
 }
 
@@ -455,6 +474,7 @@ fn run_metrics_sinks(rx: Receiver<Metrics>, sinks: MetricsSinks) {
 #[cfg(feature = "pushgateway")]
 fn push_interval_metrics(rx: Receiver<Metrics>, sinks: MetricsSinks) {
     for metrics in rx {
+        #[cfg(feature = "serde")]
         write_metrics_file(&sinks, &metrics);
         push_interval_to_gateway(&sinks, &metrics);
     }
@@ -478,6 +498,7 @@ fn push_window_metrics(rx: Receiver<Metrics>, sinks: MetricsSinks, interval: Dur
 
                 match rx.recv_timeout(flush_at - now) {
                     Ok(metrics) => {
+                        #[cfg(feature = "serde")]
                         write_metrics_file(&sinks, &metrics);
                         window.push(metrics);
                     }
@@ -490,6 +511,7 @@ fn push_window_metrics(rx: Receiver<Metrics>, sinks: MetricsSinks, interval: Dur
             }
             None => match rx.recv() {
                 Ok(metrics) => {
+                    #[cfg(feature = "serde")]
                     write_metrics_file(&sinks, &metrics);
                     window.push(metrics);
                     deadline = Some(
@@ -535,7 +557,7 @@ fn flush_window_metrics(sinks: &MetricsSinks, window: &mut Vec<Metrics>) {
     window.clear();
 }
 
-#[cfg(feature = "pushgateway")]
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 fn write_metrics_file(sinks: &MetricsSinks, metrics: &Metrics) {
     let result = sinks.file.as_ref().map(|file| file.write_interval(metrics));
     if let Some(Err(err)) = result {

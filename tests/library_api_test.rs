@@ -9,8 +9,9 @@ use std::{
 };
 
 use iperf3_rs::{
-    ErrorKind, IperfCommand, MetricEvent, MetricsMode, PushGatewayConfig, TransportProtocol,
-    libiperf_version, usage_long,
+    ErrorKind, IperfCommand, MetricEvent, Metrics, MetricsFileFormat, MetricsFileSink, MetricsMode,
+    PrometheusEncoder, PushGatewayConfig, TransportProtocol, WindowMetrics, libiperf_version,
+    usage_long,
 };
 
 #[test]
@@ -108,6 +109,47 @@ fn command_run_with_pushgateway_pushes_interval_metrics() {
         }
     }
     panic!("client should complete and push metrics: {last_error}");
+}
+
+#[test]
+fn public_prometheus_encoder_renders_metrics_without_pushgateway() {
+    let encoder = PrometheusEncoder::new("nettest").unwrap();
+
+    let interval = encoder.encode_interval(&Metrics {
+        bytes: 32.0,
+        bandwidth_bits_per_second: 256.0,
+        interval_duration_seconds: 1.0,
+        ..Metrics::default()
+    });
+    assert!(interval.contains("nettest_bytes 32\n"));
+    assert!(interval.contains("nettest_bandwidth 256\n"));
+
+    let window = encoder.encode_window(&WindowMetrics {
+        duration_seconds: 2.0,
+        transferred_bytes: 64.0,
+        ..WindowMetrics::default()
+    });
+    assert!(window.contains("nettest_window_duration_seconds 2\n"));
+    assert!(window.contains("nettest_window_transferred_bytes 64\n"));
+}
+
+#[test]
+fn public_metrics_file_sink_writes_jsonl_events() {
+    let metrics_file = temp_metrics_path("jsonl");
+    let sink = MetricsFileSink::new(&metrics_file, MetricsFileFormat::Jsonl).unwrap();
+
+    sink.write_event(&MetricEvent::Interval(Metrics {
+        bytes: 32.0,
+        bandwidth_bits_per_second: 256.0,
+        interval_duration_seconds: 1.0,
+        ..Metrics::default()
+    }))
+    .unwrap();
+
+    let metrics = fs::read_to_string(&metrics_file).unwrap();
+    assert!(metrics.contains(r#""event":"interval""#));
+    assert!(metrics.contains(r#""bytes":32.0"#));
+    let _ = fs::remove_file(metrics_file);
 }
 
 #[test]

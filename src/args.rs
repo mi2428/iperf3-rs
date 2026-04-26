@@ -6,9 +6,10 @@ use anyhow::{Result, anyhow, bail};
 use url::Url;
 
 use crate::metrics_file::MetricsFileFormat;
+use crate::prometheus::validate_metric_prefix;
 use crate::pushgateway::{
-    PushGatewayConfig, is_reserved_label_name, is_valid_label_name, validate_metric_prefix,
-    validate_retries, validate_user_agent,
+    PushGatewayConfig, is_reserved_label_name, is_valid_label_name, validate_retries,
+    validate_user_agent,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

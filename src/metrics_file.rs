@@ -1,4 +1,4 @@
-//! File-backed CLI metrics output.
+//! File-backed metrics output.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -6,13 +6,14 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::metrics::Metrics;
-use crate::pushgateway::render_prometheus;
+use crate::metrics::{MetricEvent, Metrics, WindowMetrics};
+use crate::prometheus::PrometheusEncoder;
 use crate::{Error, ErrorKind, Result};
 
-/// File output format for CLI metrics.
+/// File output format for metrics snapshots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MetricsFileFormat {
+#[non_exhaustive]
+pub enum MetricsFileFormat {
     /// Append one JSON object per interval.
     Jsonl,
     /// Replace the file with the latest Prometheus text exposition snapshot.
@@ -20,7 +21,8 @@ pub(crate) enum MetricsFileFormat {
 }
 
 impl MetricsFileFormat {
-    pub(crate) fn parse(raw: &str) -> Option<Self> {
+    /// Parse a CLI-compatible metrics file format name.
+    pub fn parse(raw: &str) -> Option<Self> {
         Self::parse_trimmed_bytes(raw.trim().as_bytes())
     }
 
@@ -34,14 +36,24 @@ impl MetricsFileFormat {
 }
 
 /// Writer for one metrics output file.
-pub(crate) struct MetricsFileSink {
+///
+/// JSONL output appends one object per event. Prometheus output replaces the
+/// file with the latest encoded snapshot on each write.
+#[derive(Debug, Clone)]
+pub struct MetricsFileSink {
     path: PathBuf,
     format: MetricsFileFormat,
-    metric_prefix: String,
+    encoder: PrometheusEncoder,
 }
 
 impl MetricsFileSink {
-    pub(crate) fn new(
+    /// Create a sink with the default Prometheus metric prefix.
+    pub fn new(path: impl Into<PathBuf>, format: MetricsFileFormat) -> Result<Self> {
+        Self::with_prefix(path, format, PrometheusEncoder::DEFAULT_PREFIX)
+    }
+
+    /// Create a sink with a custom Prometheus metric prefix.
+    pub fn with_prefix(
         path: impl Into<PathBuf>,
         format: MetricsFileFormat,
         metric_prefix: impl Into<String>,
@@ -49,16 +61,43 @@ impl MetricsFileSink {
         let sink = Self {
             path: path.into(),
             format,
-            metric_prefix: metric_prefix.into(),
+            encoder: PrometheusEncoder::new(metric_prefix)?,
         };
         sink.create_empty_file()?;
         Ok(sink)
     }
 
-    pub(crate) fn write_interval(&self, metrics: &Metrics) -> Result<()> {
+    /// Return the output path this sink writes.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Return the configured output format.
+    pub fn format(&self) -> MetricsFileFormat {
+        self.format
+    }
+
+    /// Write one metrics stream event.
+    pub fn write_event(&self, event: &MetricEvent) -> Result<()> {
+        match event {
+            MetricEvent::Interval(metrics) => self.write_interval(metrics),
+            MetricEvent::Window(metrics) => self.write_window(metrics),
+        }
+    }
+
+    /// Write one immediate interval sample.
+    pub fn write_interval(&self, metrics: &Metrics) -> Result<()> {
         match self.format {
-            MetricsFileFormat::Jsonl => self.append_jsonl(metrics),
+            MetricsFileFormat::Jsonl => self.append_jsonl("interval", metrics),
             MetricsFileFormat::Prometheus => self.write_prometheus(metrics),
+        }
+    }
+
+    /// Write one aggregated window summary.
+    pub fn write_window(&self, metrics: &WindowMetrics) -> Result<()> {
+        match self.format {
+            MetricsFileFormat::Jsonl => self.append_jsonl("window", metrics),
+            MetricsFileFormat::Prometheus => self.write_window_prometheus(metrics),
         }
     }
 
@@ -68,19 +107,15 @@ impl MetricsFileSink {
             .map_err(|err| file_error("failed to create metrics file", &self.path, err))
     }
 
-    fn append_jsonl(&self, metrics: &Metrics) -> Result<()> {
+    fn append_jsonl<T>(&self, event: &'static str, metrics: &T) -> Result<()>
+    where
+        T: Serialize,
+    {
         let mut file = OpenOptions::new()
             .append(true)
             .open(&self.path)
             .map_err(|err| file_error("failed to open metrics file", &self.path, err))?;
-        serde_json::to_writer(
-            &mut file,
-            &JsonlInterval {
-                event: "interval",
-                metrics,
-            },
-        )
-        .map_err(|err| {
+        serde_json::to_writer(&mut file, &JsonlEvent { event, metrics }).map_err(|err| {
             Error::with_source(ErrorKind::MetricsFile, "failed to encode metrics JSON", err)
         })?;
         file.write_all(b"\n")
@@ -88,16 +123,21 @@ impl MetricsFileSink {
     }
 
     fn write_prometheus(&self, metrics: &Metrics) -> Result<()> {
-        fs::write(&self.path, render_prometheus(metrics, &self.metric_prefix))
+        fs::write(&self.path, self.encoder.encode_interval(metrics))
+            .map_err(|err| file_error("failed to write metrics file", &self.path, err))
+    }
+
+    fn write_window_prometheus(&self, metrics: &WindowMetrics) -> Result<()> {
+        fs::write(&self.path, self.encoder.encode_window(metrics))
             .map_err(|err| file_error("failed to write metrics file", &self.path, err))
     }
 }
 
 #[derive(Serialize)]
-struct JsonlInterval<'a> {
+struct JsonlEvent<'a, T> {
     event: &'static str,
     #[serde(flatten)]
-    metrics: &'a Metrics,
+    metrics: &'a T,
 }
 
 fn file_error(
@@ -143,7 +183,7 @@ mod tests {
     #[test]
     fn jsonl_format_appends_interval_events() {
         let path = temp_path("jsonl");
-        let sink = MetricsFileSink::new(&path, MetricsFileFormat::Jsonl, "iperf3").unwrap();
+        let sink = MetricsFileSink::new(&path, MetricsFileFormat::Jsonl).unwrap();
 
         sink.write_interval(&sample_metrics(1.0)).unwrap();
         sink.write_interval(&sample_metrics(2.0)).unwrap();
@@ -160,7 +200,8 @@ mod tests {
     #[test]
     fn prometheus_format_replaces_latest_snapshot() {
         let path = temp_path("prom");
-        let sink = MetricsFileSink::new(&path, MetricsFileFormat::Prometheus, "nettest").unwrap();
+        let sink =
+            MetricsFileSink::with_prefix(&path, MetricsFileFormat::Prometheus, "nettest").unwrap();
 
         sink.write_interval(&sample_metrics(1.0)).unwrap();
         sink.write_interval(&sample_metrics(2.0)).unwrap();
@@ -168,6 +209,25 @@ mod tests {
         let contents = fs::read_to_string(&path).unwrap();
         assert!(contents.contains("nettest_bytes 2\n"));
         assert!(!contents.contains("nettest_bytes 1\n"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn write_event_supports_window_jsonl() {
+        let path = temp_path("jsonl");
+        let sink = MetricsFileSink::new(&path, MetricsFileFormat::Jsonl).unwrap();
+
+        sink.write_event(&MetricEvent::Window(WindowMetrics {
+            duration_seconds: 2.0,
+            transferred_bytes: 64.0,
+            ..WindowMetrics::default()
+        }))
+        .unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(contents.contains(r#""event":"window""#));
+        assert!(contents.contains(r#""duration_seconds":2.0"#));
+        assert!(contents.contains(r#""transferred_bytes":64.0"#));
         let _ = fs::remove_file(path);
     }
 

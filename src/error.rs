@@ -18,7 +18,7 @@ pub enum ErrorKind {
     Libiperf,
     /// Pushgateway configuration or delivery failed.
     PushGateway,
-    /// Writing CLI metrics output failed.
+    /// Writing metrics file output failed.
     MetricsFile,
     /// The background iperf worker failed before producing a normal result.
     Worker,
@@ -79,7 +79,7 @@ impl Error {
         Self::new(ErrorKind::Internal, message)
     }
 
-    #[cfg(feature = "pushgateway")]
+    #[cfg(any(feature = "pushgateway", feature = "serde"))]
     pub(crate) fn with_source(
         kind: ErrorKind,
         message: impl Into<String>,

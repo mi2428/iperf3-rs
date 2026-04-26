@@ -63,7 +63,7 @@ fn run() -> Result<()> {
         sinks.pushgateway(sink, app.push_interval);
     }
     if let Some(metrics_file) = app.metrics_file {
-        sinks.file(MetricsFileSink::new(
+        sinks.file(MetricsFileSink::with_prefix(
             metrics_file,
             app.metrics_format,
             app.metrics_prefix,

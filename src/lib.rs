@@ -57,22 +57,23 @@
 //! process is dedicated to that long-lived server. Use separate processes for
 //! parallel independent tests.
 
-#[cfg(feature = "pushgateway")]
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 mod args;
-#[cfg(feature = "pushgateway")]
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 mod cli;
 mod command;
 mod error;
-#[cfg(feature = "pushgateway")]
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 mod help;
 
 mod iperf;
 mod metrics;
-#[cfg(feature = "pushgateway")]
+#[cfg(feature = "serde")]
 mod metrics_file;
+mod prometheus;
 #[cfg(feature = "pushgateway")]
 mod pushgateway;
-#[cfg(feature = "pushgateway")]
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 mod version;
 
 pub use command::{IperfCommand, IperfResult, RunningIperf};
@@ -82,10 +83,13 @@ pub use metrics::{
     MetricEvent, Metrics, MetricsMode, MetricsStream, TransportProtocol, WindowGaugeStats,
     WindowMetrics, aggregate_window,
 };
+#[cfg(feature = "serde")]
+pub use metrics_file::{MetricsFileFormat, MetricsFileSink};
+pub use prometheus::PrometheusEncoder;
 #[cfg(feature = "pushgateway")]
 pub use pushgateway::{PushGateway, PushGatewayConfig};
 
-#[cfg(feature = "pushgateway")]
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[doc(hidden)]
 pub fn __private_cli_main() -> std::process::ExitCode {
     cli::main()

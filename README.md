@@ -284,6 +284,32 @@ Protocol-specific fields such as TCP RTT or UDP jitter are exposed as
 `Option<f64>`, so application code can distinguish an observed zero from a
 metric that libiperf did not report for that protocol or traffic direction.
 
+Applications that want to use their own delivery path can reuse the same
+encoding and file output as the CLI. `PrometheusEncoder` renders interval and
+window snapshots without requiring HTTP dependencies. With the `serde` feature,
+`MetricsFileSink` writes JSONL or Prometheus text files from `MetricEvent`,
+`Metrics`, or `WindowMetrics` values:
+
+```rust
+use iperf3_rs::{
+    MetricEvent, MetricsFileFormat, MetricsFileSink, PrometheusEncoder, Result,
+};
+
+fn write_metrics(event: &MetricEvent) -> Result<()> {
+    let encoder = PrometheusEncoder::new("nettest")?;
+    if let MetricEvent::Interval(metrics) = event {
+        let body = encoder.encode_interval(metrics);
+        println!("{body}");
+    }
+
+    let sink = MetricsFileSink::with_prefix("iperf3.prom", MetricsFileFormat::Prometheus, "nettest")?;
+    if let MetricEvent::Interval(metrics) = event {
+        sink.write_interval(metrics)?;
+    }
+    Ok(())
+}
+```
+
 Library code can also enable the same direct Pushgateway delivery used by the
 CLI without manually draining a metrics stream:
 
@@ -311,10 +337,13 @@ separate run shapes. If an application needs to both inspect live events and
 customize delivery, use `spawn_with_metrics()` and call `PushGateway::push()` or
 `PushGateway::push_window()` from application code.
 
-The `pushgateway` feature is enabled by default and provides the CLI,
-`PushGateway`, `PushGatewayConfig`, and HTTP delivery dependencies. Library-only
-consumers that only need `IperfCommand` and `MetricsStream` can disable default
-features:
+The default feature set enables both `pushgateway` and `serde`. The
+`pushgateway` feature provides `PushGateway`, `PushGatewayConfig`, and HTTP
+delivery dependencies without pulling in JSON serialization by itself. The
+`serde` feature derives serialization for metric types and provides
+`MetricsFileSink` JSONL output. `PrometheusEncoder` is always available.
+Library-only consumers that only need `IperfCommand` and `MetricsStream` can
+disable default features:
 
 ```toml
 iperf3-rs = { version = "1", default-features = false }
