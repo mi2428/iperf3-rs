@@ -243,9 +243,12 @@ mod verification {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     #[test]
     fn jsonl_format_appends_interval_events() {
@@ -347,8 +350,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "iperf3-rs-metrics-file-{}-{nonce}.{extension}",
+            "iperf3-rs-metrics-file-{}-{nonce}-{counter}.{extension}",
             std::process::id()
         ))
     }
