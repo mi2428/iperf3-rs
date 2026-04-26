@@ -8,6 +8,10 @@
 //! Pushgateway exporter.
 //! Protocol-specific metrics are optional, so callers can distinguish a real
 //! zero from values that libiperf did not report for a TCP, UDP, or SCTP run.
+//! Metrics callbacks emit one aggregate stream direction per libiperf reporting
+//! interval. In bidirectional mode the client-side aggregate is the sending
+//! direction and the server-side aggregate is the receiving direction; this
+//! crate does not currently emit both bidirectional halves from one process.
 //!
 //! This crate is useful when a Rust program needs to run iperf tests directly,
 //! for example from a bot, controller, or test harness, without spawning an

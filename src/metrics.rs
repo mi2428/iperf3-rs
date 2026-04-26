@@ -36,6 +36,11 @@ pub enum TransportProtocol {
 }
 
 /// Direction of the libiperf streams represented by a metrics sample.
+///
+/// Each sample aggregates one direction selected by the native callback. For a
+/// bidirectional run, the current callback reports the client-side sending
+/// aggregate and the server-side receiving aggregate, not both directions from
+/// the same process.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]

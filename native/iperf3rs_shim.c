@@ -77,6 +77,12 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
         return;
     }
 
+    /*
+     * Emit one aggregate direction per callback. In bidirectional mode this
+     * keeps the client-side metrics aligned with its sending streams and the
+     * server-side metrics aligned with its receiving streams. Emitting both
+     * halves would require a wider Rust callback and Prometheus/file schema.
+     */
     if (test->mode == BIDIRECTIONAL) {
         stream_must_be_sender = test->role == 'c';
     } else {

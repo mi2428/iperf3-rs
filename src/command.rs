@@ -276,6 +276,11 @@ impl IperfCommand {
     /// single reporter callback. Use [`IperfCommand::spawn_with_metrics`] plus
     /// [`PushGateway::push`] or [`PushGateway::push_window`] when application
     /// code needs both live inspection and custom push behavior.
+    ///
+    /// Delivery is best-effort: Pushgateway push/delete failures are logged to
+    /// stderr and do not make the iperf run fail. Applications that require
+    /// strict delivery should use [`IperfCommand::spawn_with_metrics`] and call
+    /// [`PushGateway::push`] or [`PushGateway::push_window`] themselves.
     #[cfg(feature = "pushgateway")]
     pub fn pushgateway(&mut self, config: PushGatewayConfig, mode: MetricsMode) -> &mut Self {
         self.pushgateway = Some(PushGatewayRun { config, mode });
@@ -290,6 +295,13 @@ impl IperfCommand {
     }
 
     /// Run the iperf test to completion while pushing metrics to Pushgateway.
+    ///
+    /// Pushgateway delivery uses the same best-effort policy as the CLI. This
+    /// method returns an error for setup or libiperf execution failures, but
+    /// transient push/delete failures are logged and do not change the result.
+    /// Use [`IperfCommand::spawn_with_metrics`] plus [`PushGateway::push`] or
+    /// [`PushGateway::push_window`] when delivery failures must be handled
+    /// strictly by application code.
     #[cfg(feature = "pushgateway")]
     pub fn run_with_pushgateway(
         &self,
@@ -302,6 +314,10 @@ impl IperfCommand {
     }
 
     /// Run iperf on a worker thread while pushing metrics to Pushgateway.
+    ///
+    /// Pushgateway delivery is best-effort for this convenience method; use
+    /// [`IperfCommand::spawn_with_metrics`] and call [`PushGateway`] directly
+    /// when the application must treat delivery errors as run failures.
     #[cfg(feature = "pushgateway")]
     pub fn spawn_with_pushgateway(
         &self,

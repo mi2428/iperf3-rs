@@ -110,6 +110,12 @@ freshness is more useful than replaying stale samples.
 Metrics are emitted once per libiperf reporting interval. Use normal iperf3
 interval controls such as `-i 1` when you want one-second pushes.
 
+Each metrics sample is an aggregate for one stream direction selected from the
+libiperf report. In bidirectional mode, iperf3-rs currently emits the
+client-side sending aggregate and the server-side receiving aggregate; it does
+not emit both bidirectional halves from one process. The `direction` field in
+JSONL and library metrics identifies the represented aggregate.
+
 When `--push.interval` is set, iperf3-rs buffers libiperf interval samples in
 the worker thread and pushes representative `*_window_*` gauges once per window.
 The final partial window is flushed when the iperf test exits. This is not a
@@ -300,6 +306,8 @@ SCTP runs are identified as `TransportProtocol::Sctp` when libiperf reports
 that protocol. Interval samples include `role`, `direction`, `stream_count`,
 and `timestamp_unix_seconds` context; window summaries carry the same role,
 direction, protocol, stream count, and newest-sample timestamp context.
+Bidirectional runs expose one aggregate direction per process: the client-side
+sample is `Sender`, and the server-side sample is `Receiver`.
 
 Applications that want to use their own delivery path can reuse the same
 encoding and file output as the CLI. `PrometheusEncoder` renders interval and
@@ -360,6 +368,10 @@ Direct Pushgateway delivery and `spawn_with_metrics()` are intentionally
 separate run shapes. If an application needs to both inspect live events and
 customize delivery, use `spawn_with_metrics()` and call `PushGateway::push()` or
 `PushGateway::push_window()` from application code.
+Direct Pushgateway delivery is best-effort, matching the CLI contract:
+push/delete failures are logged to stderr and do not make the iperf run fail.
+Applications that need strict delivery should consume `spawn_with_metrics()` and
+handle `PushGateway::push()` or `PushGateway::push_window()` results directly.
 
 The default feature set enables both `pushgateway` and `serde`. The
 `pushgateway` feature provides `PushGateway`, `PushGatewayConfig`, and HTTP
