@@ -269,10 +269,11 @@ summaries used by `--push.interval`. `PushGateway` and `PushGatewayConfig` are
 also exported for applications that want to push the collected metrics
 themselves.
 
-See [examples/bwcheck](examples/bwcheck/) for a small library
-crate application that receives `HOST:PORT` endpoints, runs fixed UDP iperf
-tests, consumes live interval metrics, and fails when bandwidth or loss
-thresholds are not met.
+See
+[examples/bwcheck](https://github.com/mi2428/iperf3-rs/tree/main/examples/bwcheck)
+for a small library crate application that receives `HOST:PORT` endpoints, runs
+fixed UDP iperf tests, consumes live interval metrics, and fails when bandwidth
+or loss thresholds are not met.
 
 The first public API keeps high-level `IperfCommand` runs serialized inside one
 process because libiperf still has process-global error, signal, and output
@@ -592,8 +593,10 @@ The final Rust binary links a static `libiperf.a` plus a small C shim from
 the bundled libiperf build, while Pushgateway HTTPS support comes from Rustls
 with webpki roots.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for local development commands,
-integration tests, Kani checks, release workflow details, and maintainer setup.
+See the repository's
+[CONTRIBUTING.md](https://github.com/mi2428/iperf3-rs/blob/main/CONTRIBUTING.md)
+for local development commands, integration tests, Kani checks, release workflow
+details, and maintainer setup.
 
 ## Current caveats
 
