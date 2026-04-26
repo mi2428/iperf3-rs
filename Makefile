@@ -14,6 +14,7 @@ INSTALL ?= install
 DOCKER  ?= docker
 COMPOSE ?= $(shell if $(DOCKER) compose version >/dev/null 2>&1; then printf '%s compose' '$(DOCKER)'; elif command -v docker-compose >/dev/null 2>&1; then command -v docker-compose; else printf '%s compose' '$(DOCKER)'; fi)
 MULTIPASS ?= multipass
+GIT_REMOTE ?= origin
 
 APP            := iperf3-rs
 BINDIR         := bin
@@ -252,6 +253,10 @@ clean: ## Remove local build artifacts
 
 ##@ Distribution
 
+.PHONY: release
+release: ## Tag, push, and publish the crate to crates.io. Requires TAG=vX.Y.Z
+	@TAG="$(TAG)" GIT_REMOTE="$(GIT_REMOTE)" CARGO="$(CARGO)" RUSTC="$(RUSTC)" RUSTDOC="$(RUSTDOC)" PATH="$(RUST_BINDIR):$(PATH)" bash scripts/release.sh
+
 .PHONY: dist
 dist: ## Build release binaries into dist/. Use OS=darwin,linux and ARCH=amd64,arm64
 	@rm -rf $(DISTDIR)
@@ -411,6 +416,8 @@ help: ## Show this help message
 			} \
 		}' $(MAKEFILE_LIST)
 	@printf "\n\033[1mVariables:\033[0m\n"
+	@printf "  \033[36mTAG\033[0m                    Release tag for \033[36mmake release\033[0m, for example \033[36mv1.0.0\033[0m\n"
+	@printf "  \033[36mGIT_REMOTE\033[0m             Release git remote, defaults to \033[36m%s\033[0m\n" "$(GIT_REMOTE)"
 	@printf "  \033[36mOS\033[0m                     Release OS list: \033[36mdarwin,linux\033[0m\n"
 	@printf "  \033[36mARCH\033[0m                   Release arch list: \033[36mamd64,arm64\033[0m\n"
 	@printf "  \033[36mEXAMPLES\033[0m               Example integration tests: \033[36mbwcheck,all\033[0m\n"
@@ -424,5 +431,6 @@ help: ## Show this help message
 	@printf "  \033[36m%-44s\033[0m # to build and install the host binary and completions\n" "make install COMPLETION=1"
 	@printf "  \033[36m%-44s\033[0m # to run a specific example integration test\n" "make integration EXAMPLES=bwcheck"
 	@printf "  \033[36m%-44s\033[0m # to run all release-blocking quality gates\n" "make check integration kani"
+	@printf "  \033[36m%-44s\033[0m # to publish crates.io and push the release tag\n" "make release TAG=v1.0.0"
 	@printf "  \033[36m%-44s\033[0m # to build release binaries and checksums\n" "make dist OS=darwin,linux ARCH=amd64,arm64"
 	@printf "  \033[36m%-44s\033[0m # to prepare a Linux VM for manual testing\n" "make multipass"
