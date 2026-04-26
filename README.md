@@ -499,24 +499,24 @@ Use `--metrics.file` for required artifacts that must affect the exit status.
     Requires --metrics.format prometheus.
 ```
 
-Every wrapper environment default uses the `IPERF3_RS_` namespace:
+Every wrapper environment default uses the `IPERF3_` namespace:
 
 ```text
-IPERF3_RS_PUSH_URL=URL
-IPERF3_RS_PUSH_JOB=JOB
-IPERF3_RS_PUSH_LABELS=KEY=VALUE,...
-IPERF3_RS_PUSH_TIMEOUT=DURATION
-IPERF3_RS_PUSH_RETRIES=N
-IPERF3_RS_PUSH_USER_AGENT=VALUE
-IPERF3_RS_METRICS_PREFIX=PREFIX
-IPERF3_RS_PUSH_INTERVAL=DURATION
-IPERF3_RS_PUSH_DELETE_ON_EXIT=BOOL
-IPERF3_RS_METRICS_FILE=PATH
-IPERF3_RS_METRICS_FORMAT=FORMAT
-IPERF3_RS_METRICS_LABELS=KEY=VALUE,...
+IPERF3_PUSH_URL=URL
+IPERF3_PUSH_JOB=JOB
+IPERF3_PUSH_LABELS=KEY=VALUE,...
+IPERF3_PUSH_TIMEOUT=DURATION
+IPERF3_PUSH_RETRIES=N
+IPERF3_PUSH_USER_AGENT=VALUE
+IPERF3_METRICS_PREFIX=PREFIX
+IPERF3_PUSH_INTERVAL=DURATION
+IPERF3_PUSH_DELETE_ON_EXIT=BOOL
+IPERF3_METRICS_FILE=PATH
+IPERF3_METRICS_FORMAT=FORMAT
+IPERF3_METRICS_LABELS=KEY=VALUE,...
 ```
 
-CLI values override environment defaults. `IPERF3_RS_PUSH_LABELS` and `IPERF3_RS_METRICS_LABELS`
+CLI values override environment defaults. `IPERF3_PUSH_LABELS` and `IPERF3_METRICS_LABELS`
 are applied before their matching CLI label values. Duplicate label names are
 rejected within each label set.
 Unprefixed names such as `PUSH_URL` or `METRICS_FILE` are intentionally not
@@ -625,7 +625,7 @@ that libiperf did not report are omitted from Prometheus output and represented
 as `null` in JSONL. TCP_INFO-derived fields depend on libiperf and
 operating-system support for TCP information.
 
-When `--push.interval` or `IPERF3_RS_PUSH_INTERVAL` is set, iperf3-rs emits window
+When `--push.interval` or `IPERF3_PUSH_INTERVAL` is set, iperf3-rs emits window
 summary gauges instead of the immediate interval metric names:
 
 ```text
@@ -776,7 +776,7 @@ host OpenSSL installation does not change whether `iperf3-rs` links libssl or
 libcrypto. Pushgateway HTTPS support comes from Rustls with webpki roots.
 Enable the `openssl` Cargo feature when you need upstream iperf authentication,
 or pass upstream configure options such as
-`IPERF3_RS_CONFIGURE_ARGS=--with-openssl=/opt/openssl`.
+`IPERF3_CONFIGURE_ARGS=--with-openssl=/opt/openssl`.
 
 Current caveats:
 

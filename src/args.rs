@@ -76,45 +76,45 @@ fn extract_app_options_with_env(
         ));
     }
 
-    let mut push_url = get_env("IPERF3_RS_PUSH_URL");
+    let mut push_url = get_env("IPERF3_PUSH_URL");
     let mut push_job =
-        get_env("IPERF3_RS_PUSH_JOB").unwrap_or_else(|| PushGatewayConfig::DEFAULT_JOB.to_owned());
-    let mut push_labels = get_env("IPERF3_RS_PUSH_LABELS")
-        .map(|raw| parse_env_labels("IPERF3_RS_PUSH_LABELS", &raw, true))
+        get_env("IPERF3_PUSH_JOB").unwrap_or_else(|| PushGatewayConfig::DEFAULT_JOB.to_owned());
+    let mut push_labels = get_env("IPERF3_PUSH_LABELS")
+        .map(|raw| parse_env_labels("IPERF3_PUSH_LABELS", &raw, true))
         .transpose()?
         .unwrap_or_default();
-    let mut push_timeout = get_env("IPERF3_RS_PUSH_TIMEOUT")
-        .map(|raw| parse_duration_option("IPERF3_RS_PUSH_TIMEOUT", &raw))
+    let mut push_timeout = get_env("IPERF3_PUSH_TIMEOUT")
+        .map(|raw| parse_duration_option("IPERF3_PUSH_TIMEOUT", &raw))
         .transpose()?
         .unwrap_or_else(PushGatewayConfig::default_timeout);
-    let mut push_retries = get_env("IPERF3_RS_PUSH_RETRIES")
-        .map(|raw| parse_retries("IPERF3_RS_PUSH_RETRIES", &raw))
+    let mut push_retries = get_env("IPERF3_PUSH_RETRIES")
+        .map(|raw| parse_retries("IPERF3_PUSH_RETRIES", &raw))
         .transpose()?
         .unwrap_or(PushGatewayConfig::DEFAULT_RETRIES);
-    let mut push_user_agent = get_env("IPERF3_RS_PUSH_USER_AGENT")
-        .map(|raw| parse_user_agent("IPERF3_RS_PUSH_USER_AGENT", &raw))
+    let mut push_user_agent = get_env("IPERF3_PUSH_USER_AGENT")
+        .map(|raw| parse_user_agent("IPERF3_PUSH_USER_AGENT", &raw))
         .transpose()?
         .unwrap_or_else(PushGatewayConfig::default_user_agent);
-    let mut metrics_prefix = get_env("IPERF3_RS_METRICS_PREFIX")
-        .map(|raw| parse_metric_prefix("IPERF3_RS_METRICS_PREFIX", &raw))
+    let mut metrics_prefix = get_env("IPERF3_METRICS_PREFIX")
+        .map(|raw| parse_metric_prefix("IPERF3_METRICS_PREFIX", &raw))
         .transpose()?
         .unwrap_or_else(|| PushGatewayConfig::DEFAULT_METRIC_PREFIX.to_owned());
-    let mut push_interval = get_env("IPERF3_RS_PUSH_INTERVAL")
-        .map(|raw| parse_duration_option("IPERF3_RS_PUSH_INTERVAL", &raw))
+    let mut push_interval = get_env("IPERF3_PUSH_INTERVAL")
+        .map(|raw| parse_duration_option("IPERF3_PUSH_INTERVAL", &raw))
         .transpose()?;
-    let mut push_delete_on_exit = get_env("IPERF3_RS_PUSH_DELETE_ON_EXIT")
-        .map(|raw| parse_bool_option("IPERF3_RS_PUSH_DELETE_ON_EXIT", &raw))
+    let mut push_delete_on_exit = get_env("IPERF3_PUSH_DELETE_ON_EXIT")
+        .map(|raw| parse_bool_option("IPERF3_PUSH_DELETE_ON_EXIT", &raw))
         .transpose()?
         .unwrap_or(false);
-    let mut metrics_file = get_env("IPERF3_RS_METRICS_FILE").map(PathBuf::from);
-    let raw_metrics_format = get_env("IPERF3_RS_METRICS_FORMAT");
+    let mut metrics_file = get_env("IPERF3_METRICS_FILE").map(PathBuf::from);
+    let raw_metrics_format = get_env("IPERF3_METRICS_FORMAT");
     let mut metrics_format = raw_metrics_format
         .as_deref()
-        .map(|raw| parse_metrics_format("IPERF3_RS_METRICS_FORMAT", raw))
+        .map(|raw| parse_metrics_format("IPERF3_METRICS_FORMAT", raw))
         .transpose()?
         .unwrap_or(MetricsFileFormat::Jsonl);
-    let mut metrics_labels = get_env("IPERF3_RS_METRICS_LABELS")
-        .map(|raw| parse_env_labels("IPERF3_RS_METRICS_LABELS", &raw, false))
+    let mut metrics_labels = get_env("IPERF3_METRICS_LABELS")
+        .map(|raw| parse_env_labels("IPERF3_METRICS_LABELS", &raw, false))
         .transpose()?
         .unwrap_or_default();
     let mut saw_push_job = false;
@@ -268,26 +268,26 @@ fn extract_app_options_with_env(
 
     let push_url = push_url.as_deref().map(parse_url).transpose()?;
     if push_url.is_none() && saw_push_job {
-        bail!("--push.job requires --push.url or IPERF3_RS_PUSH_URL");
+        bail!("--push.job requires --push.url or IPERF3_PUSH_URL");
     }
     if push_url.is_none() && saw_push_label {
-        bail!("--push.label requires --push.url or IPERF3_RS_PUSH_URL");
+        bail!("--push.label requires --push.url or IPERF3_PUSH_URL");
     }
     if push_url.is_none() && saw_push_setting {
-        bail!("push settings require --push.url or IPERF3_RS_PUSH_URL");
+        bail!("push settings require --push.url or IPERF3_PUSH_URL");
     }
     if metrics_file.is_none() && saw_metrics_setting {
-        bail!("metrics settings require --metrics.file or IPERF3_RS_METRICS_FILE");
+        bail!("metrics settings require --metrics.file or IPERF3_METRICS_FILE");
     }
     if metrics_file.is_none() && saw_metrics_label {
-        bail!("--metrics.label requires --metrics.file or IPERF3_RS_METRICS_FILE");
+        bail!("--metrics.label requires --metrics.file or IPERF3_METRICS_FILE");
     }
     if saw_metrics_label && metrics_format != MetricsFileFormat::Prometheus {
         bail!("--metrics.label requires --metrics.format prometheus");
     }
     if push_url.is_none() && metrics_file.is_none() && saw_metric_prefix {
         bail!(
-            "metric prefix requires --metrics.file, IPERF3_RS_METRICS_FILE, --push.url, or IPERF3_RS_PUSH_URL"
+            "metric prefix requires --metrics.file, IPERF3_METRICS_FILE, --push.url, or IPERF3_PUSH_URL"
         );
     }
     if push_url.is_some() && push_job.is_empty() {
@@ -713,9 +713,9 @@ mod tests {
         ];
 
         let (app, iperf) = extract_app_options_with_env(args, |key| match key {
-            "IPERF3_RS_PUSH_URL" => Some("http://env.example:9091".to_owned()),
-            "IPERF3_RS_PUSH_JOB" => Some("env-job".to_owned()),
-            "IPERF3_RS_PUSH_LABELS" => Some("test=env-test,scenario=env-scenario".to_owned()),
+            "IPERF3_PUSH_URL" => Some("http://env.example:9091".to_owned()),
+            "IPERF3_PUSH_JOB" => Some("env-job".to_owned()),
+            "IPERF3_PUSH_LABELS" => Some("test=env-test,scenario=env-scenario".to_owned()),
             _ => None,
         })
         .unwrap();
@@ -913,16 +913,16 @@ mod tests {
         let args = vec!["iperf3-rs".to_owned(), "-s".to_owned()];
 
         let (app, iperf) = extract_app_options_with_env(args, |key| match key {
-            "IPERF3_RS_PUSH_URL" => Some("localhost:9091".to_owned()),
-            "IPERF3_RS_PUSH_TIMEOUT" => Some("500ms".to_owned()),
-            "IPERF3_RS_PUSH_RETRIES" => Some("3".to_owned()),
-            "IPERF3_RS_PUSH_USER_AGENT" => Some("iperf3-rs/env".to_owned()),
-            "IPERF3_RS_METRICS_PREFIX" => Some("nettest".to_owned()),
-            "IPERF3_RS_PUSH_INTERVAL" => Some("2m".to_owned()),
-            "IPERF3_RS_PUSH_DELETE_ON_EXIT" => Some("yes".to_owned()),
-            "IPERF3_RS_METRICS_FILE" => Some("metrics.jsonl".to_owned()),
-            "IPERF3_RS_METRICS_FORMAT" => Some("prometheus".to_owned()),
-            "IPERF3_RS_METRICS_LABELS" => Some("site=ci,run=nightly".to_owned()),
+            "IPERF3_PUSH_URL" => Some("localhost:9091".to_owned()),
+            "IPERF3_PUSH_TIMEOUT" => Some("500ms".to_owned()),
+            "IPERF3_PUSH_RETRIES" => Some("3".to_owned()),
+            "IPERF3_PUSH_USER_AGENT" => Some("iperf3-rs/env".to_owned()),
+            "IPERF3_METRICS_PREFIX" => Some("nettest".to_owned()),
+            "IPERF3_PUSH_INTERVAL" => Some("2m".to_owned()),
+            "IPERF3_PUSH_DELETE_ON_EXIT" => Some("yes".to_owned()),
+            "IPERF3_METRICS_FILE" => Some("metrics.jsonl".to_owned()),
+            "IPERF3_METRICS_FORMAT" => Some("prometheus".to_owned()),
+            "IPERF3_METRICS_LABELS" => Some("site=ci,run=nightly".to_owned()),
             _ => None,
         })
         .unwrap();
@@ -960,7 +960,7 @@ mod tests {
             let err = extract_app_options_with_env(args, |_| None).unwrap_err();
             assert!(
                 err.to_string()
-                    .contains("push settings require --push.url or IPERF3_RS_PUSH_URL"),
+                    .contains("push settings require --push.url or IPERF3_PUSH_URL"),
                 "{option} should require Pushgateway to be enabled"
             );
         }
@@ -1225,13 +1225,13 @@ mod tests {
             let args = vec!["iperf3-rs".to_owned(), flag.to_owned()];
 
             let (app, _) = extract_app_options_with_env(args, |key| match key {
-                "IPERF3_RS_PUSH_LABELS" => Some("not-a-label".to_owned()),
-                "IPERF3_RS_PUSH_TIMEOUT" => Some("not-a-duration".to_owned()),
-                "IPERF3_RS_PUSH_RETRIES" => Some("not-a-number".to_owned()),
-                "IPERF3_RS_PUSH_INTERVAL" => Some("not-a-duration".to_owned()),
-                "IPERF3_RS_PUSH_DELETE_ON_EXIT" => Some("not-a-bool".to_owned()),
-                "IPERF3_RS_METRICS_FORMAT" => Some("not-a-format".to_owned()),
-                "IPERF3_RS_METRICS_LABELS" => Some("not-a-label".to_owned()),
+                "IPERF3_PUSH_LABELS" => Some("not-a-label".to_owned()),
+                "IPERF3_PUSH_TIMEOUT" => Some("not-a-duration".to_owned()),
+                "IPERF3_PUSH_RETRIES" => Some("not-a-number".to_owned()),
+                "IPERF3_PUSH_INTERVAL" => Some("not-a-duration".to_owned()),
+                "IPERF3_PUSH_DELETE_ON_EXIT" => Some("not-a-bool".to_owned()),
+                "IPERF3_METRICS_FORMAT" => Some("not-a-format".to_owned()),
+                "IPERF3_METRICS_LABELS" => Some("not-a-label".to_owned()),
                 _ => None,
             })
             .unwrap();

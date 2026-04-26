@@ -70,10 +70,10 @@ jobs:
             org.opencontainers.image.revision=${{ steps.meta.outputs.revision }}
             org.opencontainers.image.version=${{ steps.meta.outputs.version }}
           build-args: |
-            IPERF3_RS_BUILD_DATE=${{ steps.meta.outputs.build_date }}
-            IPERF3_RS_GIT_COMMIT=${{ steps.meta.outputs.git_commit }}
-            IPERF3_RS_GIT_COMMIT_DATE=${{ steps.meta.outputs.git_commit_date }}
-            IPERF3_RS_GIT_DESCRIBE=${{ steps.meta.outputs.git_describe }}
+            IPERF3_BUILD_DATE=${{ steps.meta.outputs.build_date }}
+            IPERF3_GIT_COMMIT=${{ steps.meta.outputs.git_commit }}
+            IPERF3_GIT_COMMIT_DATE=${{ steps.meta.outputs.git_commit_date }}
+            IPERF3_GIT_DESCRIBE=${{ steps.meta.outputs.git_describe }}
           cache-from: type=gha,scope=iperf3-rs-release-image-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=iperf3-rs-release-image-${{ matrix.arch }}
 

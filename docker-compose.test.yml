@@ -1,16 +1,16 @@
 name: iperf3-rs-test
 
 x-pushgateway-environment: &pushgateway-environment
-  PUSH_URL: http://pushgateway:9091
-  PUSH_JOB: integration
-  PUSH_LABELS: test=self
+  IPERF3_PUSH_URL: http://pushgateway:9091
+  IPERF3_PUSH_JOB: integration
+  IPERF3_PUSH_LABELS: test=self
 
 services:
   server-rs:
     image: iperf3-rs:test
     environment:
       <<: *pushgateway-environment
-      PUSH_LABELS: test=self,scenario=tcp-server
+      IPERF3_PUSH_LABELS: test=self,scenario=tcp-server
     command: ["iperf3-rs", "-s", "-i", "1"]
     depends_on:
       - pushgateway

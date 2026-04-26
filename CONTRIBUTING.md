@@ -170,15 +170,17 @@ but that are not ergonomic through the public libiperf headers alone, such as:
 - reading the current iperf error;
 - ignoring `SIGPIPE`.
 
-Release builds pass:
+The vendored libiperf build uses this configure option by default:
 
 ```text
-IPERF3_RS_CONFIGURE_ARGS=--without-openssl
+IPERF3_CONFIGURE_ARGS=--without-openssl
 ```
 
-This avoids a runtime OpenSSL dependency in the bundled libiperf build. The
-Pushgateway HTTP client uses Rustls with webpki roots, so HTTPS Pushgateway
-requests still work from the scratch release image.
+This avoids a runtime OpenSSL dependency in the bundled libiperf build. Override
+`IPERF3_CONFIGURE_ARGS` or enable the `openssl` Cargo feature when testing
+upstream authentication support. The Pushgateway HTTP client uses Rustls with
+webpki roots, so HTTPS Pushgateway requests still work from the scratch release
+image.
 
 ## Quality Gates
 

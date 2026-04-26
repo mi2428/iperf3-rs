@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const CONFIGURE_ARGS_ENV: &str = "IPERF3_RS_CONFIGURE_ARGS";
+const CONFIGURE_ARGS_ENV: &str = "IPERF3_CONFIGURE_ARGS";
 const OPENSSL_FEATURE_ENV: &str = "CARGO_FEATURE_OPENSSL";
 
 fn main() {
@@ -28,6 +28,7 @@ fn main() {
     // Keep Cargo's rebuild triggers focused on the files that define the FFI
     // contract and on the configure options that affect the native build.
     // Autotools itself handles the full C dependency graph inside `make`.
+    println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=native/iperf3rs_shim.c");
     println!("cargo:rerun-if-changed=native/iperf3rs_shim.h");
     println!("cargo:rerun-if-changed=iperf3/configure");
@@ -158,13 +159,13 @@ fn is_openssl_configure_arg(arg: &str) -> bool {
 
 fn emit_build_metadata(manifest_dir: &Path, host: &str, target: &str, profile: &str) {
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
-    println!("cargo:rerun-if-env-changed=IPERF3_RS_BUILD_DATE");
-    println!("cargo:rerun-if-env-changed=IPERF3_RS_GIT_DESCRIBE");
-    println!("cargo:rerun-if-env-changed=IPERF3_RS_GIT_COMMIT");
-    println!("cargo:rerun-if-env-changed=IPERF3_RS_GIT_COMMIT_DATE");
+    println!("cargo:rerun-if-env-changed=IPERF3_BUILD_DATE");
+    println!("cargo:rerun-if-env-changed=IPERF3_GIT_DESCRIBE");
+    println!("cargo:rerun-if-env-changed=IPERF3_GIT_COMMIT");
+    println!("cargo:rerun-if-env-changed=IPERF3_GIT_COMMIT_DATE");
     emit_git_rerun_instructions(manifest_dir);
 
-    let git_describe = read_nonempty_env("IPERF3_RS_GIT_DESCRIBE")
+    let git_describe = read_nonempty_env("IPERF3_GIT_DESCRIBE")
         .or_else(|| {
             git_output(
                 manifest_dir,
@@ -172,21 +173,21 @@ fn emit_build_metadata(manifest_dir: &Path, host: &str, target: &str, profile: &
             )
         })
         .unwrap_or_else(|| "unknown".to_owned());
-    let git_commit = read_nonempty_env("IPERF3_RS_GIT_COMMIT")
+    let git_commit = read_nonempty_env("IPERF3_GIT_COMMIT")
         .or_else(|| git_output(manifest_dir, ["rev-parse", "HEAD"]))
         .unwrap_or_else(|| "unknown".to_owned());
-    let git_commit_date = read_nonempty_env("IPERF3_RS_GIT_COMMIT_DATE")
+    let git_commit_date = read_nonempty_env("IPERF3_GIT_COMMIT_DATE")
         .or_else(|| git_output(manifest_dir, ["show", "-s", "--format=%cI", "HEAD"]))
         .unwrap_or_else(|| "unknown".to_owned());
-    let build_date = read_nonempty_env("IPERF3_RS_BUILD_DATE").unwrap_or_else(build_date);
+    let build_date = read_nonempty_env("IPERF3_BUILD_DATE").unwrap_or_else(build_date);
 
-    println!("cargo:rustc-env=IPERF3_RS_GIT_DESCRIBE={git_describe}");
-    println!("cargo:rustc-env=IPERF3_RS_GIT_COMMIT={git_commit}");
-    println!("cargo:rustc-env=IPERF3_RS_GIT_COMMIT_DATE={git_commit_date}");
-    println!("cargo:rustc-env=IPERF3_RS_BUILD_DATE={build_date}");
-    println!("cargo:rustc-env=IPERF3_RS_BUILD_HOST={host}");
-    println!("cargo:rustc-env=IPERF3_RS_BUILD_TARGET={target}");
-    println!("cargo:rustc-env=IPERF3_RS_BUILD_PROFILE={profile}");
+    println!("cargo:rustc-env=IPERF3_GIT_DESCRIBE={git_describe}");
+    println!("cargo:rustc-env=IPERF3_GIT_COMMIT={git_commit}");
+    println!("cargo:rustc-env=IPERF3_GIT_COMMIT_DATE={git_commit_date}");
+    println!("cargo:rustc-env=IPERF3_BUILD_DATE={build_date}");
+    println!("cargo:rustc-env=IPERF3_BUILD_HOST={host}");
+    println!("cargo:rustc-env=IPERF3_BUILD_TARGET={target}");
+    println!("cargo:rustc-env=IPERF3_BUILD_PROFILE={profile}");
 }
 
 fn emit_git_rerun_instructions(manifest_dir: &Path) {

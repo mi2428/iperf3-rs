@@ -86,62 +86,62 @@ pub fn render_wrapper_help() -> String {
         &mut help,
         &[
             HelpRow {
-                value: "IPERF3_RS_PUSH_URL=URL",
+                value: "IPERF3_PUSH_URL=URL",
                 description: "default value for --push.url",
                 continuation: &[],
             },
             HelpRow {
-                value: "IPERF3_RS_PUSH_JOB=JOB",
+                value: "IPERF3_PUSH_JOB=JOB",
                 description: "default value for --push.job",
                 continuation: &[],
             },
             HelpRow {
-                value: "IPERF3_RS_PUSH_LABELS=KEY=VALUE,...",
+                value: "IPERF3_PUSH_LABELS=KEY=VALUE,...",
                 description: "default labels added before --push.label values",
                 continuation: &[],
             },
             HelpRow {
-                value: "IPERF3_RS_PUSH_TIMEOUT=DURATION",
+                value: "IPERF3_PUSH_TIMEOUT=DURATION",
                 description: "default value for --push.timeout",
                 continuation: &[],
             },
             HelpRow {
-                value: "IPERF3_RS_PUSH_RETRIES=N",
+                value: "IPERF3_PUSH_RETRIES=N",
                 description: "default value for --push.retries",
                 continuation: &[],
             },
             HelpRow {
-                value: "IPERF3_RS_PUSH_USER_AGENT=VALUE",
+                value: "IPERF3_PUSH_USER_AGENT=VALUE",
                 description: "default value for --push.user-agent",
                 continuation: &[],
             },
             HelpRow {
-                value: "IPERF3_RS_METRICS_PREFIX=P",
+                value: "IPERF3_METRICS_PREFIX=P",
                 description: "default value for --metrics.prefix",
                 continuation: &[],
             },
             HelpRow {
-                value: "IPERF3_RS_PUSH_INTERVAL=DURATION",
+                value: "IPERF3_PUSH_INTERVAL=DURATION",
                 description: "default value for --push.interval",
                 continuation: &[],
             },
             HelpRow {
-                value: "IPERF3_RS_PUSH_DELETE_ON_EXIT=BOOL",
+                value: "IPERF3_PUSH_DELETE_ON_EXIT=BOOL",
                 description: "default value for --push.delete-on-exit",
                 continuation: &[],
             },
             HelpRow {
-                value: "IPERF3_RS_METRICS_FILE=PATH",
+                value: "IPERF3_METRICS_FILE=PATH",
                 description: "default value for --metrics.file",
                 continuation: &[],
             },
             HelpRow {
-                value: "IPERF3_RS_METRICS_FORMAT=FORMAT",
+                value: "IPERF3_METRICS_FORMAT=FORMAT",
                 description: "default value for --metrics.format",
                 continuation: &[],
             },
             HelpRow {
-                value: "IPERF3_RS_METRICS_LABELS=KEY=VALUE,...",
+                value: "IPERF3_METRICS_LABELS=KEY=VALUE,...",
                 description: "default labels for Prometheus file output",
                 continuation: &[],
             },
@@ -205,13 +205,13 @@ mod tests {
         assert!(help.contains("--metrics.file PATH"));
         assert!(help.contains("--metrics.format FORMAT"));
         assert!(help.contains("--metrics.label KEY=VALUE"));
-        assert!(help.contains("IPERF3_RS_PUSH_LABELS=KEY=VALUE,..."));
-        assert!(help.contains("IPERF3_RS_METRICS_PREFIX=P"));
-        assert!(help.contains("IPERF3_RS_PUSH_INTERVAL=DURATION"));
-        assert!(help.contains("IPERF3_RS_PUSH_DELETE_ON_EXIT=BOOL"));
-        assert!(help.contains("IPERF3_RS_METRICS_FILE=PATH"));
-        assert!(help.contains("IPERF3_RS_METRICS_FORMAT=FORMAT"));
-        assert!(help.contains("IPERF3_RS_METRICS_LABELS=KEY=VALUE,..."));
+        assert!(help.contains("IPERF3_PUSH_LABELS=KEY=VALUE,..."));
+        assert!(help.contains("IPERF3_METRICS_PREFIX=P"));
+        assert!(help.contains("IPERF3_PUSH_INTERVAL=DURATION"));
+        assert!(help.contains("IPERF3_PUSH_DELETE_ON_EXIT=BOOL"));
+        assert!(help.contains("IPERF3_METRICS_FILE=PATH"));
+        assert!(help.contains("IPERF3_METRICS_FORMAT=FORMAT"));
+        assert!(help.contains("IPERF3_METRICS_LABELS=KEY=VALUE,..."));
     }
 
     #[test]

@@ -17,13 +17,13 @@ pub fn current(libiperf_version: &str) -> VersionInfo<'_> {
         package_name: env!("CARGO_PKG_NAME"),
         package_version: env!("CARGO_PKG_VERSION"),
         libiperf_version,
-        git_describe: env!("IPERF3_RS_GIT_DESCRIBE"),
-        git_commit: env!("IPERF3_RS_GIT_COMMIT"),
-        git_commit_date: env!("IPERF3_RS_GIT_COMMIT_DATE"),
-        build_date: env!("IPERF3_RS_BUILD_DATE"),
-        build_host: env!("IPERF3_RS_BUILD_HOST"),
-        build_target: env!("IPERF3_RS_BUILD_TARGET"),
-        build_profile: env!("IPERF3_RS_BUILD_PROFILE"),
+        git_describe: env!("IPERF3_GIT_DESCRIBE"),
+        git_commit: env!("IPERF3_GIT_COMMIT"),
+        git_commit_date: env!("IPERF3_GIT_COMMIT_DATE"),
+        build_date: env!("IPERF3_BUILD_DATE"),
+        build_host: env!("IPERF3_BUILD_HOST"),
+        build_target: env!("IPERF3_BUILD_TARGET"),
+        build_profile: env!("IPERF3_BUILD_PROFILE"),
     }
 }
 
