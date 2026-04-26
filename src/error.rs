@@ -18,6 +18,8 @@ pub enum ErrorKind {
     Libiperf,
     /// Pushgateway configuration or delivery failed.
     PushGateway,
+    /// Writing CLI metrics output failed.
+    MetricsFile,
     /// The background iperf worker failed before producing a normal result.
     Worker,
     /// An internal synchronization or setup invariant failed.

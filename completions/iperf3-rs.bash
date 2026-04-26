@@ -76,6 +76,8 @@ _iperf3_rs()
         --push.metric-prefix
         --push.interval
         --push.delete-on-exit
+        --metrics.file
+        --metrics.format
     "
 
     case "${cur}" in
@@ -105,6 +107,10 @@ _iperf3_rs()
             ;;
         --push.url=*)
             COMPREPLY=($(compgen -P "--push.url=" -W "http://127.0.0.1:9091 http://localhost:9091" -- "${cur#*=}"))
+            return
+            ;;
+        --metrics.format=*)
+            COMPREPLY=($(compgen -P "--metrics.format=" -W "jsonl prometheus" -- "${cur#*=}"))
             return
             ;;
     esac
@@ -150,6 +156,14 @@ _iperf3_rs()
             ;;
         --push.job)
             COMPREPLY=($(compgen -W "iperf3" -- "${cur}"))
+            return
+            ;;
+        --metrics.format)
+            COMPREPLY=($(compgen -W "jsonl prometheus" -- "${cur}"))
+            return
+            ;;
+        --metrics.file)
+            compopt -o default 2>/dev/null || true
             return
             ;;
         -p|--port|--rcv-timeout|--server-bitrate-limit|--idle-timeout|--server-max-duration|--time-skew-threshold|--connect-timeout|-b|--bitrate|--pacing-timer|-t|--time|-n|--bytes|-k|--blockcount|-l|--length|--cport|-P|--parallel|-w|--window|-M|--set-mss|-S|--tos|--dscp|-O|--omit|-T|--title|--extra-data|--username|--bind-dev|--push.user-agent)

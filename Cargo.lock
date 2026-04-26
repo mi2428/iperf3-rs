@@ -386,6 +386,7 @@ dependencies = [
  "cc",
  "crossbeam-channel",
  "reqwest",
+ "serde",
  "serde_json",
  "url",
 ]

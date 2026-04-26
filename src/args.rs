@@ -1,9 +1,11 @@
 use std::env;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
 use url::Url;
 
+use crate::metrics_file::MetricsFileFormat;
 use crate::pushgateway::{
     PushGatewayConfig, is_reserved_label_name, is_valid_label_name, validate_metric_prefix,
     validate_retries, validate_user_agent,
@@ -27,6 +29,8 @@ pub struct AppOptions {
     pub push_metric_prefix: String,
     pub push_interval: Option<Duration>,
     pub push_delete_on_exit: bool,
+    pub metrics_file: Option<PathBuf>,
+    pub metrics_format: MetricsFileFormat,
     pub show_help: bool,
     pub show_version: bool,
 }
@@ -60,6 +64,8 @@ fn extract_app_options_with_env(
                 push_metric_prefix: PushGatewayConfig::DEFAULT_METRIC_PREFIX.to_owned(),
                 push_interval: None,
                 push_delete_on_exit: false,
+                metrics_file: None,
+                metrics_format: MetricsFileFormat::Jsonl,
                 show_help,
                 show_version,
             },
@@ -97,9 +103,17 @@ fn extract_app_options_with_env(
         .map(|raw| parse_bool_option("PUSH_DELETE_ON_EXIT", &raw))
         .transpose()?
         .unwrap_or(false);
+    let mut metrics_file = get_env("METRICS_FILE").map(PathBuf::from);
+    let raw_metrics_format = get_env("METRICS_FORMAT");
+    let mut metrics_format = raw_metrics_format
+        .as_deref()
+        .map(|raw| parse_metrics_format("METRICS_FORMAT", raw))
+        .transpose()?
+        .unwrap_or(MetricsFileFormat::Jsonl);
     let mut saw_push_job = false;
     let mut saw_push_label = !push_labels.is_empty();
     let mut saw_push_setting = false;
+    let mut saw_metrics_setting = raw_metrics_format.is_some();
 
     let mut i = 0;
     while i < rest.len() {
@@ -144,6 +158,13 @@ fn extract_app_options_with_env(
                 "--push.delete-on-exit" => {
                     push_delete_on_exit = parse_bool_option("--push.delete-on-exit", value)?;
                     saw_push_setting = true;
+                }
+                "--metrics.file" => {
+                    metrics_file = Some(PathBuf::from(value));
+                }
+                "--metrics.format" => {
+                    metrics_format = parse_metrics_format("--metrics.format", value)?;
+                    saw_metrics_setting = true;
                 }
                 _ => pass_through.push(arg.clone()),
             }
@@ -203,6 +224,16 @@ fn extract_app_options_with_env(
                 saw_push_setting = true;
                 i += 1;
             }
+            "--metrics.file" => {
+                metrics_file = Some(PathBuf::from(take_value(&rest, &mut i, "--metrics.file")?));
+            }
+            "--metrics.format" => {
+                metrics_format = parse_metrics_format(
+                    "--metrics.format",
+                    &take_value(&rest, &mut i, "--metrics.format")?,
+                )?;
+                saw_metrics_setting = true;
+            }
             _ => {
                 pass_through.push(arg.clone());
                 i += 1;
@@ -220,6 +251,9 @@ fn extract_app_options_with_env(
     if push_url.is_none() && saw_push_setting {
         bail!("push settings require --push.url or PUSH_URL");
     }
+    if metrics_file.is_none() && saw_metrics_setting {
+        bail!("metrics settings require --metrics.file or METRICS_FILE");
+    }
     if push_url.is_some() && push_job.is_empty() {
         bail!("--push.job must not be empty when --push.url is set");
     }
@@ -236,6 +270,8 @@ fn extract_app_options_with_env(
             push_metric_prefix,
             push_interval,
             push_delete_on_exit,
+            metrics_file,
+            metrics_format,
             show_help: false,
             show_version: false,
         },
@@ -337,6 +373,11 @@ fn parse_bool_option(option: &str, raw: &str) -> Result<bool> {
         "0" | "false" | "no" | "off" => Ok(false),
         _ => bail!("{option} must be one of true, false, 1, 0, yes, no, on, or off"),
     }
+}
+
+fn parse_metrics_format(option: &str, raw: &str) -> Result<MetricsFileFormat> {
+    MetricsFileFormat::parse(raw)
+        .ok_or_else(|| anyhow!("{option} must be one of jsonl or prometheus"))
 }
 
 #[cfg(kani)]
@@ -527,6 +568,9 @@ mod tests {
             "nettest".to_owned(),
             "--push.interval=10s".to_owned(),
             "--push.delete-on-exit".to_owned(),
+            "--metrics.file".to_owned(),
+            "metrics.jsonl".to_owned(),
+            "--metrics.format=prometheus".to_owned(),
             "-t".to_owned(),
             "3".to_owned(),
         ];
@@ -548,6 +592,8 @@ mod tests {
         assert_eq!(app.push_metric_prefix, "nettest");
         assert_eq!(app.push_interval, Some(Duration::from_secs(10)));
         assert!(app.push_delete_on_exit);
+        assert_eq!(app.metrics_file, Some(PathBuf::from("metrics.jsonl")));
+        assert_eq!(app.metrics_format, MetricsFileFormat::Prometheus);
         assert_eq!(iperf, ["iperf3-rs", "-c", "127.0.0.1", "-t", "3"]);
     }
 
@@ -620,6 +666,8 @@ mod tests {
             "--push.user-agent",
             "--push.metric-prefix",
             "--push.interval",
+            "--metrics.file",
+            "--metrics.format",
         ] {
             let args = vec!["iperf3-rs".to_owned(), option.to_owned()];
 
@@ -709,6 +757,8 @@ mod tests {
             "PUSH_METRIC_PREFIX" => Some("nettest".to_owned()),
             "PUSH_INTERVAL" => Some("2m".to_owned()),
             "PUSH_DELETE_ON_EXIT" => Some("yes".to_owned()),
+            "METRICS_FILE" => Some("metrics.jsonl".to_owned()),
+            "METRICS_FORMAT" => Some("prometheus".to_owned()),
             _ => None,
         })
         .unwrap();
@@ -720,6 +770,8 @@ mod tests {
         assert_eq!(app.push_metric_prefix, "nettest");
         assert_eq!(app.push_interval, Some(Duration::from_secs(120)));
         assert!(app.push_delete_on_exit);
+        assert_eq!(app.metrics_file, Some(PathBuf::from("metrics.jsonl")));
+        assert_eq!(app.metrics_format, MetricsFileFormat::Prometheus);
         assert_eq!(iperf, ["iperf3-rs", "-s"]);
     }
 
@@ -742,6 +794,21 @@ mod tests {
                 "{option} should require Pushgateway to be enabled"
             );
         }
+    }
+
+    #[test]
+    fn rejects_metrics_settings_without_metrics_file() {
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "--metrics.format=prometheus".to_owned(),
+        ];
+
+        let err = extract_app_options_with_env(args, |_| None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("metrics settings require --metrics.file"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -813,6 +880,22 @@ mod tests {
     }
 
     #[test]
+    fn rejects_malformed_metrics_format() {
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "--metrics.file=metrics.out".to_owned(),
+            "--metrics.format=xml".to_owned(),
+        ];
+
+        let err = extract_app_options_with_env(args, |_| None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--metrics.format must be one of jsonl or prometheus"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
     fn parses_push_timeout_units() {
         assert_eq!(
             parse_duration_option("--push.timeout", "500ms").unwrap(),
@@ -841,6 +924,19 @@ mod tests {
             assert!(!parse_bool_option("--push.delete-on-exit", value).unwrap());
         }
         assert!(parse_bool_option("--push.delete-on-exit", "maybe").is_err());
+    }
+
+    #[test]
+    fn parses_metrics_formats() {
+        assert_eq!(
+            parse_metrics_format("--metrics.format", "jsonl").unwrap(),
+            MetricsFileFormat::Jsonl
+        );
+        assert_eq!(
+            parse_metrics_format("--metrics.format", "prometheus").unwrap(),
+            MetricsFileFormat::Prometheus
+        );
+        assert!(parse_metrics_format("--metrics.format", "xml").is_err());
     }
 
     #[test]
@@ -916,6 +1012,7 @@ mod tests {
                 "PUSH_METRIC_PREFIX" => Some("bad-prefix".to_owned()),
                 "PUSH_INTERVAL" => Some("not-a-duration".to_owned()),
                 "PUSH_DELETE_ON_EXIT" => Some("not-a-bool".to_owned()),
+                "METRICS_FORMAT" => Some("not-a-format".to_owned()),
                 _ => None,
             })
             .unwrap();

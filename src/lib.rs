@@ -69,6 +69,8 @@ mod help;
 mod iperf;
 mod metrics;
 #[cfg(feature = "pushgateway")]
+mod metrics_file;
+#[cfg(feature = "pushgateway")]
 mod pushgateway;
 #[cfg(feature = "pushgateway")]
 mod version;

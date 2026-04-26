@@ -470,7 +470,7 @@ fn retry_delay(attempt: u32) -> Duration {
         .min(PUSH_RETRY_MAX_DELAY)
 }
 
-fn render_prometheus(metrics: &Metrics, prefix: &str) -> String {
+pub(crate) fn render_prometheus(metrics: &Metrics, prefix: &str) -> String {
     let mut out = String::new();
     gauge(&mut out, &metric_name(prefix, "bytes"), metrics.bytes);
     gauge(
@@ -537,7 +537,7 @@ fn render_prometheus(metrics: &Metrics, prefix: &str) -> String {
     out
 }
 
-fn render_window_prometheus(metrics: &WindowMetrics, prefix: &str) -> String {
+pub(crate) fn render_window_prometheus(metrics: &WindowMetrics, prefix: &str) -> String {
     let mut out = String::new();
     gauge(
         &mut out,

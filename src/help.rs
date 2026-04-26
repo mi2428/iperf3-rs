@@ -63,6 +63,16 @@ pub fn render_wrapper_help() -> String {
                 description: "delete this Pushgateway grouping key after the run exits",
                 continuation: &[],
             },
+            HelpRow {
+                value: "--metrics.file PATH",
+                description: "write live interval metrics to a file",
+                continuation: &["does not change iperf stdout"],
+            },
+            HelpRow {
+                value: "--metrics.format FORMAT",
+                description: "metrics file format: jsonl or prometheus (default: jsonl)",
+                continuation: &[],
+            },
         ],
     );
     help.push('\n');
@@ -113,6 +123,16 @@ pub fn render_wrapper_help() -> String {
             HelpRow {
                 value: "PUSH_DELETE_ON_EXIT=BOOL",
                 description: "default value for --push.delete-on-exit",
+                continuation: &[],
+            },
+            HelpRow {
+                value: "METRICS_FILE=PATH",
+                description: "default value for --metrics.file",
+                continuation: &[],
+            },
+            HelpRow {
+                value: "METRICS_FORMAT=FORMAT",
+                description: "default value for --metrics.format",
                 continuation: &[],
             },
         ],
@@ -172,10 +192,14 @@ mod tests {
         assert!(help.contains("--push.metric-prefix P"));
         assert!(help.contains("--push.interval DURATION"));
         assert!(help.contains("--push.delete-on-exit"));
+        assert!(help.contains("--metrics.file PATH"));
+        assert!(help.contains("--metrics.format FORMAT"));
         assert!(help.contains("PUSH_LABELS=KEY=VALUE,..."));
         assert!(help.contains("PUSH_METRIC_PREFIX=P"));
         assert!(help.contains("PUSH_INTERVAL=DURATION"));
         assert!(help.contains("PUSH_DELETE_ON_EXIT=BOOL"));
+        assert!(help.contains("METRICS_FILE=PATH"));
+        assert!(help.contains("METRICS_FORMAT=FORMAT"));
     }
 
     #[test]

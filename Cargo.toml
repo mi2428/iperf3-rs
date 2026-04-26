@@ -43,6 +43,8 @@ crossbeam-channel = "0.5"
 # Use webpki roots so the scratch release image can validate public HTTPS
 # Pushgateway certificates without an OS CA bundle.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-webpki-roots"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 url = { version = "2", optional = true }
 
 [dev-dependencies]
@@ -50,7 +52,7 @@ serde_json = "1"
 
 [features]
 default = ["pushgateway"]
-pushgateway = ["dep:anyhow", "dep:reqwest", "dep:url"]
+pushgateway = ["dep:anyhow", "dep:reqwest", "dep:serde", "dep:serde_json", "dep:url"]
 
 [[bin]]
 name = "iperf3-rs"

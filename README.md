@@ -22,6 +22,7 @@ Pushgateway export.
 - [Use as a Rust Library](#use-as-a-rust-library)
 - [Export Metrics](#export-metrics)
   - [Pushgateway configuration](#pushgateway-configuration)
+  - [File output](#file-output)
   - [Metric names](#metric-names)
 - [Local Observability Stack](#local-observability-stack)
 - [Build Notes and Caveats](#build-notes-and-caveats)
@@ -409,6 +410,12 @@ Push options:
 
 --push.delete-on-exit
     Delete this Pushgateway grouping key after the iperf run exits.
+
+--metrics.file PATH
+    Write live interval metrics to a file without changing iperf stdout.
+
+--metrics.format FORMAT
+    Metrics file format. Accepts jsonl or prometheus. Defaults to jsonl.
 ```
 
 Every push option has an environment default:
@@ -423,6 +430,8 @@ PUSH_USER_AGENT=VALUE
 PUSH_METRIC_PREFIX=PREFIX
 PUSH_INTERVAL=DURATION
 PUSH_DELETE_ON_EXIT=BOOL
+METRICS_FILE=PATH
+METRICS_FORMAT=FORMAT
 ```
 
 CLI values override environment defaults. `PUSH_LABELS` are applied before
@@ -446,6 +455,36 @@ User labels may use any Prometheus-style label name:
 
 The reserved label name is `job`. Label values must be non-empty. Path segments
 are percent-encoded, so values can contain characters such as `/` or spaces.
+
+### File output
+
+Use `--metrics.file` when you want live metrics without a Pushgateway:
+
+```sh
+iperf3-rs \
+  -c 127.0.0.1 \
+  -t 10 \
+  -i 1 \
+  --metrics.file iperf3-metrics.jsonl
+```
+
+The default `jsonl` format writes one JSON object per libiperf interval. The
+`prometheus` format writes the latest interval as Prometheus text exposition and
+replaces the file on each interval, which is useful for textfile collectors or
+for keeping the final interval snapshot as a CI artifact:
+
+```sh
+iperf3-rs \
+  -c 127.0.0.1 \
+  -t 10 \
+  -i 1 \
+  --metrics.file iperf3.prom \
+  --metrics.format prometheus
+```
+
+File output can be used by itself or together with Pushgateway export. It never
+changes stdout, so normal human output and `-J` JSON behavior remain owned by
+upstream libiperf.
 
 ### Metric names
 

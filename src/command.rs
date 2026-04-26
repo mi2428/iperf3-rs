@@ -478,20 +478,19 @@ fn setup_run(command: IperfCommand) -> Result<RunSetup> {
     validate_server_lifecycle(&command, &test, role)?;
 
     #[cfg(feature = "pushgateway")]
-    let (callback, stream, worker, push_reporter) = match command.metrics_mode.callback_queue() {
-        Some(queue) => {
+    let (callback, stream, worker, push_reporter) =
+        if let Some(queue) = command.metrics_mode.callback_queue() {
             let (callback, rx) = CallbackMetricsReporter::attach(&mut test, queue)?;
             let (stream, worker) = metric_event_stream(rx, command.metrics_mode);
             (Some(callback), Some(stream), Some(worker), None)
-        }
-        None if let Some(pushgateway) = command.pushgateway => {
+        } else if let Some(pushgateway) = command.pushgateway {
             let sink = PushGateway::new(pushgateway.config)?;
             let reporter =
                 IntervalMetricsReporter::attach(&mut test, sink, pushgateway.mode.push_interval())?;
             (None, None, None, Some(reporter))
-        }
-        None => (None, None, None, None),
-    };
+        } else {
+            (None, None, None, None)
+        };
     #[cfg(not(feature = "pushgateway"))]
     let (callback, stream, worker) = match command.metrics_mode.callback_queue() {
         Some(queue) => {

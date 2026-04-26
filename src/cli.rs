@@ -8,7 +8,8 @@ use anyhow::{Context, Result};
 use crate::args::extract_app_options;
 use crate::help;
 use crate::iperf::IperfTest;
-use crate::metrics::IntervalMetricsReporter;
+use crate::metrics::{IntervalMetricsReporter, MetricsSinks};
+use crate::metrics_file::MetricsFileSink;
 use crate::pushgateway::{PushGateway, PushGatewayConfig};
 use crate::version;
 
@@ -47,7 +48,8 @@ fn run() -> Result<()> {
     let mut test = IperfTest::new().context("failed to create iperf test")?;
     test.parse_arguments(&iperf_args)?;
 
-    let reporter = if let Some(push_url) = app.push_url {
+    let mut sinks = MetricsSinks::new();
+    if let Some(push_url) = app.push_url {
         let sink = PushGateway::new(PushGatewayConfig {
             endpoint: push_url,
             job: app.push_job,
@@ -58,13 +60,20 @@ fn run() -> Result<()> {
             metric_prefix: app.push_metric_prefix,
             delete_on_finish: app.push_delete_on_exit,
         })?;
-        Some(IntervalMetricsReporter::attach(
-            &mut test,
-            sink,
-            app.push_interval,
-        )?)
-    } else {
+        sinks.pushgateway(sink, app.push_interval);
+    }
+    if let Some(metrics_file) = app.metrics_file {
+        sinks.file(MetricsFileSink::new(
+            metrics_file,
+            app.metrics_format,
+            PushGatewayConfig::DEFAULT_METRIC_PREFIX,
+        )?);
+    }
+
+    let reporter = if sinks.is_empty() {
         None
+    } else {
+        Some(IntervalMetricsReporter::attach_sinks(&mut test, sinks)?)
     };
 
     test.run()?;

@@ -76,4 +76,6 @@ _arguments -s -S \
   '--push.metric-prefix[Prometheus metric name prefix]:prefix:(iperf3)' \
   '--push.interval[aggregate interval samples before pushing window metrics]:duration:(500ms 1s 5s 10s 30s 1m)' \
   '--push.delete-on-exit[delete this Pushgateway grouping key after the run exits]' \
+  '--metrics.file[write live interval metrics to a file]:file:_files' \
+  '--metrics.format[metrics file format]:format:(jsonl prometheus)' \
   '*:argument:_default'

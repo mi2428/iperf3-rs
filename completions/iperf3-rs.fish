@@ -72,3 +72,5 @@ complete -c iperf3-rs -l push.user-agent -r -d 'HTTP User-Agent for Pushgateway 
 complete -c iperf3-rs -l push.metric-prefix -r -a 'iperf3' -d 'Prometheus metric name prefix'
 complete -c iperf3-rs -l push.interval -r -a '500ms 1s 5s 10s 30s 1m' -d 'Aggregate interval samples before pushing window metrics'
 complete -c iperf3-rs -l push.delete-on-exit -d 'Delete this Pushgateway grouping key after the run exits'
+complete -c iperf3-rs -l metrics.file -r -d 'Write live interval metrics to a file'
+complete -c iperf3-rs -l metrics.format -r -a 'jsonl prometheus' -d 'Metrics file format'

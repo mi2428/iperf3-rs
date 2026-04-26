@@ -1,10 +1,11 @@
 use std::{
-    env,
+    env, fs,
     io::{ErrorKind as IoErrorKind, Read, Write},
     net::TcpListener,
-    process::{Child, Command, Stdio},
+    path::Path,
+    process::{Child, Command, Output, Stdio},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use iperf3_rs::{
@@ -109,6 +110,27 @@ fn command_run_with_pushgateway_pushes_interval_metrics() {
     panic!("client should complete and push metrics: {last_error}");
 }
 
+#[test]
+fn cli_writes_jsonl_metrics_file_without_replacing_stdout() {
+    let port = free_loopback_port();
+    let _server = OneOffServer::start(port);
+    let metrics_file = temp_metrics_path("jsonl");
+
+    let output = run_cli_metrics_file_client(port, &metrics_file);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[ ID]"));
+    assert!(stdout.contains("sender"));
+
+    let metrics = fs::read_to_string(&metrics_file).unwrap();
+    assert!(
+        metrics
+            .lines()
+            .any(|line| line.contains(r#""event":"interval""#))
+    );
+    assert!(metrics.contains(r#""bandwidth_bits_per_second":"#));
+    let _ = fs::remove_file(metrics_file);
+}
+
 fn run_library_client(port: u16, mode: MetricsMode) -> (iperf3_rs::IperfResult, Vec<MetricEvent>) {
     let mut last_error = String::new();
     for _ in 0..20 {
@@ -157,6 +179,39 @@ fn try_run_library_direct_push_client(
 
     command.run_with_pushgateway(config, MetricsMode::Interval)?;
     Ok(())
+}
+
+fn run_cli_metrics_file_client(port: u16, metrics_file: &Path) -> Output {
+    let mut last_output = None;
+    for _ in 0..20 {
+        let output = Command::new(env!("CARGO_BIN_EXE_iperf3-rs"))
+            .args([
+                "-c",
+                "127.0.0.1",
+                "-p",
+                &port.to_string(),
+                "-t",
+                "1",
+                "-i",
+                "1",
+                "--metrics.file",
+                metrics_file.to_string_lossy().as_ref(),
+            ])
+            .output()
+            .expect("run iperf3-rs client with metrics file");
+        if output.status.success() {
+            return output;
+        }
+        last_output = Some(output);
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let output = last_output.expect("client should have run at least once");
+    panic!(
+        "client should complete\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn free_loopback_port() -> u16 {
@@ -209,6 +264,9 @@ impl OneShotHttpSink {
             loop {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        stream
+                            .set_nonblocking(false)
+                            .expect("set HTTP stream blocking");
                         let request = read_http_request(&mut stream);
                         stream
                             .write_all(
@@ -219,10 +277,11 @@ impl OneShotHttpSink {
                         idle_deadline = Some(Instant::now() + Duration::from_secs(1));
                     }
                     Err(err) if err.kind() == IoErrorKind::WouldBlock => {
-                        if let Some(idle_deadline) = idle_deadline {
-                            if Instant::now() >= idle_deadline {
+                        match idle_deadline {
+                            Some(deadline) if Instant::now() >= deadline => {
                                 return first_request.expect("HTTP sink received a request");
                             }
+                            _ => {}
                         }
                         assert!(Instant::now() < deadline, "timed out waiting for HTTP push");
                         thread::sleep(Duration::from_millis(20));
@@ -277,4 +336,15 @@ fn content_length(headers: &[u8]) -> Option<usize> {
             .then(|| value.trim().parse().ok())
             .flatten()
     })
+}
+
+fn temp_metrics_path(extension: &str) -> std::path::PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    env::temp_dir().join(format!(
+        "iperf3-rs-cli-metrics-{}-{nonce}.{extension}",
+        std::process::id()
+    ))
 }
