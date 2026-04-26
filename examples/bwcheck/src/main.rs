@@ -256,8 +256,8 @@ fn summarize_samples(samples: &[Metrics]) -> Result<MetricsSummary> {
     for sample in samples.iter().filter(|sample| sample.omitted == 0.0) {
         bytes += finite_nonnegative(sample.bytes);
         seconds += finite_nonnegative(sample.interval_duration_seconds);
-        packets += finite_nonnegative(sample.udp_packets);
-        lost_packets += finite_nonnegative(sample.udp_lost_packets);
+        packets += finite_nonnegative(sample.udp_packets.unwrap_or(0.0));
+        lost_packets += finite_nonnegative(sample.udp_lost_packets.unwrap_or(0.0));
     }
 
     if seconds == 0.0 {

@@ -36,6 +36,18 @@ mod ffi {
         c_double,
         c_double,
         c_double,
+        c_int,
+        c_int,
+        c_int,
+        c_int,
+        c_int,
+        c_int,
+        c_int,
+        c_int,
+        c_int,
+        c_int,
+        c_int,
+        c_int,
     );
 
     unsafe extern "C" {

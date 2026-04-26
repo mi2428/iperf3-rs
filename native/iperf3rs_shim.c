@@ -50,10 +50,24 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
     double udp_out_of_order_packets = 0.0;
     double omitted = 0.0;
     double interval_duration = 0.0;
+    int protocol = 0;
     int matched_streams = 0;
     int tcp_rtt_count = 0;
     int tcp_rttvar_count = 0;
+    int tcp_snd_cwnd_count = 0;
+    int tcp_snd_wnd_count = 0;
     int tcp_pmtu_count = 0;
+    int tcp_retransmits_available = 0;
+    int tcp_rtt_seconds_available = 0;
+    int tcp_rttvar_seconds_available = 0;
+    int tcp_snd_cwnd_bytes_available = 0;
+    int tcp_snd_wnd_bytes_available = 0;
+    int tcp_pmtu_bytes_available = 0;
+    int tcp_reorder_events_available = 0;
+    int udp_packets_available = 0;
+    int udp_lost_packets_available = 0;
+    int udp_jitter_seconds_available = 0;
+    int udp_out_of_order_packets_available = 0;
     int interval_ok = 0;
     int stream_must_be_sender;
 
@@ -65,6 +79,12 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
         stream_must_be_sender = test->role == 'c';
     } else {
         stream_must_be_sender = test->mode * test->mode;
+    }
+
+    if (test->protocol->id == Ptcp) {
+        protocol = 1;
+    } else if (test->protocol->id == Pudp) {
+        protocol = 2;
     }
 
     SLIST_FOREACH(stream, &test->streams, streams) {
@@ -89,15 +109,21 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
         if (test->protocol->id == Ptcp) {
             if (test->sender_has_retransmits == 1 && stream_must_be_sender) {
                 /* TCP_INFO values are only meaningful on the sending stream. */
+                tcp_retransmits_available = 1;
+                tcp_reorder_events_available = 1;
                 tcp_retransmits += (double)interval->interval_retrans;
                 tcp_rtt_count +=
                     iperf3rs_add_nonnegative(&tcp_rtt_seconds, interval->rtt);
                 tcp_rttvar_count +=
                     iperf3rs_add_nonnegative(&tcp_rttvar_seconds, interval->rttvar);
-                tcp_snd_cwnd_bytes +=
-                    interval->snd_cwnd > 0 ? (double)interval->snd_cwnd : 0.0;
-                tcp_snd_wnd_bytes +=
-                    interval->snd_wnd > 0 ? (double)interval->snd_wnd : 0.0;
+                if (interval->snd_cwnd > 0) {
+                    tcp_snd_cwnd_bytes += (double)interval->snd_cwnd;
+                    tcp_snd_cwnd_count += 1;
+                }
+                if (interval->snd_wnd > 0) {
+                    tcp_snd_wnd_bytes += (double)interval->snd_wnd;
+                    tcp_snd_wnd_count += 1;
+                }
                 tcp_pmtu_count +=
                     iperf3rs_add_nonnegative(&tcp_pmtu_bytes, interval->pmtu);
                 tcp_reorder_events +=
@@ -105,10 +131,14 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
             }
         } else if (test->protocol->id == Pudp) {
             /* UDP has packet-level interval counters; TCP is reported as bytes. */
+            udp_packets_available = 1;
+            udp_lost_packets_available = 1;
+            udp_out_of_order_packets_available = 1;
             udp_packets += (double)interval->interval_packet_count;
             udp_lost_packets += (double)interval->interval_cnt_error;
             udp_out_of_order_packets += (double)interval->interval_outoforder_packets;
             if (!stream_must_be_sender) {
+                udp_jitter_seconds_available = 1;
                 udp_jitter_seconds += interval->jitter;
             }
         }
@@ -129,12 +159,23 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
         udp_jitter_seconds /= matched_streams;
     }
     if (tcp_rtt_count > 0) {
+        tcp_rtt_seconds_available = 1;
         tcp_rtt_seconds = tcp_rtt_seconds / tcp_rtt_count / 1000000.0;
     }
     if (tcp_rttvar_count > 0) {
+        tcp_rttvar_seconds_available = 1;
         tcp_rttvar_seconds = tcp_rttvar_seconds / tcp_rttvar_count / 1000000.0;
     }
+    if (tcp_snd_cwnd_count > 0) {
+        tcp_snd_cwnd_bytes_available = 1;
+        tcp_snd_cwnd_bytes /= tcp_snd_cwnd_count;
+    }
+    if (tcp_snd_wnd_count > 0) {
+        tcp_snd_wnd_bytes_available = 1;
+        tcp_snd_wnd_bytes /= tcp_snd_wnd_count;
+    }
     if (tcp_pmtu_count > 0) {
+        tcp_pmtu_bytes_available = 1;
         tcp_pmtu_bytes /= tcp_pmtu_count;
     }
 
@@ -154,7 +195,19 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
         udp_jitter_seconds,
         udp_out_of_order_packets,
         interval_duration,
-        omitted);
+        omitted,
+        protocol,
+        tcp_retransmits_available,
+        tcp_rtt_seconds_available,
+        tcp_rttvar_seconds_available,
+        tcp_snd_cwnd_bytes_available,
+        tcp_snd_wnd_bytes_available,
+        tcp_pmtu_bytes_available,
+        tcp_reorder_events_available,
+        udp_packets_available,
+        udp_lost_packets_available,
+        udp_jitter_seconds_available,
+        udp_out_of_order_packets_available);
 }
 
 static int

@@ -163,57 +163,57 @@ fn render_prometheus(metrics: &Metrics, prefix: &str) -> String {
         &metric_name(prefix, "bandwidth"),
         metrics.bandwidth_bits_per_second,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "tcp_retransmits"),
         metrics.tcp_retransmits,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "tcp_rtt_seconds"),
         metrics.tcp_rtt_seconds,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "tcp_rttvar_seconds"),
         metrics.tcp_rttvar_seconds,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "tcp_snd_cwnd_bytes"),
         metrics.tcp_snd_cwnd_bytes,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "tcp_snd_wnd_bytes"),
         metrics.tcp_snd_wnd_bytes,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "tcp_pmtu_bytes"),
         metrics.tcp_pmtu_bytes,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "tcp_reorder_events"),
         metrics.tcp_reorder_events,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "udp_packets"),
         metrics.udp_packets,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "udp_lost_packets"),
         metrics.udp_lost_packets,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "udp_jitter_seconds"),
         metrics.udp_jitter_seconds,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "udp_out_of_order_packets"),
         metrics.udp_out_of_order_packets,
@@ -283,27 +283,27 @@ fn render_window_prometheus(metrics: &WindowMetrics, prefix: &str) -> String {
         "seconds",
         metrics.udp_jitter_seconds,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "window_tcp_retransmits"),
         metrics.tcp_retransmits,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "window_tcp_reorder_events"),
         metrics.tcp_reorder_events,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "window_udp_packets"),
         metrics.udp_packets,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "window_udp_lost_packets"),
         metrics.udp_lost_packets,
     );
-    gauge(
+    gauge_option(
         &mut out,
         &metric_name(prefix, "window_udp_out_of_order_packets"),
         metrics.udp_out_of_order_packets,
@@ -321,6 +321,9 @@ fn metric_name(prefix: &str, suffix: &str) -> String {
 }
 
 fn gauge_stats(out: &mut String, prefix: &str, stem: &str, unit: &str, stats: WindowGaugeStats) {
+    if stats.samples == 0 {
+        return;
+    }
     gauge(
         out,
         &metric_name(prefix, &format!("{stem}_mean_{unit}")),
@@ -346,6 +349,12 @@ fn gauge(out: &mut String, name: &str, value: f64) {
     out.push(' ');
     out.push_str(&value.to_string());
     out.push('\n');
+}
+
+fn gauge_option(out: &mut String, name: &str, value: Option<f64>) {
+    if let Some(value) = value {
+        gauge(out, name, value);
+    }
 }
 
 fn encode_path_segment(raw: &str) -> String {
@@ -453,19 +462,20 @@ mod tests {
             &Metrics {
                 bytes: 1.0,
                 bandwidth_bits_per_second: 8.0,
-                tcp_retransmits: 5.0,
-                tcp_rtt_seconds: 0.006,
-                tcp_rttvar_seconds: 0.007,
-                tcp_snd_cwnd_bytes: 8.0,
-                tcp_snd_wnd_bytes: 9.0,
-                tcp_pmtu_bytes: 10.0,
-                tcp_reorder_events: 11.0,
-                udp_packets: 2.0,
-                udp_lost_packets: 3.0,
-                udp_jitter_seconds: 0.004,
-                udp_out_of_order_packets: 12.0,
+                tcp_retransmits: Some(5.0),
+                tcp_rtt_seconds: Some(0.006),
+                tcp_rttvar_seconds: Some(0.007),
+                tcp_snd_cwnd_bytes: Some(8.0),
+                tcp_snd_wnd_bytes: Some(9.0),
+                tcp_pmtu_bytes: Some(10.0),
+                tcp_reorder_events: Some(11.0),
+                udp_packets: Some(2.0),
+                udp_lost_packets: Some(3.0),
+                udp_jitter_seconds: Some(0.004),
+                udp_out_of_order_packets: Some(12.0),
                 interval_duration_seconds: 1.0,
                 omitted: 1.0,
+                ..Metrics::default()
             },
             "iperf3",
         );
@@ -505,9 +515,12 @@ mod tests {
     fn renders_all_expected_metric_names() {
         let rendered = render_prometheus(&Metrics::default(), "iperf3");
 
+        for name in ["iperf3_bytes", "iperf3_bandwidth", "iperf3_omitted"] {
+            assert!(rendered.contains(&format!("# TYPE {name} gauge\n")));
+            assert!(rendered.contains(&format!("{name} 0\n")));
+        }
+
         for name in [
-            "iperf3_bytes",
-            "iperf3_bandwidth",
             "iperf3_tcp_retransmits",
             "iperf3_tcp_rtt_seconds",
             "iperf3_tcp_rttvar_seconds",
@@ -519,10 +532,8 @@ mod tests {
             "iperf3_udp_lost_packets",
             "iperf3_udp_jitter_seconds",
             "iperf3_udp_out_of_order_packets",
-            "iperf3_omitted",
         ] {
-            assert!(rendered.contains(&format!("# TYPE {name} gauge\n")));
-            assert!(rendered.contains(&format!("{name} 0\n")));
+            assert!(!rendered.contains(&format!("# TYPE {name} gauge\n")));
         }
     }
 
@@ -533,18 +544,20 @@ mod tests {
                 duration_seconds: 10.0,
                 transferred_bytes: 1000.0,
                 bandwidth_bytes_per_second: WindowGaugeStats {
+                    samples: 2,
                     mean: 100.0,
                     min: 90.0,
                     max: 110.0,
                 },
                 tcp_rtt_seconds: WindowGaugeStats {
+                    samples: 2,
                     mean: 0.010,
                     min: 0.005,
                     max: 0.020,
                 },
-                tcp_retransmits: 3.0,
-                udp_packets: 4.0,
-                udp_lost_packets: 1.0,
+                tcp_retransmits: Some(3.0),
+                udp_packets: Some(4.0),
+                udp_lost_packets: Some(1.0),
                 omitted_intervals: 2.0,
                 ..WindowMetrics::default()
             },
@@ -572,6 +585,13 @@ mod tests {
         for name in [
             "iperf3_window_duration_seconds",
             "iperf3_window_transferred_bytes",
+            "iperf3_window_omitted_intervals",
+        ] {
+            assert!(rendered.contains(&format!("# TYPE {name} gauge\n")));
+            assert!(rendered.contains(&format!("{name} 0\n")));
+        }
+
+        for name in [
             "iperf3_window_bandwidth_mean_bytes_per_second",
             "iperf3_window_bandwidth_min_bytes_per_second",
             "iperf3_window_bandwidth_max_bytes_per_second",
@@ -598,10 +618,8 @@ mod tests {
             "iperf3_window_udp_packets",
             "iperf3_window_udp_lost_packets",
             "iperf3_window_udp_out_of_order_packets",
-            "iperf3_window_omitted_intervals",
         ] {
-            assert!(rendered.contains(&format!("# TYPE {name} gauge\n")));
-            assert!(rendered.contains(&format!("{name} 0\n")));
+            assert!(!rendered.contains(&format!("# TYPE {name} gauge\n")));
         }
     }
 

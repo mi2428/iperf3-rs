@@ -1,7 +1,7 @@
 //! Metric structures and streams produced from libiperf interval callbacks.
 
 use std::collections::HashMap;
-use std::os::raw::c_double;
+use std::os::raw::{c_double, c_int};
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -12,39 +12,68 @@ use crate::iperf::{IperfTest, RawIperfTest};
 use crate::pushgateway::PushGateway;
 use crate::{Error, Result};
 
+/// Transport protocol selected by libiperf for a metrics sample.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TransportProtocol {
+    /// The protocol was not reported or is not currently recognized.
+    #[default]
+    Unknown,
+    /// TCP mode.
+    Tcp,
+    /// UDP mode.
+    Udp,
+    /// Another upstream protocol id.
+    Other(i32),
+}
+
+impl TransportProtocol {
+    fn from_callback_value(value: c_int) -> Self {
+        match value {
+            1 => Self::Tcp,
+            2 => Self::Udp,
+            0 => Self::Unknown,
+            other => Self::Other(other),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 /// One libiperf interval sample.
 ///
-/// Fields are normalized to Prometheus-friendly units where practical. TCP
-/// fields are zero when libiperf or the operating system does not report them;
-/// UDP fields are zero for normal TCP tests.
+/// Fields are normalized to Prometheus-friendly units where practical.
+/// Protocol-specific fields use `Option<f64>` so callers can distinguish an
+/// observed zero from a value that libiperf or the operating system did not
+/// report for this interval.
 pub struct Metrics {
+    /// Transport protocol used by this interval.
+    pub protocol: TransportProtocol,
     /// Bytes transferred during the interval.
     pub bytes: f64,
     /// Interval throughput in bits per second.
     pub bandwidth_bits_per_second: f64,
     /// TCP retransmits reported for the interval.
-    pub tcp_retransmits: f64,
+    pub tcp_retransmits: Option<f64>,
     /// TCP smoothed RTT in seconds.
-    pub tcp_rtt_seconds: f64,
+    pub tcp_rtt_seconds: Option<f64>,
     /// TCP RTT variance in seconds.
-    pub tcp_rttvar_seconds: f64,
+    pub tcp_rttvar_seconds: Option<f64>,
     /// TCP sender congestion window in bytes.
-    pub tcp_snd_cwnd_bytes: f64,
+    pub tcp_snd_cwnd_bytes: Option<f64>,
     /// TCP sender window in bytes when available.
-    pub tcp_snd_wnd_bytes: f64,
+    pub tcp_snd_wnd_bytes: Option<f64>,
     /// TCP path MTU in bytes when available.
-    pub tcp_pmtu_bytes: f64,
+    pub tcp_pmtu_bytes: Option<f64>,
     /// TCP reordering events when available.
-    pub tcp_reorder_events: f64,
+    pub tcp_reorder_events: Option<f64>,
     /// UDP packet count reported for the interval.
-    pub udp_packets: f64,
+    pub udp_packets: Option<f64>,
     /// UDP packets inferred lost from sequence gaps.
-    pub udp_lost_packets: f64,
+    pub udp_lost_packets: Option<f64>,
     /// UDP receiver jitter in seconds.
-    pub udp_jitter_seconds: f64,
+    pub udp_jitter_seconds: Option<f64>,
     /// UDP out-of-order packets observed in the interval.
-    pub udp_out_of_order_packets: f64,
+    pub udp_out_of_order_packets: Option<f64>,
     /// Interval duration in seconds.
     pub interval_duration_seconds: f64,
     /// `1` for omitted warm-up intervals, otherwise `0`.
@@ -54,6 +83,8 @@ pub struct Metrics {
 /// Mean, minimum, and maximum values for a gauge-like metric in a window.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct WindowGaugeStats {
+    /// Number of observed samples represented by these statistics.
+    pub samples: usize,
     /// Arithmetic mean over samples in the window.
     pub mean: f64,
     /// Minimum observed value in the window.
@@ -87,15 +118,15 @@ pub struct WindowMetrics {
     /// UDP jitter statistics in seconds.
     pub udp_jitter_seconds: WindowGaugeStats,
     /// TCP retransmits accumulated across the window.
-    pub tcp_retransmits: f64,
+    pub tcp_retransmits: Option<f64>,
     /// TCP reordering events accumulated across the window.
-    pub tcp_reorder_events: f64,
+    pub tcp_reorder_events: Option<f64>,
     /// UDP packet count accumulated across the window.
-    pub udp_packets: f64,
+    pub udp_packets: Option<f64>,
     /// UDP lost packet count accumulated across the window.
-    pub udp_lost_packets: f64,
+    pub udp_lost_packets: Option<f64>,
     /// UDP out-of-order packet count accumulated across the window.
-    pub udp_out_of_order_packets: f64,
+    pub udp_out_of_order_packets: Option<f64>,
     /// Number of omitted libiperf intervals in the window.
     pub omitted_intervals: f64,
 }
@@ -443,6 +474,18 @@ unsafe extern "C" fn metrics_callback(
     udp_out_of_order_packets: c_double,
     interval_duration_seconds: c_double,
     omitted: c_double,
+    protocol: c_int,
+    tcp_retransmits_available: c_int,
+    tcp_rtt_seconds_available: c_int,
+    tcp_rttvar_seconds_available: c_int,
+    tcp_snd_cwnd_bytes_available: c_int,
+    tcp_snd_wnd_bytes_available: c_int,
+    tcp_pmtu_bytes_available: c_int,
+    tcp_reorder_events_available: c_int,
+    udp_packets_available: c_int,
+    udp_lost_packets_available: c_int,
+    udp_jitter_seconds_available: c_int,
+    udp_out_of_order_packets_available: c_int,
 ) {
     if test.is_null() {
         return;
@@ -458,23 +501,31 @@ unsafe extern "C" fn metrics_callback(
     enqueue_latest(
         target,
         Metrics {
+            protocol: TransportProtocol::from_callback_value(protocol),
             bytes,
             bandwidth_bits_per_second,
-            tcp_retransmits,
-            tcp_rtt_seconds,
-            tcp_rttvar_seconds,
-            tcp_snd_cwnd_bytes,
-            tcp_snd_wnd_bytes,
-            tcp_pmtu_bytes,
-            tcp_reorder_events,
-            udp_packets,
-            udp_lost_packets,
-            udp_jitter_seconds,
-            udp_out_of_order_packets,
+            tcp_retransmits: available(tcp_retransmits_available, tcp_retransmits),
+            tcp_rtt_seconds: available(tcp_rtt_seconds_available, tcp_rtt_seconds),
+            tcp_rttvar_seconds: available(tcp_rttvar_seconds_available, tcp_rttvar_seconds),
+            tcp_snd_cwnd_bytes: available(tcp_snd_cwnd_bytes_available, tcp_snd_cwnd_bytes),
+            tcp_snd_wnd_bytes: available(tcp_snd_wnd_bytes_available, tcp_snd_wnd_bytes),
+            tcp_pmtu_bytes: available(tcp_pmtu_bytes_available, tcp_pmtu_bytes),
+            tcp_reorder_events: available(tcp_reorder_events_available, tcp_reorder_events),
+            udp_packets: available(udp_packets_available, udp_packets),
+            udp_lost_packets: available(udp_lost_packets_available, udp_lost_packets),
+            udp_jitter_seconds: available(udp_jitter_seconds_available, udp_jitter_seconds),
+            udp_out_of_order_packets: available(
+                udp_out_of_order_packets_available,
+                udp_out_of_order_packets,
+            ),
             interval_duration_seconds,
             omitted,
         },
     );
+}
+
+fn available(flag: c_int, value: c_double) -> Option<f64> {
+    (flag != 0).then_some(value)
 }
 
 fn enqueue_latest(target: &CallbackTarget, metrics: Metrics) {
@@ -510,28 +561,28 @@ pub fn aggregate_window(samples: &[Metrics]) -> Option<WindowMetrics> {
 
     let mut duration_seconds = 0.0;
     let mut transferred_bytes = 0.0;
-    let mut tcp_retransmits = 0.0;
-    let mut tcp_reorder_events = 0.0;
-    let mut udp_packets = 0.0;
-    let mut udp_lost_packets = 0.0;
-    let mut udp_out_of_order_packets = 0.0;
+    let mut tcp_retransmits = OptionalCounter::default();
+    let mut tcp_reorder_events = OptionalCounter::default();
+    let mut udp_packets = OptionalCounter::default();
+    let mut udp_lost_packets = OptionalCounter::default();
+    let mut udp_out_of_order_packets = OptionalCounter::default();
     let mut omitted_intervals = 0.0;
 
     for metrics in samples {
         duration_seconds += finite_nonnegative(metrics.interval_duration_seconds);
         transferred_bytes += finite_nonnegative(metrics.bytes);
         bandwidth.observe(metrics.bandwidth_bits_per_second / 8.0);
-        tcp_rtt.observe(metrics.tcp_rtt_seconds);
-        tcp_rttvar.observe(metrics.tcp_rttvar_seconds);
-        tcp_snd_cwnd.observe(metrics.tcp_snd_cwnd_bytes);
-        tcp_snd_wnd.observe(metrics.tcp_snd_wnd_bytes);
-        tcp_pmtu.observe(metrics.tcp_pmtu_bytes);
-        udp_jitter.observe(metrics.udp_jitter_seconds);
-        tcp_retransmits += finite_nonnegative(metrics.tcp_retransmits);
-        tcp_reorder_events += finite_nonnegative(metrics.tcp_reorder_events);
-        udp_packets += finite_nonnegative(metrics.udp_packets);
-        udp_lost_packets += finite_nonnegative(metrics.udp_lost_packets);
-        udp_out_of_order_packets += finite_nonnegative(metrics.udp_out_of_order_packets);
+        tcp_rtt.observe_option(metrics.tcp_rtt_seconds);
+        tcp_rttvar.observe_option(metrics.tcp_rttvar_seconds);
+        tcp_snd_cwnd.observe_option(metrics.tcp_snd_cwnd_bytes);
+        tcp_snd_wnd.observe_option(metrics.tcp_snd_wnd_bytes);
+        tcp_pmtu.observe_option(metrics.tcp_pmtu_bytes);
+        udp_jitter.observe_option(metrics.udp_jitter_seconds);
+        tcp_retransmits.observe(metrics.tcp_retransmits);
+        tcp_reorder_events.observe(metrics.tcp_reorder_events);
+        udp_packets.observe(metrics.udp_packets);
+        udp_lost_packets.observe(metrics.udp_lost_packets);
+        udp_out_of_order_packets.observe(metrics.udp_out_of_order_packets);
         omitted_intervals += finite_nonnegative(metrics.omitted);
     }
 
@@ -551,11 +602,11 @@ pub fn aggregate_window(samples: &[Metrics]) -> Option<WindowMetrics> {
         tcp_snd_wnd_bytes: tcp_snd_wnd.finish(),
         tcp_pmtu_bytes: tcp_pmtu.finish(),
         udp_jitter_seconds: udp_jitter.finish(),
-        tcp_retransmits,
-        tcp_reorder_events,
-        udp_packets,
-        udp_lost_packets,
-        udp_out_of_order_packets,
+        tcp_retransmits: tcp_retransmits.finish(),
+        tcp_reorder_events: tcp_reorder_events.finish(),
+        udp_packets: udp_packets.finish(),
+        udp_lost_packets: udp_lost_packets.finish(),
+        udp_out_of_order_packets: udp_out_of_order_packets.finish(),
         omitted_intervals,
     })
 }
@@ -584,11 +635,18 @@ impl GaugeAccumulator {
         self.sum += value;
     }
 
+    fn observe_option(&mut self, value: Option<f64>) {
+        if let Some(value) = value {
+            self.observe(value);
+        }
+    }
+
     fn finish(&self) -> WindowGaugeStats {
         if self.count == 0 {
             return WindowGaugeStats::default();
         }
         WindowGaugeStats {
+            samples: self.count,
             mean: self.sum / self.count as f64,
             min: self.min,
             max: self.max,
@@ -601,6 +659,26 @@ impl GaugeAccumulator {
             stats.mean = mean;
         }
         stats
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct OptionalCounter {
+    observed: bool,
+    sum: f64,
+}
+
+impl OptionalCounter {
+    fn observe(&mut self, value: Option<f64>) {
+        let Some(value) = value else {
+            return;
+        };
+        self.observed = true;
+        self.sum += finite_nonnegative(value);
+    }
+
+    fn finish(&self) -> Option<f64> {
+        self.observed.then_some(self.sum)
     }
 }
 
@@ -642,11 +720,11 @@ mod verification {
     fn window_counters_are_nonnegative_for_bounded_inputs() {
         let sample = Metrics {
             bytes: f64::from(kani::any::<i16>()),
-            tcp_retransmits: f64::from(kani::any::<i16>()),
-            tcp_reorder_events: f64::from(kani::any::<i16>()),
-            udp_packets: f64::from(kani::any::<i16>()),
-            udp_lost_packets: f64::from(kani::any::<i16>()),
-            udp_out_of_order_packets: f64::from(kani::any::<i16>()),
+            tcp_retransmits: Some(f64::from(kani::any::<i16>())),
+            tcp_reorder_events: Some(f64::from(kani::any::<i16>())),
+            udp_packets: Some(f64::from(kani::any::<i16>())),
+            udp_lost_packets: Some(f64::from(kani::any::<i16>())),
+            udp_out_of_order_packets: Some(f64::from(kani::any::<i16>())),
             interval_duration_seconds: f64::from(kani::any::<i16>()),
             omitted: f64::from(kani::any::<i16>()),
             ..Metrics::default()
@@ -656,11 +734,11 @@ mod verification {
 
         assert!(window.duration_seconds >= 0.0);
         assert!(window.transferred_bytes >= 0.0);
-        assert!(window.tcp_retransmits >= 0.0);
-        assert!(window.tcp_reorder_events >= 0.0);
-        assert!(window.udp_packets >= 0.0);
-        assert!(window.udp_lost_packets >= 0.0);
-        assert!(window.udp_out_of_order_packets >= 0.0);
+        assert!(window.tcp_retransmits.unwrap_or(0.0) >= 0.0);
+        assert!(window.tcp_reorder_events.unwrap_or(0.0) >= 0.0);
+        assert!(window.udp_packets.unwrap_or(0.0) >= 0.0);
+        assert!(window.udp_lost_packets.unwrap_or(0.0) >= 0.0);
+        assert!(window.udp_out_of_order_packets.unwrap_or(0.0) >= 0.0);
         assert!(window.omitted_intervals >= 0.0);
     }
 
@@ -692,14 +770,14 @@ mod verification {
             Metrics {
                 bytes: f64::from(bytes_a),
                 bandwidth_bits_per_second: f64::from(bytes_a) * 8.0,
-                tcp_rtt_seconds: f64::from(rtt_a),
+                tcp_rtt_seconds: Some(f64::from(rtt_a)),
                 interval_duration_seconds: 1.0,
                 ..Metrics::default()
             },
             Metrics {
                 bytes: f64::from(bytes_b),
                 bandwidth_bits_per_second: f64::from(bytes_b) * 8.0,
-                tcp_rtt_seconds: f64::from(rtt_b),
+                tcp_rtt_seconds: Some(f64::from(rtt_b)),
                 interval_duration_seconds: 1.0,
                 ..Metrics::default()
             },
@@ -720,6 +798,7 @@ mod verification {
     }
 
     fn assert_ordered(stats: WindowGaugeStats) {
+        assert!(stats.samples > 0);
         assert!(stats.min <= stats.mean);
         assert!(stats.mean <= stats.max);
     }
@@ -816,20 +895,20 @@ mod tests {
             Metrics {
                 bytes: 100.0,
                 bandwidth_bits_per_second: 800.0,
-                tcp_retransmits: 1.0,
-                tcp_rtt_seconds: 0.010,
-                tcp_snd_cwnd_bytes: 1000.0,
-                udp_packets: 2.0,
+                tcp_retransmits: Some(1.0),
+                tcp_rtt_seconds: Some(0.010),
+                tcp_snd_cwnd_bytes: Some(1000.0),
+                udp_packets: Some(2.0),
                 interval_duration_seconds: 1.0,
                 ..Metrics::default()
             },
             Metrics {
                 bytes: 900.0,
                 bandwidth_bits_per_second: 2400.0,
-                tcp_retransmits: 2.0,
-                tcp_rtt_seconds: 0.030,
-                tcp_snd_cwnd_bytes: 3000.0,
-                udp_packets: 3.0,
+                tcp_retransmits: Some(2.0),
+                tcp_rtt_seconds: Some(0.030),
+                tcp_snd_cwnd_bytes: Some(3000.0),
+                udp_packets: Some(3.0),
                 interval_duration_seconds: 3.0,
                 omitted: 1.0,
                 ..Metrics::default()
@@ -842,6 +921,7 @@ mod tests {
         assert_eq!(
             window.bandwidth_bytes_per_second,
             WindowGaugeStats {
+                samples: 2,
                 mean: 250.0,
                 min: 100.0,
                 max: 300.0
@@ -850,6 +930,7 @@ mod tests {
         assert_eq!(
             window.tcp_rtt_seconds,
             WindowGaugeStats {
+                samples: 2,
                 mean: 0.020,
                 min: 0.010,
                 max: 0.030
@@ -858,13 +939,14 @@ mod tests {
         assert_eq!(
             window.tcp_snd_cwnd_bytes,
             WindowGaugeStats {
+                samples: 2,
                 mean: 2000.0,
                 min: 1000.0,
                 max: 3000.0
             }
         );
-        assert_eq!(window.tcp_retransmits, 3.0);
-        assert_eq!(window.udp_packets, 5.0);
+        assert_eq!(window.tcp_retransmits, Some(3.0));
+        assert_eq!(window.udp_packets, Some(5.0));
         assert_eq!(window.omitted_intervals, 1.0);
     }
 
@@ -888,6 +970,7 @@ mod tests {
         assert_eq!(
             window.bandwidth_bytes_per_second,
             WindowGaugeStats {
+                samples: 2,
                 mean: 200.0,
                 min: 100.0,
                 max: 300.0
@@ -901,14 +984,14 @@ mod tests {
             Metrics {
                 bytes: f64::NAN,
                 bandwidth_bits_per_second: f64::INFINITY,
-                tcp_retransmits: -1.0,
+                tcp_retransmits: Some(-1.0),
                 interval_duration_seconds: -1.0,
                 ..Metrics::default()
             },
             Metrics {
                 bytes: 8.0,
                 bandwidth_bits_per_second: 64.0,
-                tcp_retransmits: 2.0,
+                tcp_retransmits: Some(2.0),
                 interval_duration_seconds: 1.0,
                 ..Metrics::default()
             },
@@ -917,10 +1000,11 @@ mod tests {
 
         assert_eq!(window.duration_seconds, 1.0);
         assert_eq!(window.transferred_bytes, 8.0);
-        assert_eq!(window.tcp_retransmits, 2.0);
+        assert_eq!(window.tcp_retransmits, Some(2.0));
         assert_eq!(
             window.bandwidth_bytes_per_second,
             WindowGaugeStats {
+                samples: 1,
                 mean: 8.0,
                 min: 8.0,
                 max: 8.0

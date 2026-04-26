@@ -272,6 +272,9 @@ fn main() -> Result<()> {
 Use `MetricsMode::Window(duration)` to receive the same representative window
 summaries used by `--push.interval`. `PushGateway` and `PushGatewayConfig` are
 also exported for applications that want to push collected metrics themselves.
+Protocol-specific fields such as TCP RTT or UDP jitter are exposed as
+`Option<f64>`, so application code can distinguish an observed zero from a
+metric that libiperf did not report for that protocol or traffic direction.
 
 See
 [examples/bwcheck](https://github.com/mi2428/iperf3-rs/tree/main/examples/bwcheck)

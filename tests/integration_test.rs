@@ -95,16 +95,11 @@ fn compose_interop_and_pushgateway_metrics() {
         SERVER_SCENARIO,
         &["iperf3_bytes", "iperf3_bandwidth"],
     );
-    assert_metric_value_eq(&project, "iperf3_udp_packets", SERVER_SCENARIO, 0.0);
-    assert_metric_value_eq(&project, "iperf3_udp_lost_packets", SERVER_SCENARIO, 0.0);
-    assert_metric_value_eq(&project, "iperf3_udp_jitter_seconds", SERVER_SCENARIO, 0.0);
-    assert_metric_value_eq(&project, "iperf3_tcp_rtt_seconds", SERVER_SCENARIO, 0.0);
-    assert_metric_value_eq(
-        &project,
-        "iperf3_udp_out_of_order_packets",
-        SERVER_SCENARIO,
-        0.0,
-    );
+    assert_metric_absent(&project, "iperf3_udp_packets", SERVER_SCENARIO);
+    assert_metric_absent(&project, "iperf3_udp_lost_packets", SERVER_SCENARIO);
+    assert_metric_absent(&project, "iperf3_udp_jitter_seconds", SERVER_SCENARIO);
+    assert_metric_absent(&project, "iperf3_tcp_rtt_seconds", SERVER_SCENARIO);
+    assert_metric_absent(&project, "iperf3_udp_out_of_order_packets", SERVER_SCENARIO);
     assert_metric_value_eq(&project, "iperf3_omitted", SERVER_SCENARIO, 0.0);
     wait_for_service_log_contains(&project, "server-rs", "Server listening on");
     wait_for_service_log_contains(&project, "server-rs", "[ ID]");
@@ -171,15 +166,10 @@ fn compose_interop_and_pushgateway_metrics() {
             "iperf3_tcp_pmtu_bytes",
         ],
     );
-    assert_metric_value_eq(&project, "iperf3_udp_packets", CLIENT_SCENARIO, 0.0);
-    assert_metric_value_eq(&project, "iperf3_udp_lost_packets", CLIENT_SCENARIO, 0.0);
-    assert_metric_value_eq(&project, "iperf3_udp_jitter_seconds", CLIENT_SCENARIO, 0.0);
-    assert_metric_value_eq(
-        &project,
-        "iperf3_udp_out_of_order_packets",
-        CLIENT_SCENARIO,
-        0.0,
-    );
+    assert_metric_absent(&project, "iperf3_udp_packets", CLIENT_SCENARIO);
+    assert_metric_absent(&project, "iperf3_udp_lost_packets", CLIENT_SCENARIO);
+    assert_metric_absent(&project, "iperf3_udp_jitter_seconds", CLIENT_SCENARIO);
+    assert_metric_absent(&project, "iperf3_udp_out_of_order_packets", CLIENT_SCENARIO);
     assert_metric_value_eq(&project, "iperf3_omitted", CLIENT_SCENARIO, 0.0);
 
     // The same long-running server should keep its callback and Pushgateway

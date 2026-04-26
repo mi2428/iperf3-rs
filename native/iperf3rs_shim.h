@@ -19,7 +19,19 @@ typedef void (*iperf3rs_metrics_callback)(
     double udp_jitter_seconds,
     double udp_out_of_order_packets,
     double interval_duration_seconds,
-    double omitted);
+    double omitted,
+    int protocol,
+    int tcp_retransmits_available,
+    int tcp_rtt_seconds_available,
+    int tcp_rttvar_seconds_available,
+    int tcp_snd_cwnd_bytes_available,
+    int tcp_snd_wnd_bytes_available,
+    int tcp_pmtu_bytes_available,
+    int tcp_reorder_events_available,
+    int udp_packets_available,
+    int udp_lost_packets_available,
+    int udp_jitter_seconds_available,
+    int udp_out_of_order_packets_available);
 
 void iperf3rs_enable_interval_metrics(struct iperf_test *test, iperf3rs_metrics_callback callback);
 int iperf3rs_run_server_once(struct iperf_test *test);
