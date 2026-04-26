@@ -308,6 +308,10 @@ and `timestamp_unix_seconds` context; window summaries carry the same role,
 direction, protocol, stream count, and newest-sample timestamp context.
 Bidirectional runs expose one aggregate direction per process: the client-side
 sample is `Sender`, and the server-side sample is `Receiver`.
+Use `MetricsStream::recv()` for simple iterator-style loops. For automation that
+needs to distinguish "no sample yet" from "the run has ended",
+`try_recv()` and `recv_timeout()` return `MetricsRecvError::Empty`,
+`MetricsRecvError::Timeout`, or `MetricsRecvError::Closed`.
 
 Applications that want to use their own delivery path can reuse the same
 encoding and file output as the CLI. `PrometheusEncoder` renders interval and

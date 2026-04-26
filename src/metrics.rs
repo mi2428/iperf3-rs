@@ -1,6 +1,7 @@
 //! Metric structures and streams produced from libiperf interval callbacks.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::os::raw::{c_double, c_int};
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -8,7 +9,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(any(feature = "pushgateway", test))]
 use crossbeam_channel::bounded;
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError, unbounded};
+use crossbeam_channel::{
+    Receiver, RecvTimeoutError, Sender, TryRecvError, TrySendError, unbounded,
+};
 
 use crate::iperf::{IperfTest, RawIperfTest, Role};
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
@@ -257,6 +260,30 @@ pub enum MetricEvent {
     Window(WindowMetrics),
 }
 
+/// Reason a non-blocking or timed metrics receive did not return an event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MetricsRecvError {
+    /// No event was currently queued.
+    Empty,
+    /// No event arrived before the requested timeout elapsed.
+    Timeout,
+    /// The iperf run has ended and no more events can arrive.
+    Closed,
+}
+
+impl fmt::Display for MetricsRecvError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("no metrics event is currently queued"),
+            Self::Timeout => f.write_str("timed out waiting for metrics event"),
+            Self::Closed => f.write_str("metrics stream is closed"),
+        }
+    }
+}
+
+impl std::error::Error for MetricsRecvError {}
+
 /// Receiver for metric events emitted by a running iperf test.
 #[derive(Debug)]
 pub struct MetricsStream {
@@ -274,13 +301,24 @@ impl MetricsStream {
     }
 
     /// Wait for the next metric event up to `timeout`.
-    pub fn recv_timeout(&self, timeout: Duration) -> Option<MetricEvent> {
-        self.rx.recv_timeout(timeout).ok()
+    pub fn recv_timeout(
+        &self,
+        timeout: Duration,
+    ) -> std::result::Result<MetricEvent, MetricsRecvError> {
+        match self.rx.recv_timeout(timeout) {
+            Ok(event) => Ok(event),
+            Err(RecvTimeoutError::Timeout) => Err(MetricsRecvError::Timeout),
+            Err(RecvTimeoutError::Disconnected) => Err(MetricsRecvError::Closed),
+        }
     }
 
     /// Return the next metric event if one is already queued.
-    pub fn try_recv(&self) -> Option<MetricEvent> {
-        self.rx.try_recv().ok()
+    pub fn try_recv(&self) -> std::result::Result<MetricEvent, MetricsRecvError> {
+        match self.rx.try_recv() {
+            Ok(event) => Ok(event),
+            Err(TryRecvError::Empty) => Err(MetricsRecvError::Empty),
+            Err(TryRecvError::Disconnected) => Err(MetricsRecvError::Closed),
+        }
     }
 }
 
@@ -1240,6 +1278,48 @@ mod tests {
 
         assert_eq!(rx.try_recv().unwrap().transferred_bytes, 2.0);
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn metrics_stream_try_recv_reports_empty_and_closed() {
+        let (tx, rx) = unbounded::<MetricEvent>();
+        let stream = MetricsStream::new(rx);
+
+        assert_eq!(stream.try_recv(), Err(MetricsRecvError::Empty));
+
+        let event = MetricEvent::Interval(Metrics {
+            transferred_bytes: 42.0,
+            ..Metrics::default()
+        });
+        tx.send(event.clone()).unwrap();
+        assert_eq!(stream.try_recv(), Ok(event));
+
+        drop(tx);
+        assert_eq!(stream.try_recv(), Err(MetricsRecvError::Closed));
+    }
+
+    #[test]
+    fn metrics_stream_recv_timeout_reports_timeout_and_closed() {
+        let (tx, rx) = unbounded::<MetricEvent>();
+        let stream = MetricsStream::new(rx);
+
+        assert_eq!(
+            stream.recv_timeout(Duration::from_millis(1)),
+            Err(MetricsRecvError::Timeout)
+        );
+
+        let event = MetricEvent::Interval(Metrics {
+            transferred_bytes: 7.0,
+            ..Metrics::default()
+        });
+        tx.send(event.clone()).unwrap();
+        assert_eq!(stream.recv_timeout(Duration::from_secs(1)), Ok(event));
+
+        drop(tx);
+        assert_eq!(
+            stream.recv_timeout(Duration::from_secs(1)),
+            Err(MetricsRecvError::Closed)
+        );
     }
 
     #[test]
