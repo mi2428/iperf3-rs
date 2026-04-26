@@ -127,17 +127,6 @@ fn render_prometheus(metrics: &Metrics, prefix: &str) -> String {
         &metric_name(prefix, "bandwidth"),
         metrics.bandwidth_bits_per_second,
     );
-    gauge(&mut out, &metric_name(prefix, "packets"), metrics.packets);
-    gauge(
-        &mut out,
-        &metric_name(prefix, "error_packets"),
-        metrics.error_packets,
-    );
-    gauge(
-        &mut out,
-        &metric_name(prefix, "jitter"),
-        metrics.jitter_seconds,
-    );
     gauge(
         &mut out,
         &metric_name(prefix, "tcp_retransmits"),
@@ -172,6 +161,21 @@ fn render_prometheus(metrics: &Metrics, prefix: &str) -> String {
         &mut out,
         &metric_name(prefix, "tcp_reorder_events"),
         metrics.tcp_reorder_events,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "udp_packets"),
+        metrics.udp_packets,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "udp_lost_packets"),
+        metrics.udp_lost_packets,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "udp_jitter_seconds"),
+        metrics.udp_jitter_seconds,
     );
     gauge(
         &mut out,
@@ -301,9 +305,6 @@ mod tests {
             &Metrics {
                 bytes: 1.0,
                 bandwidth_bits_per_second: 8.0,
-                packets: 2.0,
-                error_packets: 3.0,
-                jitter_seconds: 0.004,
                 tcp_retransmits: 5.0,
                 tcp_rtt_seconds: 0.006,
                 tcp_rttvar_seconds: 0.007,
@@ -311,14 +312,19 @@ mod tests {
                 tcp_snd_wnd_bytes: 9.0,
                 tcp_pmtu_bytes: 10.0,
                 tcp_reorder_events: 11.0,
+                udp_packets: 2.0,
+                udp_lost_packets: 3.0,
+                udp_jitter_seconds: 0.004,
                 udp_out_of_order_packets: 12.0,
                 omitted: 1.0,
             },
             "iperf3",
         );
         assert!(rendered.contains("iperf3_bytes 1\n"));
-        assert!(rendered.contains("iperf3_jitter 0.004\n"));
         assert!(rendered.contains("iperf3_tcp_rtt_seconds 0.006\n"));
+        assert!(rendered.contains("iperf3_udp_packets 2\n"));
+        assert!(rendered.contains("iperf3_udp_lost_packets 3\n"));
+        assert!(rendered.contains("iperf3_udp_jitter_seconds 0.004\n"));
         assert!(rendered.contains("iperf3_udp_out_of_order_packets 12\n"));
         assert!(rendered.contains("iperf3_omitted 1\n"));
     }
@@ -353,9 +359,6 @@ mod tests {
         for name in [
             "iperf3_bytes",
             "iperf3_bandwidth",
-            "iperf3_packets",
-            "iperf3_error_packets",
-            "iperf3_jitter",
             "iperf3_tcp_retransmits",
             "iperf3_tcp_rtt_seconds",
             "iperf3_tcp_rttvar_seconds",
@@ -363,6 +366,9 @@ mod tests {
             "iperf3_tcp_snd_wnd_bytes",
             "iperf3_tcp_pmtu_bytes",
             "iperf3_tcp_reorder_events",
+            "iperf3_udp_packets",
+            "iperf3_udp_lost_packets",
+            "iperf3_udp_jitter_seconds",
             "iperf3_udp_out_of_order_packets",
             "iperf3_omitted",
         ] {

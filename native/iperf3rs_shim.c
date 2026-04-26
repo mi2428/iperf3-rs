@@ -37,9 +37,6 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
     struct iperf_interval_results *interval = NULL;
     double bytes = 0.0;
     double bandwidth_bits_per_second = 0.0;
-    double packets = 0.0;
-    double error_packets = 0.0;
-    double jitter_seconds = 0.0;
     double tcp_retransmits = 0.0;
     double tcp_rtt_seconds = 0.0;
     double tcp_rttvar_seconds = 0.0;
@@ -47,6 +44,9 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
     double tcp_snd_wnd_bytes = 0.0;
     double tcp_pmtu_bytes = 0.0;
     double tcp_reorder_events = 0.0;
+    double udp_packets = 0.0;
+    double udp_lost_packets = 0.0;
+    double udp_jitter_seconds = 0.0;
     double udp_out_of_order_packets = 0.0;
     double omitted = 0.0;
     double interval_duration = 0.0;
@@ -104,11 +104,12 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
                     interval->reorder > 0 ? (double)interval->reorder : 0.0;
             }
         } else if (test->protocol->id == Pudp) {
-            packets += (double)interval->interval_packet_count;
-            error_packets += (double)interval->interval_cnt_error;
+            /* UDP has packet-level interval counters; TCP is reported as bytes. */
+            udp_packets += (double)interval->interval_packet_count;
+            udp_lost_packets += (double)interval->interval_cnt_error;
             udp_out_of_order_packets += (double)interval->interval_outoforder_packets;
             if (!stream_must_be_sender) {
-                jitter_seconds += interval->jitter;
+                udp_jitter_seconds += interval->jitter;
             }
         }
         if (matched_streams == 0) {
@@ -125,17 +126,13 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
         bandwidth_bits_per_second = bytes * 8.0 / interval_duration;
     }
     if (test->protocol->id == Pudp && !stream_must_be_sender) {
-        jitter_seconds /= matched_streams;
+        udp_jitter_seconds /= matched_streams;
     }
     if (tcp_rtt_count > 0) {
         tcp_rtt_seconds = tcp_rtt_seconds / tcp_rtt_count / 1000000.0;
     }
     if (tcp_rttvar_count > 0) {
         tcp_rttvar_seconds = tcp_rttvar_seconds / tcp_rttvar_count / 1000000.0;
-    }
-    if (test->protocol->id == Ptcp && stream_must_be_sender) {
-        /* For TCP, expose RTT variation through the generic jitter gauge. */
-        jitter_seconds = tcp_rttvar_seconds;
     }
     if (tcp_pmtu_count > 0) {
         tcp_pmtu_bytes /= tcp_pmtu_count;
@@ -145,9 +142,6 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
         test,
         bytes,
         bandwidth_bits_per_second,
-        packets,
-        error_packets,
-        jitter_seconds,
         tcp_retransmits,
         tcp_rtt_seconds,
         tcp_rttvar_seconds,
@@ -155,6 +149,9 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
         tcp_snd_wnd_bytes,
         tcp_pmtu_bytes,
         tcp_reorder_events,
+        udp_packets,
+        udp_lost_packets,
+        udp_jitter_seconds,
         udp_out_of_order_packets,
         omitted);
 }

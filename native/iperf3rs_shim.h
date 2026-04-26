@@ -7,9 +7,6 @@ typedef void (*iperf3rs_metrics_callback)(
     struct iperf_test *,
     double bytes,
     double bits_per_second,
-    double packets,
-    double error_packets,
-    double jitter_seconds,
     double tcp_retransmits,
     double tcp_rtt_seconds,
     double tcp_rttvar_seconds,
@@ -17,6 +14,9 @@ typedef void (*iperf3rs_metrics_callback)(
     double tcp_snd_wnd_bytes,
     double tcp_pmtu_bytes,
     double tcp_reorder_events,
+    double udp_packets,
+    double udp_lost_packets,
+    double udp_jitter_seconds,
     double udp_out_of_order_packets,
     double omitted);
 
