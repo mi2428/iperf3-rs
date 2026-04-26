@@ -394,8 +394,19 @@ jobs:
     runs-on: "ubuntu-22.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+      RELEASE_PRERELEASE: ${{ fromJson(needs.plan.outputs.val).announcement_is_prerelease }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
           submodules: recursive
+      - name: Trigger GHCR publish
+        shell: bash
+        run: |
+          jq -n \
+            --arg event_type release-published \
+            --arg tag_name "${RELEASE_TAG}" \
+            --argjson prerelease "${RELEASE_PRERELEASE}" \
+            '{event_type: $event_type, client_payload: {tag_name: $tag_name, prerelease: $prerelease}}' \
+            | gh api "repos/${GITHUB_REPOSITORY}/dispatches" --method POST --input -

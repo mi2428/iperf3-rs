@@ -4,13 +4,27 @@ on:
   release:
     types:
       - published
+  repository_dispatch:
+    types:
+      - release-published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish
+        required: true
+        type: string
+      prerelease:
+        description: Publish without the latest tag
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: ghcr-${{ github.event.release.tag_name || github.ref_name }}
+  group: ghcr-${{ github.event.release.tag_name || github.event.client_payload.tag_name || inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -31,7 +45,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name || github.ref_name }}
+          ref: ${{ github.event.release.tag_name || github.event.client_payload.tag_name || inputs.tag || github.ref_name }}
           submodules: recursive
           fetch-depth: 0
 
@@ -43,8 +57,8 @@ jobs:
       - name: Compute image metadata
         id: meta
         env:
-          RELEASE_PRERELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease || contains(github.ref_name, '-') }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
+          RELEASE_PRERELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease || github.event_name == 'repository_dispatch' && github.event.client_payload.prerelease || github.event_name == 'workflow_dispatch' && inputs.prerelease || contains(github.event.release.tag_name || github.event.client_payload.tag_name || inputs.tag || github.ref_name, '-') }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.event.client_payload.tag_name || inputs.tag || github.ref_name }}
         run: .github/scripts/release_metadata.sh
 
       - name: Set up Docker Buildx
@@ -103,7 +117,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name || github.ref_name }}
+          ref: ${{ github.event.release.tag_name || github.event.client_payload.tag_name || inputs.tag || github.ref_name }}
           fetch-depth: 0
 
       - name: Prepare image name
@@ -114,8 +128,8 @@ jobs:
       - name: Compute image metadata
         id: meta
         env:
-          RELEASE_PRERELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease || contains(github.ref_name, '-') }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
+          RELEASE_PRERELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease || github.event_name == 'repository_dispatch' && github.event.client_payload.prerelease || github.event_name == 'workflow_dispatch' && inputs.prerelease || contains(github.event.release.tag_name || github.event.client_payload.tag_name || inputs.tag || github.ref_name, '-') }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.event.client_payload.tag_name || inputs.tag || github.ref_name }}
         run: .github/scripts/release_metadata.sh
 
       - name: Set up Docker Buildx
