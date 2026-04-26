@@ -207,6 +207,23 @@ impl IperfCommand {
         }
     }
 
+    /// Run iperf on a worker thread and return the live metric stream.
+    ///
+    /// This is a convenience wrapper around [`IperfCommand::metrics`],
+    /// [`IperfCommand::spawn`], and [`RunningIperf::take_metrics`] for callers
+    /// that know they want metrics for this run.
+    pub fn spawn_with_metrics(
+        &mut self,
+        mode: MetricsMode,
+    ) -> Result<(RunningIperf, MetricsStream)> {
+        self.metrics(mode);
+        let mut running = self.spawn()?;
+        let metrics = running
+            .take_metrics()
+            .ok_or_else(|| Error::internal("metrics stream was not created"))?;
+        Ok((running, metrics))
+    }
+
     fn argv(&self) -> Vec<String> {
         let mut argv = Vec::with_capacity(self.args.len() + 1);
         argv.push(self.program.clone());

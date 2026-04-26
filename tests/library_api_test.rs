@@ -98,27 +98,16 @@ fn try_run_library_client(
     port: u16,
     mode: MetricsMode,
 ) -> iperf3_rs::Result<(iperf3_rs::IperfResult, Vec<MetricEvent>)> {
-    let port = port.to_string();
     let logfile = env::temp_dir().join(format!("iperf3-rs-library-api-{port}.log"));
     let logfile = logfile.to_string_lossy();
-    let mut command = IperfCommand::new();
+    let mut command = IperfCommand::client("127.0.0.1");
     command
-        .args([
-            "-c",
-            "127.0.0.1",
-            "-p",
-            port.as_str(),
-            "-t",
-            "2",
-            "-i",
-            "1",
-            "--logfile",
-            logfile.as_ref(),
-        ])
-        .metrics(mode);
+        .port(port)
+        .duration(Duration::from_secs(2))
+        .report_interval(Duration::from_secs(1))
+        .args(["--logfile", logfile.as_ref()]);
 
-    let mut running = command.spawn()?;
-    let mut metrics = running.take_metrics().expect("metrics stream should exist");
+    let (running, mut metrics) = command.spawn_with_metrics(mode)?;
     let events = metrics.by_ref().collect::<Vec<_>>();
     let result = running.wait()?;
     Ok((result, events))
