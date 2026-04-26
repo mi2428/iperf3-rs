@@ -449,6 +449,10 @@ Wrapper metrics options:
     Retry failed Pushgateway requests. Defaults to 0. The maximum is 10.
     HTTP 429 and 5xx responses are retryable.
 
+Pushgateway push and delete requests are best-effort. Failures are reported on
+stderr, but they do not make the CLI fail when the iperf run itself succeeds.
+Use `--metrics.file` for required artifacts that must affect the exit status.
+
 --push.user-agent VALUE
     HTTP User-Agent for Pushgateway requests. Defaults to iperf3-rs/<version>.
 
@@ -465,7 +469,8 @@ Wrapper metrics options:
     iperf3-rs pushes immediate interval metrics.
 
 --push.delete-on-exit
-    Delete this Pushgateway grouping key after the iperf run exits.
+    Best-effort deletion of this Pushgateway grouping key after the iperf run
+    exits.
 
 --metrics.file PATH
     Write live interval metrics to a file without changing iperf stdout.

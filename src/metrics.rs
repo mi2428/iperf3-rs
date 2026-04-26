@@ -628,6 +628,9 @@ fn push_window_metrics(
 
 #[cfg(feature = "pushgateway")]
 fn push_interval_to_gateway(sinks: &MetricsSinks, metrics: &Metrics) {
+    // Pushgateway delivery is intentionally best-effort. File metrics are the
+    // required artifact path; transient Pushgateway failures should not change
+    // the iperf run's exit status.
     let result = sinks
         .pushgateway
         .as_ref()
@@ -667,6 +670,9 @@ fn write_metrics_file(_sinks: &MetricsSinks, _metrics: &Metrics) -> Result<()> {
 
 #[cfg(feature = "pushgateway")]
 fn delete_pushgateway_on_finish(sinks: &MetricsSinks) {
+    // Deleting a retained Pushgateway group has the same best-effort contract
+    // as pushing samples. Operators can rely on warnings without turning a
+    // successful bandwidth test into a failed process exit.
     let result = sinks
         .pushgateway
         .as_ref()
