@@ -14,6 +14,7 @@ const PUSH_TEST: &str = "self";
 const CLIENT_SCENARIO: &str = "tcp";
 const SERVER_SCENARIO: &str = "tcp-server";
 const LIVE_SCENARIO: &str = "tcp-live";
+const WINDOW_SCENARIO: &str = "tcp-window";
 const UDP_SCENARIO: &str = "udp";
 const REVERSE_SCENARIO: &str = "tcp-reverse";
 const BIDIR_SCENARIO: &str = "tcp-bidir";
@@ -52,6 +53,8 @@ const BIDIR_SCENARIO: &str = "tcp-bidir";
 // - a metrics-enabled iperf3-rs client without `-J` keeps normal
 //   human-readable stdout;
 // - client metrics appear in Pushgateway while a longer run is still active;
+// - `--push.interval` publishes aggregated `iperf3_window_*` metrics instead
+//   of the immediate interval metric families for that grouping key;
 // - the long-running iperf3-rs server continues pushing metrics after a later
 //   client connection;
 // - UDP, reverse TCP, and bidirectional TCP runs all complete and publish
@@ -220,6 +223,40 @@ fn compose_interop_and_pushgateway_metrics() {
         "live client exited before interval metrics were observed"
     );
     assert_child_success(&live_args, live_client);
+
+    // Window push check: `--push.interval` intentionally changes the exported
+    // metric family names. The Pushgateway should retain representative window
+    // summaries, and the same grouping key should not also receive immediate
+    // interval gauges that would make the metric semantics ambiguous.
+    let window_output = project.client_output(&[
+        "iperf3-rs",
+        "--push.label",
+        "scenario=tcp-window",
+        "--push.interval",
+        "2s",
+        "-c",
+        "server-rs",
+        "-t",
+        "3",
+        "-i",
+        "1",
+    ]);
+    assert_success(
+        &["iperf3-rs window metrics-enabled human stdout"],
+        &window_output,
+    );
+    assert_human_iperf_output(&window_output);
+    wait_for_pushgateway_metrics(
+        &project,
+        WINDOW_SCENARIO,
+        &[
+            "iperf3_window_duration_seconds",
+            "iperf3_window_transferred_bytes",
+            "iperf3_window_bandwidth_mean_bytes_per_second",
+            "iperf3_window_tcp_rtt_mean_seconds",
+        ],
+    );
+    assert_metric_absent(&project, "iperf3_bandwidth", WINDOW_SCENARIO);
 
     // UDP uses different interval fields from TCP. Requiring UDP-prefixed packet
     // metrics in addition to bytes and bandwidth ensures the sender-side UDP
@@ -846,6 +883,16 @@ fn assert_metric_value_eq(project: &ComposeProject, name: &str, scenario: &str, 
     assert_eq!(
         actual, expected,
         "unexpected metric {name} for {scenario}\nmetrics:\n{metrics}"
+    );
+}
+
+fn assert_metric_absent(project: &ComposeProject, name: &str, scenario: &str) {
+    let output = project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
+    assert_command_success("pushgateway metrics scrape", &output);
+    let metrics = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        metric_value(&metrics, name, scenario).is_none(),
+        "metric {name} should be absent for {scenario}\nmetrics:\n{metrics}"
     );
 }
 
