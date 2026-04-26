@@ -50,7 +50,9 @@ LINUX_amd64_PLATFORM := linux/amd64
 LINUX_amd64_SUFFIX   := linux-amd64
 LINUX_arm64_PLATFORM := linux/arm64
 LINUX_arm64_SUFFIX   := linux-arm64
-LINUX_BUILD_IMAGE    ?= rust:1.95-bookworm
+LINUX_BUILD_IMAGE    ?= rust:1.95-bullseye
+LINUX_SMOKE_IMAGE    ?= debian:bullseye-slim
+LINUX_CACHE_KEY      := $(shell printf '%s' '$(LINUX_BUILD_IMAGE)' | sed 's/[^A-Za-z0-9_.-]/-/g')
 DOCKER_UID           ?= $(shell id -u)
 DOCKER_GID           ?= $(shell id -g)
 HOST_OS              := $(shell uname -s)
@@ -184,7 +186,39 @@ dist: ## Build release binaries into dist/. Use OS=darwin,linux and ARCH=amd64,a
 			$(MAKE) _dist.$$os.$$arch || exit $$?; \
 		done; \
 	done; \
+	$(MAKE) dist-smoke; \
 	$(MAKE) checksums
+
+.PHONY: dist-smoke
+dist-smoke: ## Smoke-test Linux dist binaries in an old-glibc Debian container
+	@if ! ls "$(DISTDIR)"/$(APP)-linux-* >/dev/null 2>&1; then \
+		printf 'Skipping Linux dist smoke test; no Linux artifacts found\n'; \
+		exit 0; \
+	fi
+	@$(MAKE) --no-print-directory _docker-check
+	@for arch in $(LINUX_ARCHS); do \
+		case "$$arch" in \
+			amd64) binary="$(DISTDIR)/$(APP)-$(LINUX_amd64_SUFFIX)"; platform="$(LINUX_amd64_PLATFORM)" ;; \
+			arm64) binary="$(DISTDIR)/$(APP)-$(LINUX_arm64_SUFFIX)"; platform="$(LINUX_arm64_PLATFORM)" ;; \
+			*) echo "Unsupported Linux ARCH '$$arch'" >&2; exit 1 ;; \
+		esac; \
+		if [ ! -f "$$binary" ]; then \
+			continue; \
+		fi; \
+		printf 'Smoke-testing %s on %s in %s\n' "$$binary" "$$platform" "$(LINUX_SMOKE_IMAGE)"; \
+		$(DOCKER) run --rm \
+			--platform "$$platform" \
+			-v "$(CURDIR):/workspace:ro" \
+			-w /workspace \
+			$(LINUX_SMOKE_IMAGE) \
+			"/workspace/$$binary" -h >/dev/null; \
+		$(DOCKER) run --rm \
+			--platform "$$platform" \
+			-v "$(CURDIR):/workspace:ro" \
+			-w /workspace \
+			$(LINUX_SMOKE_IMAGE) \
+			"/workspace/$$binary" --version >/dev/null; \
+	done
 
 .PHONY: checksums
 checksums: ## Write SHA-256 checksums for dist artifacts
@@ -238,12 +272,12 @@ define LINUX_DIST_RULE
 .PHONY: _dist.linux.$(1)
 _dist.linux.$(1): _docker-check
 	@printf 'Building %s for %s via Docker\n' "$(APP)" "$$(LINUX_$(1)_PLATFORM)"
-	@mkdir -p $(DISTDIR) .cargo-linux/$(1) .home-linux/$(1)
+	@mkdir -p $(DISTDIR) .cargo-linux/$(1) .home-linux/$(LINUX_CACHE_KEY)/$(1)
 	@$(DOCKER) run --rm \
 		--platform $$(LINUX_$(1)_PLATFORM) \
-		-e HOME=/workspace/.home-linux/$(1) \
+		-e HOME=/workspace/.home-linux/$(LINUX_CACHE_KEY)/$(1) \
 		-e CARGO_HOME=/workspace/.cargo-linux/$(1) \
-		-e CARGO_TARGET_DIR=/workspace/target/linux-$(1) \
+		-e CARGO_TARGET_DIR=/workspace/target/linux-$(1)-$(LINUX_CACHE_KEY) \
 		-e IPERF3_RS_CONFIGURE_ARGS="$(RELEASE_CONFIGURE_ARGS)" \
 		-v "$(CURDIR):/workspace" \
 		-w /workspace \
@@ -252,9 +286,9 @@ _dist.linux.$(1): _docker-check
 			apt-get update >/dev/null; \
 			apt-get install -y --no-install-recommends build-essential make pkg-config ca-certificates >/dev/null; \
 			cargo build --release; \
-			cp target/linux-$(1)/release/$(APP) dist/$(APP)-$$(LINUX_$(1)_SUFFIX); \
+			cp target/linux-$(1)-$(LINUX_CACHE_KEY)/release/$(APP) dist/$(APP)-$$(LINUX_$(1)_SUFFIX); \
 			chmod +x dist/$(APP)-$$(LINUX_$(1)_SUFFIX); \
-			chown -R $(DOCKER_UID):$(DOCKER_GID) dist target/linux-$(1) .cargo-linux/$(1) .home-linux/$(1)'
+			chown -R $(DOCKER_UID):$(DOCKER_GID) dist target/linux-$(1)-$(LINUX_CACHE_KEY) .cargo-linux/$(1) .home-linux/$(LINUX_CACHE_KEY)/$(1)'
 	@printf 'Wrote %s/%s-%s\n' "$(DISTDIR)" "$(APP)" "$$(LINUX_$(1)_SUFFIX)"
 endef
 $(foreach arch,$(LINUX_ARCHS),$(eval $(call LINUX_DIST_RULE,$(arch))))
