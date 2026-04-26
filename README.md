@@ -314,6 +314,13 @@ Use `MetricsStream::recv()` for simple iterator-style loops. For automation that
 needs to distinguish "no sample yet" from "the run has ended",
 `try_recv()` and `recv_timeout()` return `MetricsRecvError::Empty`,
 `MetricsRecvError::Timeout`, or `MetricsRecvError::Closed`.
+`MetricsMode::Interval` and `MetricsMode::Window` are every-sample library
+contracts. They use unbounded internal queues so libiperf's reporting callback
+is never blocked by application code. Drain `MetricsStream` continuously for
+long-running runs, or drop the stream when live metrics are no longer needed.
+`IperfCommand::run()` collects emitted metric events in memory before returning,
+so keep metrics disabled for unbounded servers or runs that can produce an
+unbounded number of samples.
 
 Applications that want to use their own delivery path can reuse the same
 encoding and file output as the CLI. `PrometheusEncoder` renders interval and
@@ -402,10 +409,13 @@ process because libiperf still has process-global error, signal, and output
 state. Server mode must use iperf's one-off option (`-s -1`) by default, so a
 library call cannot accidentally hold the process-wide libiperf lock forever.
 Use `IperfCommand::allow_unbounded_server(true)` only when the Rust process is
-dedicated to that long-lived server. For local client/server interop tests, run
-the peer as a separate process, container, or VM. For long-running automation,
-`RunningIperf` supports `try_wait()`, `wait_timeout(duration)`, and
-`is_finished()` in addition to blocking `wait()`.
+dedicated to that long-lived server, or when it is a helper process the parent
+application can terminate externally. `RunningIperf` is a completion observer,
+not a cancellation handle: dropping it detaches the worker, and
+`wait_timeout(duration)` only stops waiting. It does not stop libiperf or
+release the process-wide run lock. For local client/server interop tests or
+externally stoppable automation, run the peer as a separate process, container,
+or VM.
 
 ## Export Metrics
 
@@ -786,9 +796,13 @@ Current caveats:
   library runs are quiet by default unless `inherit_output()` or `logfile()` is
   selected.
 - `RunningIperf` observes worker completion; dropping it detaches the worker and
-  does not stop libiperf. Long-lived `server_unbounded()` runs should live in a
-  process dedicated to serving tests, or in a helper process the application can
+  does not stop libiperf. `wait_timeout()` is only a waiting timeout, not a run
+  timeout. Long-lived `server_unbounded()` runs should live in a process
+  dedicated to serving tests, or in a helper process the application can
   terminate externally.
+- Library `MetricsStream` modes preserve every emitted sample with unbounded
+  queues. Drain them continuously, drop them when no longer needed, or keep
+  metrics disabled for long-running runs where samples are not consumed.
 - The Pushgateway path is based on grouping labels. Use labels with bounded
   cardinality, such as `test`, `scenario`, `site`, or `host_role`; avoid
   high-cardinality values that would create unbounded Pushgateway groups.

@@ -58,12 +58,27 @@
 //!
 //! High-level [`IperfCommand`] runs are serialized inside the process. libiperf
 //! has process-global state for errors, signal handling, and output hooks, so
-//! this crate avoids promising in-process parallelism that upstream does not
-//! clearly guarantee. Server runs must use iperf's one-off mode (`-s -1`) by
-//! default; opt in with [`IperfCommand::allow_unbounded_server`] only when the
-//! process is dedicated to that long-lived server. `RunningIperf` observes
-//! worker completion but does not safely cancel libiperf in-process; use
-//! separate processes for parallel or externally stoppable independent tests.
+//! this crate intentionally avoids promising in-process parallelism that
+//! upstream does not clearly guarantee. Server runs must use iperf's one-off
+//! mode (`-s -1`) by default; opt in with
+//! [`IperfCommand::allow_unbounded_server`] only when the process is dedicated
+//! to that long-lived server.
+//!
+//! [`RunningIperf`] observes worker completion; it is not a cancellation or kill
+//! handle. Dropping it detaches the worker, and
+//! [`RunningIperf::wait_timeout`] only stops waiting. It does not stop libiperf.
+//! Use a separate process, container, VM, or another process-backed wrapper for
+//! runs that must be externally terminated, isolated from hangs, or executed in
+//! parallel.
+//!
+//! # Metrics stream ownership
+//!
+//! [`MetricsMode::Interval`] and [`MetricsMode::Window`] are every-sample
+//! library streams. They preserve all events by using unbounded internal queues,
+//! so long-running runs must continuously drain [`MetricsStream`] or disable
+//! metrics. [`IperfCommand::run`] collects emitted events in memory before
+//! returning; do not combine it with metrics for unbounded server runs or other
+//! runs that can produce an unbounded number of samples.
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 mod args;

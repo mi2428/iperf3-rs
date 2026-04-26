@@ -35,6 +35,18 @@ static RUN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 /// [`IperfCommand::inherit_output`] for upstream-style terminal output or
 /// [`IperfCommand::logfile`] to send that output to a file.
 ///
+/// # Execution model
+///
+/// High-level runs are serialized inside the process because libiperf keeps
+/// process-global state. [`RunningIperf`] is therefore a completion observer,
+/// not a cancellation handle. Dropping it detaches the worker thread, and
+/// [`RunningIperf::wait_timeout`] only stops waiting. It does not stop libiperf
+/// or release this crate's process-wide run lock.
+///
+/// Use one-off server mode for library servers, or run long-lived and
+/// externally cancellable iperf workloads in a helper process that the
+/// embedding application can terminate.
+///
 /// # Examples
 ///
 /// ```no_run
@@ -106,7 +118,9 @@ impl IperfCommand {
     /// Long-lived servers keep the high-level libiperf lock held until the
     /// server exits. The library does not provide in-process cancellation for
     /// an active libiperf server, and dropping [`RunningIperf`] detaches rather
-    /// than stops it. Use this only for a process dedicated to serving tests.
+    /// than stops it. Use this only for a process dedicated to serving tests or
+    /// for a helper process that the parent application can terminate from the
+    /// outside.
     pub fn server_unbounded() -> Self {
         let mut command = Self::new();
         command.arg("-s").allow_unbounded_server(true);
@@ -259,6 +273,12 @@ impl IperfCommand {
     }
 
     /// Enable or disable callback metrics for this run.
+    ///
+    /// [`MetricsMode::Interval`] and [`MetricsMode::Window`] preserve every
+    /// emitted event. Callers that spawn a metrics stream must keep draining it
+    /// for the lifetime of the run. Blocking [`IperfCommand::run`] collects all
+    /// emitted events in memory before returning, so it is intended for bounded
+    /// client runs or one-off servers rather than long-lived servers.
     pub fn metrics(&mut self, mode: MetricsMode) -> &mut Self {
         self.metrics_mode = mode;
         self
@@ -336,14 +356,20 @@ impl IperfCommand {
     /// conservative: server mode must use `-1`/`--one-off` unless this opt-in is
     /// set. The CLI does not use this high-level API, so normal `iperf3-rs -s`
     /// behavior is unchanged. Once started, an unbounded in-process server must
-    /// exit through libiperf itself; this API does not currently expose a safe
-    /// cancellation primitive.
+    /// exit through libiperf itself; this API intentionally does not expose an
+    /// in-process cancellation primitive. Prefer a dedicated helper process
+    /// whenever the owner must enforce an external timeout or stop policy.
     pub fn allow_unbounded_server(&mut self, allow: bool) -> &mut Self {
         self.allow_unbounded_server = allow;
         self
     }
 
     /// Run the iperf test to completion and collect metric events in memory.
+    ///
+    /// When metrics are enabled, every emitted event is retained in the returned
+    /// [`IperfResult`]. Keep metrics disabled for long-running or unbounded
+    /// runs, or use [`IperfCommand::spawn_with_metrics`] and drain the stream
+    /// while the run is active.
     pub fn run(&self) -> Result<IperfResult> {
         run_command(self.clone(), None)
     }
@@ -353,7 +379,9 @@ impl IperfCommand {
     /// If metrics are enabled, call [`RunningIperf::take_metrics`] before
     /// [`RunningIperf::wait`] to consume live events. Dropping the returned
     /// handle detaches the worker and does not cancel the underlying libiperf
-    /// run.
+    /// run. If you keep the metrics stream, drain it continuously for the
+    /// lifetime of the run; every-sample streams use unbounded queues so the
+    /// libiperf reporting callback never blocks on application code.
     pub fn spawn(&self) -> Result<RunningIperf> {
         let command = self.clone();
         let (ready_tx, ready_rx) = bounded::<ReadyMessage>(1);
@@ -381,7 +409,9 @@ impl IperfCommand {
     ///
     /// This is a convenience wrapper around [`IperfCommand::metrics`],
     /// [`IperfCommand::spawn`], and [`RunningIperf::take_metrics`] for callers
-    /// that know they want metrics for this run.
+    /// that know they want metrics for this run. The returned stream is part of
+    /// the run contract: drain it until it closes, or drop it if metrics are no
+    /// longer needed. Keeping it alive but unread can grow memory on long runs.
     pub fn spawn_with_metrics(&self, mode: MetricsMode) -> Result<(RunningIperf, MetricsStream)> {
         let mut command = self.clone();
         command.metrics(mode);
@@ -458,8 +488,10 @@ impl IperfResult {
 ///
 /// This handle observes completion; it does not own a safe cancellation
 /// mechanism for the underlying libiperf run. Dropping it detaches the worker.
-/// Use one-off server mode or a dedicated helper process when a run must be
-/// externally stopped.
+/// `try_wait`, `wait_timeout`, and `wait` only observe or join the worker; none
+/// of them requests libiperf shutdown. Use one-off server mode or a dedicated
+/// helper process when a run must be externally stopped, isolated from hangs, or
+/// allowed to coexist with other runs in the parent process.
 #[derive(Debug)]
 #[must_use = "dropping RunningIperf detaches the worker; call wait to observe the iperf result"]
 pub struct RunningIperf {
@@ -666,9 +698,10 @@ fn run_lock() -> &'static Mutex<()> {
     //
     // If parallel library runs become important, prefer adding a process-backed
     // runner first. A helper process gives each libiperf instance its own
-    // globals while keeping this Rust API stable. Removing this lock for true
-    // in-process concurrency should come only after upstream and shim state are
-    // audited and covered by stress tests.
+    // globals, lets the parent enforce real kill/timeout policy, and avoids
+    // wedging later in-process runs behind a detached or hung worker. Removing
+    // this lock for true in-process concurrency should come only after upstream
+    // and shim state are audited and covered by stress tests.
     RUN_LOCK.get_or_init(|| Mutex::new(()))
 }
 

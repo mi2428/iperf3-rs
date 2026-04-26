@@ -221,6 +221,12 @@ impl WindowMetrics {
 }
 
 /// Controls whether a run emits live metrics and how interval samples are shaped.
+///
+/// Library metrics modes are every-sample contracts. `Interval` forwards each
+/// libiperf interval sample, and `Window` forwards each completed aggregation
+/// window. Internally those streams use unbounded queues so the libiperf
+/// reporting callback is not blocked by application code. Keep the returned
+/// [`MetricsStream`] drained for long-running runs, or leave metrics disabled.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MetricsMode {
@@ -228,8 +234,15 @@ pub enum MetricsMode {
     #[default]
     Disabled,
     /// Emit one event for every libiperf interval sample.
+    ///
+    /// This mode preserves every sample. It is appropriate for short runs or
+    /// consumers that continuously drain the stream.
     Interval,
     /// Aggregate interval samples into fixed-duration summary windows.
+    ///
+    /// This mode still consumes every libiperf interval sample internally. It
+    /// emits fewer public events than `Interval`, but the stream should still be
+    /// drained for long-running runs so completed windows do not accumulate.
     Window(Duration),
 }
 
@@ -285,6 +298,12 @@ impl fmt::Display for MetricsRecvError {
 impl std::error::Error for MetricsRecvError {}
 
 /// Receiver for metric events emitted by a running iperf test.
+///
+/// A `MetricsStream` is not a bounded history buffer. `MetricsMode::Interval`
+/// and `MetricsMode::Window` preserve every emitted event, so keeping the
+/// stream alive but unread can grow memory on long-running runs. Drain it until
+/// it returns `None` or `MetricsRecvError::Closed`, or drop it when the
+/// application no longer needs live metrics.
 #[derive(Debug)]
 pub struct MetricsStream {
     rx: Receiver<MetricEvent>,
@@ -488,8 +507,9 @@ pub(crate) enum MetricsQueue {
 fn callback_channel(queue: MetricsQueue, role: Role) -> (CallbackTarget, Receiver<Metrics>) {
     match queue {
         MetricsQueue::All => {
-            // Window aggregation and library streams need every libiperf
-            // interval sample, so use an unbounded channel.
+            // Library streams promise every sample and must not block
+            // libiperf's reporting callback. This means callers own the drain
+            // responsibility for long-running streams.
             let (tx, rx) = unbounded::<Metrics>();
             (
                 CallbackTarget {
@@ -522,6 +542,9 @@ pub(crate) fn metric_event_stream(
     rx: Receiver<Metrics>,
     mode: MetricsMode,
 ) -> (MetricsStream, JoinHandle<()>) {
+    // The public stream is also unbounded to preserve every event. This keeps
+    // the metrics worker simple and nonblocking, but it makes unread streams a
+    // caller-visible memory risk on long-running runs.
     let (tx, event_rx) = unbounded::<MetricEvent>();
     let worker = thread::spawn(move || match mode {
         MetricsMode::Disabled => {}
