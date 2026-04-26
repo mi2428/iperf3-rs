@@ -257,14 +257,12 @@ fn try_run_library_client(
     port: u16,
     mode: MetricsMode,
 ) -> iperf3_rs::Result<(iperf3_rs::IperfResult, Vec<MetricEvent>)> {
-    let logfile = env::temp_dir().join(format!("iperf3-rs-library-api-{port}.log"));
     let mut command = IperfCommand::client("127.0.0.1");
     command
         .port(port)
         .duration(Duration::from_secs(1))
         .report_interval(Duration::from_secs(1))
-        .json()
-        .logfile(&logfile);
+        .json();
 
     let (running, mut metrics) = command.spawn_with_metrics(mode)?;
     let events = metrics.by_ref().collect::<Vec<_>>();
@@ -276,13 +274,11 @@ fn try_run_library_direct_push_client(
     port: u16,
     config: PushGatewayConfig,
 ) -> iperf3_rs::Result<()> {
-    let logfile = env::temp_dir().join(format!("iperf3-rs-library-direct-push-{port}.log"));
     let mut command = IperfCommand::client("127.0.0.1");
     command
         .port(port)
         .duration(Duration::from_secs(2))
-        .report_interval(Duration::from_secs(1))
-        .logfile(&logfile);
+        .report_interval(Duration::from_secs(1));
 
     command.run_with_pushgateway(config, MetricsMode::Interval)?;
     Ok(())

@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "iperf.h"
 #include "iperf_api.h"
@@ -232,6 +233,35 @@ iperf3rs_run_server_once(struct iperf_test *test)
     int rc = iperf_run_server(test);
     test->server_last_run_rc = rc;
     return rc;
+}
+
+int
+iperf3rs_suppress_output(struct iperf_test *test)
+{
+#ifdef _WIN32
+    const char *null_path = "NUL";
+#else
+    const char *null_path = "/dev/null";
+#endif
+    char *logfile = NULL;
+    size_t logfile_len = 0;
+
+    if (test == NULL) {
+        return -1;
+    }
+
+    logfile_len = strlen(null_path) + 1;
+    logfile = malloc(logfile_len);
+    if (logfile == NULL) {
+        return -1;
+    }
+    memcpy(logfile, null_path, logfile_len);
+
+    if (test->logfile != NULL) {
+        free(test->logfile);
+    }
+    test->logfile = logfile;
+    return 0;
 }
 
 int

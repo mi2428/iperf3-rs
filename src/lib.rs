@@ -12,6 +12,9 @@
 //! This crate is useful when a Rust program needs to run iperf tests directly,
 //! for example from a bot, controller, or test harness, without spawning an
 //! external `iperf3-rs` process and parsing stdout.
+//! High-level library runs suppress libiperf's ordinary stdout output by
+//! default; use [`IperfCommand::inherit_output`] or [`IperfCommand::logfile`]
+//! when an application intentionally wants upstream text output.
 //!
 //! # Examples
 //!

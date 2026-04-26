@@ -73,6 +73,7 @@ mod ffi {
             callback: Option<MetricsCallback>,
         );
         pub fn iperf3rs_run_server_once(test: *mut iperf_test) -> c_int;
+        pub fn iperf3rs_suppress_output(test: *mut iperf_test) -> c_int;
         pub fn iperf3rs_current_errno() -> c_int;
         pub fn iperf3rs_is_auth_test_error() -> c_int;
         pub fn iperf3rs_current_error() -> *const c_char;
@@ -155,6 +156,14 @@ impl IperfTest {
 
     pub(crate) fn enable_interval_metrics(&mut self, callback: ffi::MetricsCallback) {
         unsafe { ffi::iperf3rs_enable_interval_metrics(self.as_ptr(), Some(callback)) };
+    }
+
+    pub(crate) fn suppress_output(&mut self) -> Result<()> {
+        let rc = unsafe { ffi::iperf3rs_suppress_output(self.as_ptr()) };
+        if rc < 0 {
+            return Err(Error::internal("failed to suppress libiperf output"));
+        }
+        Ok(())
     }
 
     pub fn role(&self) -> Role {

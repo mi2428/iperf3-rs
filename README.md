@@ -276,9 +276,15 @@ fn main() -> Result<()> {
 Typed helpers cover common roles and options such as `client`, `server_once`,
 `port`, `duration`, `report_interval`, `logfile`, `connect_timeout`, `omit`,
 `bind`, `udp`, `sctp`, `bitrate_bits_per_second`, `reverse`, `bidirectional`,
-`no_delay`, `zerocopy`, `congestion_control`, and `json`. Use `arg()` or
-`args()` for any upstream iperf3 option that does not need a dedicated Rust
-helper.
+`no_delay`, `zerocopy`, `congestion_control`, `json`, `quiet`, and
+`inherit_output`. Use `arg()` or `args()` for any upstream iperf3 option that
+does not need a dedicated Rust helper.
+
+`IperfCommand` suppresses libiperf's ordinary stdout output by default so
+library use does not unexpectedly write to the embedding application's
+terminal. Use `inherit_output()` for upstream-style human output, or
+`logfile()` to send libiperf output to a file. Retained JSON remains available
+through `IperfResult` when `json()` is enabled.
 
 When `json()` is enabled, the completed `IperfResult` retains upstream iperf3
 JSON. `json_output()` returns the raw string, and `json_value()` parses it as a
@@ -750,8 +756,10 @@ with webpki roots.
 Current caveats:
 
 - Metrics export is attached to libiperf's reporting path through the local C
-  shim. This keeps stdout behavior aligned with upstream iperf3 while still
-  allowing live interval export without patching the submodule.
+  shim. The CLI keeps stdout behavior aligned with upstream iperf3 while still
+  allowing live interval export without patching the submodule; `IperfCommand`
+  library runs are quiet by default unless `inherit_output()` or `logfile()` is
+  selected.
 - The Pushgateway path is based on grouping labels. Use labels with bounded
   cardinality, such as `test`, `scenario`, `site`, or `host_role`; avoid
   high-cardinality values that would create unbounded Pushgateway groups.

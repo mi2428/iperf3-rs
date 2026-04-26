@@ -37,6 +37,7 @@ typedef void (*iperf3rs_metrics_callback)(
 
 void iperf3rs_enable_interval_metrics(struct iperf_test *test, iperf3rs_metrics_callback callback);
 int iperf3rs_run_server_once(struct iperf_test *test);
+int iperf3rs_suppress_output(struct iperf_test *test);
 int iperf3rs_current_errno(void);
 int iperf3rs_is_auth_test_error(void);
 const char *iperf3rs_current_error(void);

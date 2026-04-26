@@ -31,6 +31,10 @@ static RUN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 /// methods remain available for upstream options that do not have a dedicated
 /// Rust helper.
 ///
+/// Library runs suppress libiperf's normal stdout output by default. Use
+/// [`IperfCommand::inherit_output`] for upstream-style terminal output or
+/// [`IperfCommand::logfile`] to send that output to a file.
+///
 /// # Examples
 ///
 /// ```no_run
@@ -55,6 +59,7 @@ pub struct IperfCommand {
     #[cfg(feature = "pushgateway")]
     pushgateway: Option<PushGatewayRun>,
     allow_unbounded_server: bool,
+    suppress_output: bool,
 }
 
 #[cfg(feature = "pushgateway")]
@@ -74,6 +79,7 @@ impl IperfCommand {
             #[cfg(feature = "pushgateway")]
             pushgateway: None,
             allow_unbounded_server: false,
+            suppress_output: true,
         }
     }
 
@@ -147,9 +153,32 @@ impl IperfCommand {
     }
 
     /// Send iperf output to a log file with iperf's `--logfile` option.
+    ///
+    /// Explicit log files are honored even though high-level library runs are
+    /// quiet by default.
     pub fn logfile(&mut self, path: impl AsRef<Path>) -> &mut Self {
         self.arg("--logfile")
             .arg(path.as_ref().to_string_lossy().into_owned())
+    }
+
+    /// Suppress libiperf's normal text or JSON writes to the process stdout.
+    ///
+    /// This is the default for `IperfCommand` so library use does not
+    /// unexpectedly write to the embedding application's terminal. Retained
+    /// JSON remains available through [`IperfResult::json_output`] when
+    /// [`IperfCommand::json`] is enabled.
+    pub fn quiet(&mut self) -> &mut Self {
+        self.suppress_output = true;
+        self
+    }
+
+    /// Let libiperf write normal output to this process' stdout.
+    ///
+    /// This matches upstream `iperf3` output behavior for applications that
+    /// intentionally want human-readable output from library runs.
+    pub fn inherit_output(&mut self) -> &mut Self {
+        self.suppress_output = false;
+        self
     }
 
     /// Set control connection setup timeout with iperf's `--connect-timeout`.
@@ -351,6 +380,16 @@ impl IperfCommand {
         argv.extend(self.args.iter().cloned());
         argv
     }
+
+    fn should_suppress_output(&self) -> bool {
+        self.suppress_output && !self.has_logfile_arg()
+    }
+
+    fn has_logfile_arg(&self) -> bool {
+        self.args
+            .iter()
+            .any(|arg| arg == "--logfile" || arg.starts_with("--logfile="))
+    }
 }
 
 impl Default for IperfCommand {
@@ -542,6 +581,9 @@ fn setup_run(command: IperfCommand) -> Result<RunSetup> {
 
     let mut test = IperfTest::new()?;
     test.parse_arguments(&command.argv())?;
+    if command.should_suppress_output() {
+        test.suppress_output()?;
+    }
     let role = test.role();
     validate_server_lifecycle(&command, &test, role)?;
 
@@ -741,6 +783,40 @@ mod tests {
         command.program("iperf3").arg("-v");
 
         assert_eq!(command.argv(), vec!["iperf3".to_owned(), "-v".to_owned()]);
+    }
+
+    #[test]
+    fn library_output_is_quiet_by_default() {
+        let command = IperfCommand::new();
+
+        assert!(command.should_suppress_output());
+    }
+
+    #[test]
+    fn inherit_output_disables_library_quiet_default() {
+        let mut command = IperfCommand::new();
+        command.inherit_output();
+
+        assert!(!command.should_suppress_output());
+
+        command.quiet();
+        assert!(command.should_suppress_output());
+    }
+
+    #[test]
+    fn explicit_logfile_disables_null_output_sink() {
+        let mut typed = IperfCommand::new();
+        typed.logfile("iperf.log");
+
+        let mut raw_split = IperfCommand::new();
+        raw_split.arg("--logfile").arg("iperf.log");
+
+        let mut raw_equals = IperfCommand::new();
+        raw_equals.arg("--logfile=iperf.log");
+
+        assert!(!typed.should_suppress_output());
+        assert!(!raw_split.should_suppress_output());
+        assert!(!raw_equals.should_suppress_output());
     }
 
     #[test]
