@@ -35,6 +35,7 @@ make integration
 make kani
 make check integration kani
 make dist OS=darwin,linux ARCH=amd64,arm64
+make multipass
 ```
 
 `make check` runs formatting, clippy, unit tests, and shell completion syntax
@@ -206,6 +207,11 @@ Release archives are built for:
 The manual `make dist` target is still available for local release-style
 binaries under `dist/`.
 
+Linux dist binaries are built in a Debian bullseye-based Rust image and then
+smoke-tested in `debian:bullseye-slim` with `-h` and `--version`. This keeps the
+glibc baseline low enough for older Raspberry Pi OS / Debian bullseye systems
+and catches binaries that build successfully but cannot start.
+
 ## Container release
 
 GHCR publishing is handled by `.github/workflows/ghcr.yml` when a GitHub Release
@@ -260,7 +266,8 @@ tap or `repo` for a private tap.
 Workflows:
 
 - `.github/workflows/checks.yml`: pull-request checks for workflow linting,
-  Rust linting, unit tests, Kani, and integration tests.
+  Rust linting, unit tests, Kani, integration tests, and Linux dist startup
+  smoke tests.
 - `.github/workflows/release.yml`: cargo-dist release workflow for archives,
   GitHub Releases, and Homebrew formula publishing.
 - `.github/workflows/ghcr.yml`: multi-arch GHCR image publishing after a
@@ -277,8 +284,10 @@ Before publishing a release:
 1. Confirm `Cargo.toml` has the intended version.
 2. Confirm `dist-workspace.toml` targets and cargo-dist version are correct.
 3. Run `make check integration kani`.
-4. Confirm `HOMEBREW_TAP_TOKEN` exists and can push to the tap repository.
-5. Push a version tag such as `v0.1.0`.
-6. Confirm the GitHub Release contains the expected archives and checksums.
-7. Confirm GHCR has the version tag and, for stable releases, `latest`.
-8. Confirm the Homebrew formula was updated in `mi2428/homebrew-iperf3-rs`.
+4. Run `make dist OS=linux ARCH=arm64` if you want a local Raspberry Pi-style
+   glibc compatibility check before tagging.
+5. Confirm `HOMEBREW_TAP_TOKEN` exists and can push to the tap repository.
+6. Push a version tag such as `v0.1.0`.
+7. Confirm the GitHub Release contains the expected archives and checksums.
+8. Confirm GHCR has the version tag and, for stable releases, `latest`.
+9. Confirm the Homebrew formula was updated in `mi2428/homebrew-iperf3-rs`.
