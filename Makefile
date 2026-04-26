@@ -12,6 +12,7 @@ CARGO_ENV        := RUSTC="$(RUSTC)" RUSTDOC="$(RUSTDOC)"
 INSTALL ?= install
 DOCKER  ?= docker
 COMPOSE ?= $(shell if $(DOCKER) compose version >/dev/null 2>&1; then printf '%s compose' '$(DOCKER)'; elif command -v docker-compose >/dev/null 2>&1; then command -v docker-compose; else printf '%s compose' '$(DOCKER)'; fi)
+MULTIPASS ?= multipass
 
 APP            := iperf3-rs
 BINDIR         := bin
@@ -58,6 +59,13 @@ DOCKER_GID           ?= $(shell id -g)
 HOST_OS              := $(shell uname -s)
 
 RELEASE_CONFIGURE_ARGS ?= --without-openssl
+
+MULTIPASS_NAME       ?= iperf3-rs-dev
+MULTIPASS_IMAGE      ?= 24.04
+MULTIPASS_CPUS       ?= 2
+MULTIPASS_MEMORY     ?= 4G
+MULTIPASS_DISK       ?= 20G
+MULTIPASS_SOURCE_DIR ?= iperf3-rs
 
 ##@ Development
 
@@ -147,6 +155,49 @@ check: ## Run formatting, lint, tests, and completion checks
 	@$(MAKE) --no-print-directory lint
 	@$(MAKE) --no-print-directory test
 	@$(MAKE) --no-print-directory _completions CHECK_ONLY=1
+
+.PHONY: multipass
+multipass: ## Launch a Multipass VM and copy the source tree for manual Linux testing
+	@command -v $(MULTIPASS) >/dev/null 2>&1 || { \
+		echo "Multipass is required for this target" >&2; \
+		exit 1; \
+	}
+	@if $(MULTIPASS) info "$(MULTIPASS_NAME)" >/dev/null 2>&1; then \
+		printf 'Starting existing Multipass VM %s\n' "$(MULTIPASS_NAME)"; \
+		$(MULTIPASS) start "$(MULTIPASS_NAME)" >/dev/null; \
+	else \
+		printf 'Launching Multipass VM %s from %s\n' "$(MULTIPASS_NAME)" "$(MULTIPASS_IMAGE)"; \
+		$(MULTIPASS) launch "$(MULTIPASS_IMAGE)" \
+			--name "$(MULTIPASS_NAME)" \
+			--cpus "$(MULTIPASS_CPUS)" \
+			--memory "$(MULTIPASS_MEMORY)" \
+			--disk "$(MULTIPASS_DISK)"; \
+	fi
+	@archive="$$(mktemp "$${TMPDIR:-/tmp}/$(APP)-multipass.XXXXXX.tar.gz")"; \
+	trap 'rm -f "$$archive"' EXIT; \
+	printf 'Packing source tree for %s\n' "$(MULTIPASS_NAME)"; \
+	COPYFILE_DISABLE=1 tar \
+		--exclude './target' \
+		--exclude './dist' \
+		--exclude './bin' \
+		--exclude './.cargo-linux' \
+		--exclude './.home-linux' \
+		--exclude './.DS_Store' \
+		-czf "$$archive" .; \
+	$(MULTIPASS) exec "$(MULTIPASS_NAME)" -- rm -rf "/home/ubuntu/$(MULTIPASS_SOURCE_DIR)"; \
+	$(MULTIPASS) exec "$(MULTIPASS_NAME)" -- mkdir -p "/home/ubuntu/$(MULTIPASS_SOURCE_DIR)"; \
+	$(MULTIPASS) transfer "$$archive" "$(MULTIPASS_NAME):/tmp/$(APP)-source.tar.gz"; \
+	$(MULTIPASS) exec "$(MULTIPASS_NAME)" -- tar -xzf "/tmp/$(APP)-source.tar.gz" -C "/home/ubuntu/$(MULTIPASS_SOURCE_DIR)"; \
+	$(MULTIPASS) exec "$(MULTIPASS_NAME)" -- chown -R ubuntu:ubuntu "/home/ubuntu/$(MULTIPASS_SOURCE_DIR)"; \
+	printf '\nMultipass VM is ready.\n'; \
+	printf '\nRun these commands to build inside the VM:\n'; \
+	printf '  - %s\n' "$(MULTIPASS) shell $(MULTIPASS_NAME)"; \
+	printf '  - %s\n' "cd ~/$(MULTIPASS_SOURCE_DIR)"; \
+	printf '  - %s\n' "sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl make pkg-config"; \
+	printf '  - %s\n' "command -v cargo >/dev/null || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"; \
+	printf '  - %s\n' "source \"\$$HOME/.cargo/env\""; \
+	printf '  - %s\n' "make build"; \
+	printf '  - %s\n' "./bin/iperf3-rs --version"
 
 .PHONY: clean
 clean: ## Remove local build artifacts
@@ -322,8 +373,10 @@ help: ## Show this help message
 	@printf "  \033[36mBASH_COMPLETION_DIR\033[0m    Bash completion install dir, defaults to \033[36m%s\033[0m\n" "$(BASH_COMPLETION_DIR)"
 	@printf "  \033[36mZSH_COMPLETION_DIR\033[0m     Zsh completion install dir, defaults to \033[36m%s\033[0m\n" "$(ZSH_COMPLETION_DIR)"
 	@printf "  \033[36mFISH_COMPLETION_DIR\033[0m    Fish completion install dir, defaults to \033[36m%s\033[0m\n" "$(FISH_COMPLETION_DIR)"
+	@printf "  \033[36mMULTIPASS_NAME\033[0m         Multipass VM name, defaults to \033[36m%s\033[0m\n" "$(MULTIPASS_NAME)"
 	@printf "\n\033[1mExamples:\033[0m\n"
 	@printf "  \033[36m%-44s\033[0m # to check formatting without writing\n" "make fmt CHECK_ONLY=1"
 	@printf "  \033[36m%-44s\033[0m # to build and install the host binary and completions\n" "make install COMPLETION=1"
 	@printf "  \033[36m%-44s\033[0m # to run all release-blocking quality gates\n" "make check integration kani"
 	@printf "  \033[36m%-44s\033[0m # to build release binaries and checksums\n" "make dist OS=darwin,linux ARCH=amd64,arm64"
+	@printf "  \033[36m%-44s\033[0m # to prepare a Linux VM for manual testing\n" "make multipass"
