@@ -613,10 +613,12 @@ details, and maintainer setup.
 
 ## License
 
-`iperf3-rs` is dual-licensed:
+The Rust code written for `iperf3-rs` is licensed under the MIT License. See
+[LICENSE](LICENSE).
 
-- General use is licensed under the MIT License. See [LICENSE](LICENSE).
-- SORACOM, Inc. is additionally granted a separate permissive license with
-  Unlicense-style terms. See [LICENSE-SORACOM](LICENSE-SORACOM).
+This repository vendors `esnet/iperf3` under `iperf3/`. `esnet/iperf3` is
+distributed under its upstream BSD-style license and includes additional
+third-party notices; see `iperf3/LICENSE`.
 
-The vendored `esnet/iperf3` submodule keeps its upstream license.
+SORACOM, Inc. is additionally granted a separate permissive license with
+Unlicense-style terms. See [LICENSE-SORACOM](LICENSE-SORACOM).
