@@ -7,6 +7,7 @@
 
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use crossbeam_channel::{Sender, bounded};
 
@@ -20,17 +21,21 @@ static RUN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// Builder for running an iperf test through libiperf.
 ///
-/// Arguments are the normal iperf arguments without `argv[0]`; `IperfCommand`
-/// inserts a program name before passing them to `iperf_parse_arguments`.
+/// The typed helpers append ordinary iperf arguments such as `-c`, `-p`, and
+/// `-t`. The lower-level [`IperfCommand::arg`] and [`IperfCommand::args`]
+/// methods remain available for upstream options that do not have a dedicated
+/// Rust helper.
 ///
 /// # Examples
 ///
 /// ```no_run
+/// use std::time::Duration;
+///
 /// use iperf3_rs::{IperfCommand, Result};
 ///
 /// fn main() -> Result<()> {
-///     let mut command = IperfCommand::new();
-///     command.args(["-c", "127.0.0.1", "-t", "5"]);
+///     let mut command = IperfCommand::client("127.0.0.1");
+///     command.duration(Duration::from_secs(5));
 ///
 ///     let result = command.run()?;
 ///     println!("{:?}", result.role());
@@ -56,6 +61,34 @@ impl IperfCommand {
         }
     }
 
+    /// Create a client command equivalent to `iperf3 -c HOST`.
+    pub fn client(host: impl Into<String>) -> Self {
+        let mut command = Self::new();
+        command.arg("-c").arg(host);
+        command
+    }
+
+    /// Create a one-off server command equivalent to `iperf3 -s -1`.
+    ///
+    /// This is the preferred server constructor for library code because the
+    /// run exits after one accepted test and releases the process-wide libiperf
+    /// lock.
+    pub fn server_once() -> Self {
+        let mut command = Self::new();
+        command.args(["-s", "-1"]);
+        command
+    }
+
+    /// Create a long-lived server command equivalent to `iperf3 -s`.
+    ///
+    /// Long-lived servers keep the high-level libiperf lock held until the
+    /// server exits. Use this only for a process dedicated to serving tests.
+    pub fn server_unbounded() -> Self {
+        let mut command = Self::new();
+        command.arg("-s").allow_unbounded_server(true);
+        command
+    }
+
     /// Override the program name passed as `argv[0]` to libiperf.
     pub fn program(&mut self, program: impl Into<String>) -> &mut Self {
         self.program = program.into();
@@ -76,6 +109,55 @@ impl IperfCommand {
     {
         self.args.extend(args.into_iter().map(Into::into));
         self
+    }
+
+    /// Set the server port with iperf's `-p` option.
+    pub fn port(&mut self, port: u16) -> &mut Self {
+        self.arg("-p").arg(port.to_string())
+    }
+
+    /// Set client test duration with iperf's `-t` option.
+    ///
+    /// Upstream iperf parses `-t` as whole seconds. Sub-second durations are
+    /// rounded up so the typed API does not silently truncate a nonzero
+    /// [`Duration`] to `0`.
+    pub fn duration(&mut self, duration: Duration) -> &mut Self {
+        self.arg("-t").arg(whole_seconds_arg(duration))
+    }
+
+    /// Set reporting interval with iperf's `-i` option.
+    pub fn report_interval(&mut self, interval: Duration) -> &mut Self {
+        self.arg("-i").arg(decimal_seconds_arg(interval))
+    }
+
+    /// Enable UDP mode with iperf's `-u` option.
+    pub fn udp(&mut self) -> &mut Self {
+        self.arg("-u")
+    }
+
+    /// Set target bitrate in bits per second with iperf's `-b` option.
+    pub fn bitrate_bits_per_second(&mut self, bits_per_second: u64) -> &mut Self {
+        self.arg("-b").arg(bits_per_second.to_string())
+    }
+
+    /// Set the number of parallel client streams with iperf's `-P` option.
+    pub fn parallel_streams(&mut self, streams: u16) -> &mut Self {
+        self.arg("-P").arg(streams.to_string())
+    }
+
+    /// Enable reverse mode with iperf's `-R` option.
+    pub fn reverse(&mut self) -> &mut Self {
+        self.arg("-R")
+    }
+
+    /// Enable bidirectional mode with iperf's `--bidir` option.
+    pub fn bidirectional(&mut self) -> &mut Self {
+        self.arg("--bidir")
+    }
+
+    /// Request retained JSON output with iperf's `-J` option.
+    pub fn json(&mut self) -> &mut Self {
+        self.arg("-J")
     }
 
     /// Enable or disable callback metrics for this run.
@@ -302,6 +384,29 @@ fn metrics_mode_is_valid(mode: MetricsMode) -> bool {
     !matches!(mode, MetricsMode::Window(interval) if interval.is_zero())
 }
 
+fn whole_seconds_arg(duration: Duration) -> String {
+    let seconds = if duration.subsec_nanos() == 0 {
+        duration.as_secs()
+    } else {
+        duration.as_secs().saturating_add(1)
+    };
+    seconds.to_string()
+}
+
+fn decimal_seconds_arg(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    let nanos = duration.subsec_nanos();
+    if nanos == 0 {
+        return seconds.to_string();
+    }
+
+    let mut value = format!("{seconds}.{nanos:09}");
+    while value.ends_with('0') {
+        value.pop();
+    }
+    value
+}
+
 fn validate_server_lifecycle(command: &IperfCommand, test: &IperfTest, role: Role) -> Result<()> {
     if role == Role::Server && !test.one_off() && !command.allow_unbounded_server {
         return Err(Error::invalid_argument(
@@ -357,6 +462,87 @@ mod tests {
         command.program("iperf3").arg("-v");
 
         assert_eq!(command.argv(), vec!["iperf3".to_owned(), "-v".to_owned()]);
+    }
+
+    #[test]
+    fn typed_client_builder_appends_iperf_arguments() {
+        let mut command = IperfCommand::client("192.0.2.10");
+        command
+            .port(5202)
+            .duration(Duration::from_secs(3))
+            .report_interval(Duration::from_millis(500))
+            .udp()
+            .bitrate_bits_per_second(1_000_000)
+            .parallel_streams(4)
+            .reverse()
+            .json()
+            .arg("--get-server-output");
+
+        assert_eq!(
+            command.argv(),
+            vec![
+                "iperf3-rs".to_owned(),
+                "-c".to_owned(),
+                "192.0.2.10".to_owned(),
+                "-p".to_owned(),
+                "5202".to_owned(),
+                "-t".to_owned(),
+                "3".to_owned(),
+                "-i".to_owned(),
+                "0.5".to_owned(),
+                "-u".to_owned(),
+                "-b".to_owned(),
+                "1000000".to_owned(),
+                "-P".to_owned(),
+                "4".to_owned(),
+                "-R".to_owned(),
+                "-J".to_owned(),
+                "--get-server-output".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn typed_server_constructors_select_expected_lifecycle() {
+        let one_off = IperfCommand::server_once();
+        assert_eq!(
+            one_off.argv(),
+            vec!["iperf3-rs".to_owned(), "-s".to_owned(), "-1".to_owned()]
+        );
+        assert!(!one_off.allow_unbounded_server);
+
+        let unbounded = IperfCommand::server_unbounded();
+        assert_eq!(
+            unbounded.argv(),
+            vec!["iperf3-rs".to_owned(), "-s".to_owned()]
+        );
+        assert!(unbounded.allow_unbounded_server);
+    }
+
+    #[test]
+    fn bidirectional_helper_appends_long_option() {
+        let mut command = IperfCommand::client("192.0.2.10");
+        command.bidirectional();
+
+        assert_eq!(
+            command.argv(),
+            vec![
+                "iperf3-rs".to_owned(),
+                "-c".to_owned(),
+                "192.0.2.10".to_owned(),
+                "--bidir".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn duration_helpers_preserve_nonzero_subsecond_intent() {
+        assert_eq!(whole_seconds_arg(Duration::ZERO), "0");
+        assert_eq!(whole_seconds_arg(Duration::from_millis(1)), "1");
+        assert_eq!(whole_seconds_arg(Duration::from_millis(1500)), "2");
+        assert_eq!(decimal_seconds_arg(Duration::ZERO), "0");
+        assert_eq!(decimal_seconds_arg(Duration::from_millis(250)), "0.25");
+        assert_eq!(decimal_seconds_arg(Duration::new(1, 1)), "1.000000001");
     }
 
     #[test]
