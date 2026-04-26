@@ -273,9 +273,11 @@ fn main() -> Result<()> {
 ```
 
 Typed helpers cover common roles and options such as `client`, `server_once`,
-`port`, `duration`, `report_interval`, `udp`, `bitrate_bits_per_second`,
-`reverse`, `bidirectional`, and `json`. Use `arg()` or `args()` for any upstream
-iperf3 option that does not need a dedicated Rust helper.
+`port`, `duration`, `report_interval`, `logfile`, `connect_timeout`, `omit`,
+`bind`, `udp`, `bitrate_bits_per_second`, `reverse`, `bidirectional`,
+`no_delay`, `zerocopy`, `congestion_control`, and `json`. Use `arg()` or
+`args()` for any upstream iperf3 option that does not need a dedicated Rust
+helper.
 
 When `json()` is enabled, the completed `IperfResult` retains upstream iperf3
 JSON. `json_output()` returns the raw string, and `json_value()` parses it as a

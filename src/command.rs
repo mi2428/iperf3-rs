@@ -5,6 +5,7 @@
 //! to libiperf's own parser while still giving Rust callers structured results
 //! and live metric streams.
 
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -145,6 +146,30 @@ impl IperfCommand {
         self.arg("-i").arg(decimal_seconds_arg(interval))
     }
 
+    /// Send iperf output to a log file with iperf's `--logfile` option.
+    pub fn logfile(&mut self, path: impl AsRef<Path>) -> &mut Self {
+        self.arg("--logfile")
+            .arg(path.as_ref().to_string_lossy().into_owned())
+    }
+
+    /// Set control connection setup timeout with iperf's `--connect-timeout`.
+    ///
+    /// Upstream iperf expects milliseconds. Nonzero sub-millisecond durations
+    /// are rounded up so intent is not lost.
+    pub fn connect_timeout(&mut self, timeout: Duration) -> &mut Self {
+        self.arg("--connect-timeout").arg(milliseconds_arg(timeout))
+    }
+
+    /// Omit pre-test statistics for the given duration with iperf's `-O`.
+    pub fn omit(&mut self, duration: Duration) -> &mut Self {
+        self.arg("-O").arg(decimal_seconds_arg(duration))
+    }
+
+    /// Bind to a local address or `address%device` with iperf's `-B`.
+    pub fn bind(&mut self, address: impl Into<String>) -> &mut Self {
+        self.arg("-B").arg(address)
+    }
+
     /// Enable UDP mode with iperf's `-u` option.
     pub fn udp(&mut self) -> &mut Self {
         self.arg("-u")
@@ -168,6 +193,25 @@ impl IperfCommand {
     /// Enable bidirectional mode with iperf's `--bidir` option.
     pub fn bidirectional(&mut self) -> &mut Self {
         self.arg("--bidir")
+    }
+
+    /// Disable Nagle's algorithm with iperf's `-N` option.
+    pub fn no_delay(&mut self) -> &mut Self {
+        self.arg("-N")
+    }
+
+    /// Use zero-copy send with iperf's `-Z` option.
+    pub fn zerocopy(&mut self) -> &mut Self {
+        self.arg("-Z")
+    }
+
+    /// Set TCP congestion control algorithm with iperf's `-C` option.
+    ///
+    /// Upstream support depends on the operating system and linked libiperf
+    /// build; unsupported values are reported by libiperf when the command
+    /// parses or runs.
+    pub fn congestion_control(&mut self, algorithm: impl Into<String>) -> &mut Self {
+        self.arg("-C").arg(algorithm)
     }
 
     /// Request retained JSON output with iperf's `-J` option.
@@ -622,6 +666,16 @@ fn decimal_seconds_arg(duration: Duration) -> String {
     value
 }
 
+fn milliseconds_arg(duration: Duration) -> String {
+    let millis = duration.as_millis();
+    let has_fractional_millis = duration.subsec_nanos() % 1_000_000 != 0;
+    if has_fractional_millis {
+        millis.saturating_add(1).to_string()
+    } else {
+        millis.to_string()
+    }
+}
+
 fn validate_server_lifecycle(command: &IperfCommand, test: &IperfTest, role: Role) -> Result<()> {
     if role == Role::Server && !test.one_off() && !command.allow_unbounded_server {
         return Err(Error::invalid_argument(
@@ -720,6 +774,40 @@ mod tests {
     }
 
     #[test]
+    fn typed_operational_helpers_append_iperf_arguments() {
+        let mut command = IperfCommand::client("192.0.2.10");
+        command
+            .logfile("iperf.log")
+            .connect_timeout(Duration::from_millis(1500))
+            .omit(Duration::from_millis(250))
+            .bind("127.0.0.1%lo0")
+            .no_delay()
+            .zerocopy()
+            .congestion_control("cubic");
+
+        assert_eq!(
+            command.argv(),
+            vec![
+                "iperf3-rs".to_owned(),
+                "-c".to_owned(),
+                "192.0.2.10".to_owned(),
+                "--logfile".to_owned(),
+                "iperf.log".to_owned(),
+                "--connect-timeout".to_owned(),
+                "1500".to_owned(),
+                "-O".to_owned(),
+                "0.25".to_owned(),
+                "-B".to_owned(),
+                "127.0.0.1%lo0".to_owned(),
+                "-N".to_owned(),
+                "-Z".to_owned(),
+                "-C".to_owned(),
+                "cubic".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
     fn typed_server_constructors_select_expected_lifecycle() {
         let one_off = IperfCommand::server_once();
         assert_eq!(
@@ -797,6 +885,10 @@ mod tests {
         assert_eq!(decimal_seconds_arg(Duration::ZERO), "0");
         assert_eq!(decimal_seconds_arg(Duration::from_millis(250)), "0.25");
         assert_eq!(decimal_seconds_arg(Duration::new(1, 1)), "1.000000001");
+        assert_eq!(milliseconds_arg(Duration::ZERO), "0");
+        assert_eq!(milliseconds_arg(Duration::from_nanos(1)), "1");
+        assert_eq!(milliseconds_arg(Duration::from_millis(1500)), "1500");
+        assert_eq!(milliseconds_arg(Duration::new(1, 1)), "1001");
     }
 
     #[test]
