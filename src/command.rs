@@ -8,13 +8,13 @@
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 
-use anyhow::{Context, Result, anyhow, bail};
 use crossbeam_channel::{Sender, bounded};
 
 use crate::iperf::{IperfTest, Role};
 use crate::metrics::{
     CallbackMetricsReporter, MetricEvent, MetricsMode, MetricsStream, metric_event_stream,
 };
+use crate::{Error, Result};
 
 static RUN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -26,9 +26,9 @@ static RUN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 /// # Examples
 ///
 /// ```no_run
-/// use iperf3_rs::IperfCommand;
+/// use iperf3_rs::{IperfCommand, Result};
 ///
-/// fn main() -> anyhow::Result<()> {
+/// fn main() -> Result<()> {
 ///     let mut command = IperfCommand::new();
 ///     command.args(["-c", "127.0.0.1", "-t", "5"]);
 ///
@@ -100,11 +100,13 @@ impl IperfCommand {
             Ok(Ok(metrics)) => Ok(RunningIperf { handle, metrics }),
             Ok(Err(err)) => {
                 let _ = handle.join();
-                bail!("{err}");
+                Err(Error::worker(err))
             }
             Err(err) => {
                 let _ = handle.join();
-                bail!("iperf worker exited before setup completed: {err}");
+                Err(Error::worker(format!(
+                    "iperf worker exited before setup completed: {err}"
+                )))
             }
         }
     }
@@ -173,7 +175,7 @@ impl RunningIperf {
     pub fn wait(self) -> Result<IperfResult> {
         self.handle
             .join()
-            .map_err(|_| anyhow!("iperf worker thread panicked"))?
+            .map_err(|_| Error::worker("iperf worker thread panicked"))?
     }
 }
 
@@ -190,7 +192,7 @@ struct RunSetup {
 fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Result<IperfResult> {
     let _guard = run_lock()
         .lock()
-        .map_err(|_| anyhow!("libiperf run lock is poisoned"))?;
+        .map_err(|_| Error::internal("libiperf run lock is poisoned"))?;
 
     let mut setup = match setup_run(command) {
         Ok(setup) => setup,
@@ -228,7 +230,7 @@ fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Re
 fn setup_run(command: IperfCommand) -> Result<RunSetup> {
     validate_metrics_mode(command.metrics_mode)?;
 
-    let mut test = IperfTest::new().context("failed to create iperf test")?;
+    let mut test = IperfTest::new()?;
     test.parse_arguments(&command.argv())?;
     let role = test.role();
 
@@ -274,7 +276,9 @@ fn validate_metrics_mode(mode: MetricsMode) -> Result<()> {
     if metrics_mode_is_valid(mode) {
         Ok(())
     } else {
-        bail!("metrics window interval must be greater than zero");
+        Err(Error::invalid_metrics_mode(
+            "metrics window interval must be greater than zero",
+        ))
     }
 }
 
@@ -302,6 +306,8 @@ mod verification {
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+
+    use crate::ErrorKind;
 
     use super::*;
 
@@ -334,6 +340,7 @@ mod tests {
         command.metrics(MetricsMode::Window(Duration::ZERO));
 
         let err = command.run().unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidMetricsMode);
         assert!(err.to_string().contains("greater than zero"));
     }
 
@@ -342,6 +349,7 @@ mod tests {
         let mut command = IperfCommand::new();
 
         let err = command.run().unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Libiperf);
         assert!(
             err.to_string().contains("client (-c) or server (-s)"),
             "{err:#}"

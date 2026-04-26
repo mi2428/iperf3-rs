@@ -7,7 +7,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_double, c_int};
 use std::ptr::NonNull;
 
-use anyhow::{Context, Result, anyhow, bail};
+use crate::{Error, ErrorKind, Result};
 
 #[allow(non_camel_case_types)]
 mod ffi {
@@ -88,11 +88,14 @@ pub struct IperfTest {
 impl IperfTest {
     pub fn new() -> Result<Self> {
         let ptr = NonNull::new(unsafe { ffi::iperf_new_test() })
-            .ok_or_else(|| anyhow!("iperf_new_test returned null"))?;
+            .ok_or_else(|| Error::internal("iperf_new_test returned null"))?;
         let test = Self { ptr };
         let rc = unsafe { ffi::iperf_defaults(test.as_ptr()) };
         if rc < 0 {
-            bail!("iperf_defaults failed: {}", current_error());
+            return Err(Error::libiperf(format!(
+                "iperf_defaults failed: {}",
+                current_error()
+            )));
         }
         Ok(test)
     }
@@ -108,7 +111,7 @@ impl IperfTest {
             .iter()
             .map(|arg| {
                 CString::new(arg.as_str())
-                    .with_context(|| format!("argument contains NUL: {arg:?}"))
+                    .map_err(|_| Error::invalid_argument(format!("argument contains NUL: {arg:?}")))
             })
             .collect::<Result<Vec<_>>>()?;
         let mut argv = cstrings
@@ -120,7 +123,10 @@ impl IperfTest {
             ffi::iperf_parse_arguments(self.as_ptr(), argv.len() as c_int, argv.as_mut_ptr())
         };
         if rc < 0 {
-            bail!("failed to parse iperf options: {}", current_error());
+            return Err(Error::libiperf(format!(
+                "failed to parse iperf options: {}",
+                current_error()
+            )));
         }
         Ok(())
     }
@@ -155,14 +161,19 @@ impl IperfTest {
         match self.role() {
             Role::Client => self.run_client(),
             Role::Server => self.run_server(),
-            Role::Unknown(role) => bail!("iperf role was not set by arguments: {role}"),
+            Role::Unknown(role) => Err(Error::invalid_argument(format!(
+                "iperf role was not set by arguments: {role}"
+            ))),
         }
     }
 
     fn run_client(&mut self) -> Result<()> {
         let rc = unsafe { ffi::iperf_run_client(self.as_ptr()) };
         if rc < 0 {
-            bail!("iperf client exited with error: {}", current_error());
+            return Err(Error::libiperf(format!(
+                "iperf client exited with error: {}",
+                current_error()
+            )));
         }
         Ok(())
     }
@@ -175,7 +186,9 @@ impl IperfTest {
             if rc < 0 {
                 let error = current_error();
                 if rc < -1 {
-                    bail!("iperf server exited with error: {error}");
+                    return Err(Error::libiperf(format!(
+                        "iperf server exited with error: {error}"
+                    )));
                 }
                 eprintln!("iperf server recovered from error: {error}");
             }
@@ -231,7 +244,10 @@ pub fn libiperf_version() -> String {
 pub fn usage_long() -> Result<String> {
     let ptr = unsafe { ffi::iperf3rs_usage_long() };
     if ptr.is_null() {
-        bail!("failed to render iperf usage text");
+        return Err(Error::new(
+            ErrorKind::Libiperf,
+            "failed to render iperf usage text",
+        ));
     }
     let text = unsafe { CStr::from_ptr(ptr) }
         .to_string_lossy()

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use iperf3_rs::{IperfCommand, MetricsMode, libiperf_version, usage_long};
+use iperf3_rs::{ErrorKind, IperfCommand, MetricsMode, libiperf_version, usage_long};
 
 #[test]
 fn public_api_exposes_upstream_metadata() {
@@ -14,5 +14,6 @@ fn command_rejects_zero_metrics_window() {
     command.metrics(MetricsMode::Window(Duration::ZERO));
 
     let err = command.run().unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidMetricsMode);
     assert!(err.to_string().contains("greater than zero"), "{err:#}");
 }

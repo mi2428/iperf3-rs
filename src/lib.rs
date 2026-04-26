@@ -16,9 +16,9 @@
 //! Run a client and consume live interval metrics:
 //!
 //! ```no_run
-//! use iperf3_rs::{IperfCommand, MetricEvent, MetricsMode};
+//! use iperf3_rs::{IperfCommand, MetricEvent, MetricsMode, Result};
 //!
-//! fn main() -> anyhow::Result<()> {
+//! fn main() -> Result<()> {
 //!     let mut command = IperfCommand::new();
 //!     command
 //!         .args(["-c", "127.0.0.1", "-t", "10", "-i", "1"])
@@ -55,6 +55,7 @@ mod args;
 #[doc(hidden)]
 pub mod cli;
 mod command;
+mod error;
 mod help;
 
 mod iperf;
@@ -63,6 +64,7 @@ mod pushgateway;
 mod version;
 
 pub use command::{IperfCommand, IperfResult, RunningIperf};
+pub use error::{Error, ErrorKind, Result};
 pub use iperf::{Role, libiperf_version, usage_long};
 pub use metrics::{
     MetricEvent, Metrics, MetricsMode, MetricsStream, WindowGaugeStats, WindowMetrics,

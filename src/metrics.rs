@@ -6,11 +6,11 @@ use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, anyhow};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError, bounded, unbounded};
 
 use crate::iperf::{IperfTest, RawIperfTest};
 use crate::pushgateway::PushGateway;
+use crate::{Error, Result};
 
 #[derive(Debug, Clone, Default, PartialEq)]
 /// One libiperf interval sample.
@@ -219,7 +219,7 @@ impl CallbackMetricsReporter {
         let test_key = test.as_ptr() as usize;
         callbacks()
             .lock()
-            .map_err(|_| anyhow!("metrics callback registry is poisoned"))?
+            .map_err(|_| Error::internal("metrics callback registry is poisoned"))?
             .insert(test_key, target);
 
         test.enable_interval_metrics(metrics_callback);

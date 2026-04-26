@@ -6,12 +6,12 @@
 
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
 use reqwest::StatusCode;
 use reqwest::blocking::Client;
 use url::Url;
 
 use crate::metrics::{Metrics, WindowGaugeStats, WindowMetrics};
+use crate::{Error, ErrorKind, Result};
 
 const PUSH_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
 const PUSH_RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
@@ -69,7 +69,9 @@ impl PushGateway {
             .timeout(config.timeout)
             .user_agent(config.user_agent)
             .build()
-            .context("failed to build HTTP client")?;
+            .map_err(|err| {
+                Error::with_source(ErrorKind::PushGateway, "failed to build HTTP client", err)
+            })?;
 
         Ok(Self {
             client,
@@ -113,14 +115,18 @@ impl PushGateway {
             .body(body.to_owned())
             .send()
             .map_err(|err| PushAttemptError {
-                error: anyhow!("failed to send Pushgateway request: {err}"),
+                error: Error::with_source(
+                    ErrorKind::PushGateway,
+                    "failed to send Pushgateway request",
+                    err,
+                ),
                 retryable: true,
             })?;
 
         if !response.status().is_success() {
             let status = response.status();
             return Err(PushAttemptError {
-                error: anyhow!("Pushgateway returned {status}"),
+                error: Error::pushgateway(format!("Pushgateway returned {status}")),
                 retryable: is_retryable_status(status),
             });
         }
@@ -131,7 +137,7 @@ impl PushGateway {
 
 #[derive(Debug)]
 struct PushAttemptError {
-    error: anyhow::Error,
+    error: Error,
     retryable: bool,
 }
 

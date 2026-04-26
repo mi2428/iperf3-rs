@@ -247,9 +247,9 @@ the `iperf3-rs` CLI and scraping its output.
 them to upstream `iperf_parse_arguments()`:
 
 ```rust
-use iperf3_rs::{IperfCommand, MetricEvent, MetricsMode};
+use iperf3_rs::{IperfCommand, MetricEvent, MetricsMode, Result};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let mut command = IperfCommand::new();
     command
         .args(["-c", "127.0.0.1", "-t", "10", "-i", "1"])
