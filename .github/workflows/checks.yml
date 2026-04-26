@@ -130,6 +130,7 @@ jobs:
       - name: Run unit tests
         run: |
           cargo test
+          cargo test --no-default-features
           cargo test --manifest-path examples/bwcheck/Cargo.toml
 
   kani:

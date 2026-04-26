@@ -147,6 +147,10 @@ doc: ## Build rustdoc with warnings treated as errors
 test: ## Run unit tests
 	@$(CARGO_ENV) $(CARGO) test
 
+.PHONY: test-no-default
+test-no-default: ## Run tests with default features disabled
+	@$(CARGO_ENV) $(CARGO) test --no-default-features
+
 .PHONY: kani
 kani: ## Run Kani model checking harnesses
 	@$(CARGO_ENV) $(CARGO) kani
@@ -191,6 +195,7 @@ check: ## Run formatting, lint, tests, and completion checks
 	@$(MAKE) --no-print-directory lint
 	@$(MAKE) --no-print-directory doc
 	@$(MAKE) --no-print-directory test
+	@$(MAKE) --no-print-directory test-no-default
 	@$(MAKE) --no-print-directory _completions CHECK_ONLY=1
 
 .PHONY: multipass

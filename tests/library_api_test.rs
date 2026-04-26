@@ -1,18 +1,27 @@
+use std::time::Duration;
+#[cfg(feature = "serde")]
 use std::{
     env, fs,
+    time::{SystemTime, UNIX_EPOCH},
+};
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
+use std::{
     io::{ErrorKind as IoErrorKind, Read, Write},
     net::TcpListener,
     path::Path,
     process::{Child, Command, Output, Stdio},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::Instant,
 };
 
 use iperf3_rs::{
-    ErrorKind, IperfCommand, MetricDirection, MetricEvent, Metrics, MetricsFileFormat,
-    MetricsFileSink, MetricsMode, PrometheusEncoder, PushGatewayConfig, TransportProtocol,
-    WindowMetrics, libiperf_version, usage_long,
+    ErrorKind, IperfCommand, Metrics, MetricsMode, PrometheusEncoder, WindowMetrics,
+    libiperf_version, usage_long,
 };
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
+use iperf3_rs::{MetricDirection, PushGatewayConfig, TransportProtocol};
+#[cfg(feature = "serde")]
+use iperf3_rs::{MetricEvent, MetricsFileFormat, MetricsFileSink};
 
 #[test]
 fn public_api_exposes_upstream_metadata() {
@@ -30,6 +39,7 @@ fn command_rejects_zero_metrics_window() {
     assert!(err.to_string().contains("greater than zero"), "{err:#}");
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[test]
 fn command_spawn_streams_interval_metrics_against_one_off_server() {
     let port = free_loopback_port();
@@ -71,6 +81,7 @@ fn command_spawn_streams_interval_metrics_against_one_off_server() {
     assert!(samples.iter().all(|sample| sample.udp_packets.is_none()));
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[test]
 fn command_spawn_streams_window_metrics_against_one_off_server() {
     let port = free_loopback_port();
@@ -111,6 +122,7 @@ fn command_spawn_streams_window_metrics_against_one_off_server() {
     assert!(windows.iter().all(|window| window.udp_packets.is_none()));
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[test]
 fn command_run_collects_interval_metrics_in_result() {
     let port = free_loopback_port();
@@ -130,6 +142,7 @@ fn command_run_collects_interval_metrics_in_result() {
     assert!(samples.iter().any(|sample| sample.transferred_bytes > 0.0));
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[test]
 fn command_run_collects_window_metrics_in_result() {
     let port = free_loopback_port();
@@ -155,6 +168,7 @@ fn command_run_collects_window_metrics_in_result() {
     assert!(windows.iter().all(|window| window.stream_count > 0));
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[test]
 fn command_run_with_pushgateway_pushes_interval_metrics() {
     let port = free_loopback_port();
@@ -205,6 +219,7 @@ fn public_prometheus_encoder_renders_metrics_without_pushgateway() {
     assert!(window.contains("nettest_window_transferred_bytes 64\n"));
 }
 
+#[cfg(feature = "serde")]
 #[test]
 fn public_metrics_file_sink_writes_jsonl_events() {
     let metrics_file = temp_metrics_path("jsonl");
@@ -224,6 +239,7 @@ fn public_metrics_file_sink_writes_jsonl_events() {
     let _ = fs::remove_file(metrics_file);
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[test]
 fn cli_writes_jsonl_metrics_file_without_replacing_stdout() {
     let port = free_loopback_port();
@@ -243,6 +259,7 @@ fn cli_writes_jsonl_metrics_file_without_replacing_stdout() {
     let _ = fs::remove_file(metrics_file);
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[test]
 fn cli_writes_prometheus_metrics_file_with_custom_prefix() {
     let port = free_loopback_port();
@@ -272,6 +289,7 @@ fn cli_writes_prometheus_metrics_file_with_custom_prefix() {
     let _ = fs::remove_file(metrics_file);
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[test]
 fn cli_treats_metrics_file_create_failure_as_fatal() {
     let missing_dir = temp_metrics_path("missing-dir");
@@ -299,6 +317,7 @@ fn cli_treats_metrics_file_create_failure_as_fatal() {
     );
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 fn run_library_client(port: u16, mode: MetricsMode) -> (iperf3_rs::IperfResult, Vec<MetricEvent>) {
     let mut last_error = String::new();
     for _ in 0..20 {
@@ -313,6 +332,7 @@ fn run_library_client(port: u16, mode: MetricsMode) -> (iperf3_rs::IperfResult, 
     panic!("client should complete: {last_error}");
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 fn run_library_client_blocking(port: u16, mode: MetricsMode) -> iperf3_rs::IperfResult {
     let mut last_error = String::new();
     for _ in 0..20 {
@@ -327,6 +347,7 @@ fn run_library_client_blocking(port: u16, mode: MetricsMode) -> iperf3_rs::Iperf
     panic!("blocking client should complete: {last_error}");
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 fn try_run_library_client_blocking(
     port: u16,
     mode: MetricsMode,
@@ -342,6 +363,7 @@ fn try_run_library_client_blocking(
     command.run()
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 fn try_run_library_client(
     port: u16,
     mode: MetricsMode,
@@ -359,6 +381,7 @@ fn try_run_library_client(
     Ok((result, events))
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 fn try_run_library_direct_push_client(
     port: u16,
     config: PushGatewayConfig,
@@ -373,6 +396,7 @@ fn try_run_library_direct_push_client(
     Ok(())
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 fn run_cli_metrics_file_client(port: u16, metrics_file: &Path, extra_args: &[&str]) -> Output {
     let mut last_output = None;
     for _ in 0..20 {
@@ -411,15 +435,18 @@ fn run_cli_metrics_file_client(port: u16, metrics_file: &Path, extra_args: &[&st
     );
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 fn free_loopback_port() -> u16 {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind ephemeral loopback port");
     listener.local_addr().unwrap().port()
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 struct OneOffServer {
     child: Child,
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 impl OneOffServer {
     fn start(port: u16) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_iperf3-rs"))
@@ -433,6 +460,7 @@ impl OneOffServer {
     }
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 impl Drop for OneOffServer {
     fn drop(&mut self) {
         if self.child.try_wait().ok().flatten().is_none() {
@@ -442,10 +470,12 @@ impl Drop for OneOffServer {
     }
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 struct OneShotHttpSink {
     handle: thread::JoinHandle<String>,
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 impl OneShotHttpSink {
     fn start() -> (Self, String) {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind HTTP sink");
@@ -496,6 +526,7 @@ impl OneShotHttpSink {
     }
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 fn read_http_request(stream: &mut std::net::TcpStream) -> String {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -522,10 +553,12 @@ fn read_http_request(stream: &mut std::net::TcpStream) -> String {
     String::from_utf8_lossy(&request).into_owned()
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 fn find_header_end(bytes: &[u8]) -> Option<usize> {
     bytes.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
 fn content_length(headers: &[u8]) -> Option<usize> {
     String::from_utf8_lossy(headers).lines().find_map(|line| {
         let (name, value) = line.split_once(':')?;
@@ -535,6 +568,7 @@ fn content_length(headers: &[u8]) -> Option<usize> {
     })
 }
 
+#[cfg(feature = "serde")]
 fn temp_metrics_path(extension: &str) -> std::path::PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
