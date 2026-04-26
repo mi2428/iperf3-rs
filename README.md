@@ -296,7 +296,9 @@ Applications that want to use their own delivery path can reuse the same
 encoding and file output as the CLI. `PrometheusEncoder` renders interval and
 window snapshots without requiring HTTP dependencies. With the `serde` feature,
 `MetricsFileSink` writes JSONL or Prometheus text files from `MetricEvent`,
-`Metrics`, or `WindowMetrics` values:
+`Metrics`, or `WindowMetrics` values. Use `with_labels` or
+`with_prefix_and_labels` when every Prometheus sample should carry the same
+label set:
 
 ```rust
 use iperf3_rs::{
@@ -304,13 +306,18 @@ use iperf3_rs::{
 };
 
 fn write_metrics(event: &MetricEvent) -> Result<()> {
-    let encoder = PrometheusEncoder::new("nettest")?;
+    let encoder = PrometheusEncoder::with_labels("nettest", [("site", "ci")])?;
     if let MetricEvent::Interval(metrics) = event {
         let body = encoder.encode_interval(metrics);
         println!("{body}");
     }
 
-    let sink = MetricsFileSink::with_prefix("iperf3.prom", MetricsFileFormat::Prometheus, "nettest")?;
+    let sink = MetricsFileSink::with_prefix_and_labels(
+        "iperf3.prom",
+        MetricsFileFormat::Prometheus,
+        "nettest",
+        [("site", "ci")],
+    )?;
     if let MetricEvent::Interval(metrics) = event {
         sink.write_interval(metrics)?;
     }
@@ -457,6 +464,10 @@ Push options:
 
 --metrics.format FORMAT
     Metrics file format. Accepts jsonl or prometheus. Defaults to jsonl.
+
+--metrics.label KEY=VALUE
+    Add a Prometheus sample label to metrics file output. Repeatable.
+    Requires --metrics.format prometheus.
 ```
 
 Every push option has an environment default:
@@ -474,10 +485,12 @@ PUSH_INTERVAL=DURATION
 PUSH_DELETE_ON_EXIT=BOOL
 METRICS_FILE=PATH
 METRICS_FORMAT=FORMAT
+METRICS_LABELS=KEY=VALUE,...
 ```
 
-CLI values override environment defaults. `PUSH_LABELS` are applied before
-`--push.label` values. Duplicate label names are rejected.
+CLI values override environment defaults. `PUSH_LABELS` and `METRICS_LABELS`
+are applied before their matching CLI label values. Duplicate label names are
+rejected within each label set.
 `PUSH_METRIC_PREFIX` is kept as a deprecated alias; `METRICS_PREFIX` is the
 primary environment name and wins when both are set.
 Boolean environment values accept `true`, `false`, `1`, `0`, `yes`, `no`, `on`,
@@ -525,13 +538,16 @@ iperf3-rs \
   -i 1 \
   --metrics.file iperf3.prom \
   --metrics.format prometheus \
-  --metrics.prefix nettest
+  --metrics.prefix nettest \
+  --metrics.label site=ci
 ```
 
 File output can be used by itself or together with Pushgateway export. It never
 changes stdout, so normal human output and `-J` JSON behavior remain owned by
 upstream libiperf. Unlike Pushgateway delivery, file output is required: failing
 to create or write the requested file makes the CLI exit with an error.
+For Prometheus file output, `--metrics.label` labels are rendered on every
+sample, for example `nettest_transferred_bytes{site="ci"} 1234`.
 
 ### Metric names
 

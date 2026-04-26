@@ -191,6 +191,8 @@ fn cli_writes_prometheus_metrics_file_with_custom_prefix() {
             "prometheus",
             "--metrics.prefix",
             "nettest",
+            "--metrics.label",
+            "site=ci",
         ],
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -198,8 +200,8 @@ fn cli_writes_prometheus_metrics_file_with_custom_prefix() {
     assert!(stdout.contains("sender"));
 
     let metrics = fs::read_to_string(&metrics_file).unwrap();
-    assert!(metrics.contains("nettest_transferred_bytes "));
-    assert!(metrics.contains("nettest_bandwidth_bits_per_second "));
+    assert!(metrics.contains("nettest_transferred_bytes{site=\"ci\"} "));
+    assert!(metrics.contains("nettest_bandwidth_bits_per_second{site=\"ci\"} "));
     assert!(!metrics.contains("iperf3_transferred_bytes "));
     let _ = fs::remove_file(metrics_file);
 }

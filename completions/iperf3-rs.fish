@@ -74,3 +74,4 @@ complete -c iperf3-rs -l push.interval -r -a '500ms 1s 5s 10s 30s 1m' -d 'Aggreg
 complete -c iperf3-rs -l push.delete-on-exit -d 'Delete this Pushgateway grouping key after the run exits'
 complete -c iperf3-rs -l metrics.file -r -d 'Write live interval metrics to a file'
 complete -c iperf3-rs -l metrics.format -r -a 'jsonl prometheus' -d 'Metrics file format'
+complete -c iperf3-rs -l metrics.label -r -a 'site= host= scenario= run=' -d 'Add a Prometheus file sample label'

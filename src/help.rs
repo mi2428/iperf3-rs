@@ -78,6 +78,11 @@ pub fn render_wrapper_help() -> String {
                 description: "metrics file format: jsonl or prometheus (default: jsonl)",
                 continuation: &[],
             },
+            HelpRow {
+                value: "--metrics.label KEY=VALUE",
+                description: "add a Prometheus file sample label; repeatable",
+                continuation: &["requires --metrics.format prometheus"],
+            },
         ],
     );
     help.push('\n');
@@ -145,6 +150,11 @@ pub fn render_wrapper_help() -> String {
                 description: "default value for --metrics.format",
                 continuation: &[],
             },
+            HelpRow {
+                value: "METRICS_LABELS=KEY=VALUE,...",
+                description: "default labels for Prometheus file output",
+                continuation: &[],
+            },
         ],
     );
     help
@@ -205,6 +215,7 @@ mod tests {
         assert!(help.contains("--push.delete-on-exit"));
         assert!(help.contains("--metrics.file PATH"));
         assert!(help.contains("--metrics.format FORMAT"));
+        assert!(help.contains("--metrics.label KEY=VALUE"));
         assert!(help.contains("PUSH_LABELS=KEY=VALUE,..."));
         assert!(help.contains("METRICS_PREFIX=P"));
         assert!(help.contains("PUSH_METRIC_PREFIX=P"));
@@ -212,6 +223,7 @@ mod tests {
         assert!(help.contains("PUSH_DELETE_ON_EXIT=BOOL"));
         assert!(help.contains("METRICS_FILE=PATH"));
         assert!(help.contains("METRICS_FORMAT=FORMAT"));
+        assert!(help.contains("METRICS_LABELS=KEY=VALUE,..."));
     }
 
     #[test]

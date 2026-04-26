@@ -78,4 +78,5 @@ _arguments -s -S \
   '--push.delete-on-exit[delete this Pushgateway grouping key after the run exits]' \
   '--metrics.file[write live interval metrics to a file]:file:_files' \
   '--metrics.format[metrics file format]:format:(jsonl prometheus)' \
+  '*--metrics.label[add a Prometheus file sample label]:KEY=VALUE:' \
   '*:argument:_default'

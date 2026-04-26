@@ -32,6 +32,7 @@ pub struct AppOptions {
     pub push_delete_on_exit: bool,
     pub metrics_file: Option<PathBuf>,
     pub metrics_format: MetricsFileFormat,
+    pub metrics_labels: Vec<(String, String)>,
     pub show_help: bool,
     pub show_version: bool,
 }
@@ -67,6 +68,7 @@ fn extract_app_options_with_env(
                 push_delete_on_exit: false,
                 metrics_file: None,
                 metrics_format: MetricsFileFormat::Jsonl,
+                metrics_labels: Vec::new(),
                 show_help,
                 show_version,
             },
@@ -78,7 +80,7 @@ fn extract_app_options_with_env(
     let mut push_job =
         get_env("PUSH_JOB").unwrap_or_else(|| PushGatewayConfig::DEFAULT_JOB.to_owned());
     let mut push_labels = get_env("PUSH_LABELS")
-        .map(|raw| parse_env_labels(&raw))
+        .map(|raw| parse_env_labels("PUSH_LABELS", &raw, true))
         .transpose()?
         .unwrap_or_default();
     let mut push_timeout = get_env("PUSH_TIMEOUT")
@@ -114,10 +116,15 @@ fn extract_app_options_with_env(
         .map(|raw| parse_metrics_format("METRICS_FORMAT", raw))
         .transpose()?
         .unwrap_or(MetricsFileFormat::Jsonl);
+    let mut metrics_labels = get_env("METRICS_LABELS")
+        .map(|raw| parse_env_labels("METRICS_LABELS", &raw, false))
+        .transpose()?
+        .unwrap_or_default();
     let mut saw_push_job = false;
     let mut saw_push_label = !push_labels.is_empty();
     let mut saw_push_setting = false;
     let mut saw_metrics_setting = raw_metrics_format.is_some();
+    let mut saw_metrics_label = !metrics_labels.is_empty();
     let mut saw_metric_prefix = false;
 
     let mut i = 0;
@@ -137,8 +144,12 @@ fn extract_app_options_with_env(
                     saw_push_job = true;
                 }
                 "--push.label" => {
-                    push_labels.push(parse_label(value)?);
+                    push_labels.push(parse_label("--push.label", value, true)?);
                     saw_push_label = true;
+                }
+                "--metrics.label" => {
+                    metrics_labels.push(parse_label("--metrics.label", value, false)?);
+                    saw_metrics_label = true;
                 }
                 "--push.timeout" => {
                     push_timeout = parse_duration_option("--push.timeout", value)?;
@@ -190,8 +201,20 @@ fn extract_app_options_with_env(
                 saw_push_job = true;
             }
             "--push.label" => {
-                push_labels.push(parse_label(&take_value(&rest, &mut i, "--push.label")?)?);
+                push_labels.push(parse_label(
+                    "--push.label",
+                    &take_value(&rest, &mut i, "--push.label")?,
+                    true,
+                )?);
                 saw_push_label = true;
+            }
+            "--metrics.label" => {
+                metrics_labels.push(parse_label(
+                    "--metrics.label",
+                    &take_value(&rest, &mut i, "--metrics.label")?,
+                    false,
+                )?);
+                saw_metrics_label = true;
             }
             "--push.timeout" => {
                 push_timeout = parse_duration_option(
@@ -270,13 +293,20 @@ fn extract_app_options_with_env(
     if metrics_file.is_none() && saw_metrics_setting {
         bail!("metrics settings require --metrics.file or METRICS_FILE");
     }
+    if metrics_file.is_none() && saw_metrics_label {
+        bail!("--metrics.label requires --metrics.file or METRICS_FILE");
+    }
+    if saw_metrics_label && metrics_format != MetricsFileFormat::Prometheus {
+        bail!("--metrics.label requires --metrics.format prometheus");
+    }
     if push_url.is_none() && metrics_file.is_none() && saw_metric_prefix {
         bail!("metric prefix requires --metrics.file, METRICS_FILE, --push.url, or PUSH_URL");
     }
     if push_url.is_some() && push_job.is_empty() {
         bail!("--push.job must not be empty when --push.url is set");
     }
-    reject_duplicate_labels(&push_labels)?;
+    reject_duplicate_labels("--push.label", &push_labels)?;
+    reject_duplicate_labels("--metrics.label", &metrics_labels)?;
 
     Ok((
         AppOptions {
@@ -291,6 +321,7 @@ fn extract_app_options_with_env(
             push_delete_on_exit,
             metrics_file,
             metrics_format,
+            metrics_labels,
             show_help: false,
             show_version: false,
         },
@@ -450,43 +481,41 @@ fn parse_metric_prefix(option: &str, raw: &str) -> Result<String> {
     Ok(value.to_owned())
 }
 
-fn parse_env_labels(raw: &str) -> Result<Vec<(String, String)>> {
+fn parse_env_labels(option: &str, raw: &str, reserve_job: bool) -> Result<Vec<(String, String)>> {
     if raw.trim().is_empty() {
         return Ok(Vec::new());
     }
 
     raw.split(',')
         .map(str::trim)
-        .map(parse_label)
+        .map(|label| parse_label(option, label, reserve_job))
         .collect::<Result<Vec<_>>>()
 }
 
-fn parse_label(raw: &str) -> Result<(String, String)> {
+fn parse_label(option: &str, raw: &str, reserve_job: bool) -> Result<(String, String)> {
     let (name, value) = raw
         .split_once('=')
-        .ok_or_else(|| anyhow!("--push.label requires KEY=VALUE"))?;
-    // Pushgateway grouping keys become Prometheus labels, so reject names that
-    // would fail ingestion or conflict with the job segment managed separately.
+        .ok_or_else(|| anyhow!("{option} requires KEY=VALUE"))?;
     if !is_valid_label_name(name) {
-        bail!("invalid --push.label name '{name}'");
+        bail!("invalid {option} name '{name}'");
     }
-    if is_reserved_label_name(name) {
-        bail!("--push.label name '{name}' is reserved");
+    if reserve_job && is_reserved_label_name(name) {
+        bail!("{option} name '{name}' is reserved");
     }
     if value.is_empty() {
-        bail!("--push.label value for '{name}' must not be empty");
+        bail!("{option} value for '{name}' must not be empty");
     }
 
     Ok((name.to_owned(), value.to_owned()))
 }
 
-fn reject_duplicate_labels(labels: &[(String, String)]) -> Result<()> {
+fn reject_duplicate_labels(option: &str, labels: &[(String, String)]) -> Result<()> {
     for (index, (name, _)) in labels.iter().enumerate() {
         if labels[..index]
             .iter()
             .any(|(previous_name, _)| previous_name == name)
         {
-            bail!("duplicate --push.label name '{name}'");
+            bail!("duplicate {option} name '{name}'");
         }
     }
     Ok(())
@@ -648,6 +677,9 @@ mod tests {
             "--metrics.file".to_owned(),
             "metrics.jsonl".to_owned(),
             "--metrics.format=prometheus".to_owned(),
+            "--metrics.label".to_owned(),
+            "site=ci".to_owned(),
+            "--metrics.label=run=nightly".to_owned(),
             "-t".to_owned(),
             "3".to_owned(),
         ];
@@ -671,6 +703,13 @@ mod tests {
         assert!(app.push_delete_on_exit);
         assert_eq!(app.metrics_file, Some(PathBuf::from("metrics.jsonl")));
         assert_eq!(app.metrics_format, MetricsFileFormat::Prometheus);
+        assert_eq!(
+            app.metrics_labels,
+            [
+                ("site".to_owned(), "ci".to_owned()),
+                ("run".to_owned(), "nightly".to_owned())
+            ]
+        );
         assert_eq!(iperf, ["iperf3-rs", "-c", "127.0.0.1", "-t", "3"]);
     }
 
@@ -745,6 +784,7 @@ mod tests {
             "--push.interval",
             "--metrics.file",
             "--metrics.format",
+            "--metrics.label",
             "--metrics.prefix",
         ] {
             let args = vec!["iperf3-rs".to_owned(), option.to_owned()];
@@ -805,6 +845,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_malformed_metrics_label() {
+        for label in ["missing-equals", "9bad=value", "ok="] {
+            let args = vec![
+                "iperf3-rs".to_owned(),
+                "--metrics.file".to_owned(),
+                "metrics.prom".to_owned(),
+                "--metrics.format=prometheus".to_owned(),
+                "--metrics.label".to_owned(),
+                label.to_owned(),
+            ];
+
+            assert!(
+                extract_app_options_with_env(args, |_| None).is_err(),
+                "{label} should be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_duplicate_push_labels() {
         let args = vec![
             "iperf3-rs".to_owned(),
@@ -824,6 +883,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_duplicate_metrics_labels() {
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "--metrics.file=metrics.prom".to_owned(),
+            "--metrics.format=prometheus".to_owned(),
+            "--metrics.label".to_owned(),
+            "site=one".to_owned(),
+            "--metrics.label".to_owned(),
+            "site=two".to_owned(),
+        ];
+
+        let err = extract_app_options_with_env(args, |_| None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("duplicate --metrics.label name 'site'")
+        );
+    }
+
+    #[test]
     fn parses_push_transport_and_metric_options_from_environment() {
         let args = vec!["iperf3-rs".to_owned(), "-s".to_owned()];
 
@@ -837,6 +915,7 @@ mod tests {
             "PUSH_DELETE_ON_EXIT" => Some("yes".to_owned()),
             "METRICS_FILE" => Some("metrics.jsonl".to_owned()),
             "METRICS_FORMAT" => Some("prometheus".to_owned()),
+            "METRICS_LABELS" => Some("site=ci,run=nightly".to_owned()),
             _ => None,
         })
         .unwrap();
@@ -850,6 +929,13 @@ mod tests {
         assert!(app.push_delete_on_exit);
         assert_eq!(app.metrics_file, Some(PathBuf::from("metrics.jsonl")));
         assert_eq!(app.metrics_format, MetricsFileFormat::Prometheus);
+        assert_eq!(
+            app.metrics_labels,
+            [
+                ("site".to_owned(), "ci".to_owned()),
+                ("run".to_owned(), "nightly".to_owned())
+            ]
+        );
         assert_eq!(iperf, ["iperf3-rs", "-s"]);
     }
 
@@ -913,6 +999,27 @@ mod tests {
             err.to_string()
                 .contains("metrics settings require --metrics.file"),
             "{err:#}"
+        );
+    }
+
+    #[test]
+    fn metrics_labels_require_prometheus_file_output() {
+        let missing_file = vec!["iperf3-rs".to_owned(), "--metrics.label=site=ci".to_owned()];
+        let err = extract_app_options_with_env(missing_file, |_| None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--metrics.label requires --metrics.file")
+        );
+
+        let jsonl_file = vec![
+            "iperf3-rs".to_owned(),
+            "--metrics.file=metrics.jsonl".to_owned(),
+            "--metrics.label=site=ci".to_owned(),
+        ];
+        let err = extract_app_options_with_env(jsonl_file, |_| None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--metrics.label requires --metrics.format prometheus")
         );
     }
 
@@ -1123,6 +1230,7 @@ mod tests {
                 "PUSH_INTERVAL" => Some("not-a-duration".to_owned()),
                 "PUSH_DELETE_ON_EXIT" => Some("not-a-bool".to_owned()),
                 "METRICS_FORMAT" => Some("not-a-format".to_owned()),
+                "METRICS_LABELS" => Some("not-a-label".to_owned()),
                 _ => None,
             })
             .unwrap();

@@ -78,6 +78,7 @@ _iperf3_rs()
         --push.delete-on-exit
         --metrics.file
         --metrics.format
+        --metrics.label
     "
 
     case "${cur}" in
@@ -103,6 +104,10 @@ _iperf3_rs()
             ;;
         --push.label=*)
             COMPREPLY=($(compgen -P "--push.label=" -W "test= scenario= site= host=" -- "${cur#*=}"))
+            return
+            ;;
+        --metrics.label=*)
+            COMPREPLY=($(compgen -P "--metrics.label=" -W "site= host= scenario= run=" -- "${cur#*=}"))
             return
             ;;
         --push.url=*)
@@ -148,6 +153,10 @@ _iperf3_rs()
             ;;
         --push.label)
             COMPREPLY=($(compgen -W "test= scenario= site= host=" -- "${cur}"))
+            return
+            ;;
+        --metrics.label)
+            COMPREPLY=($(compgen -W "site= host= scenario= run=" -- "${cur}"))
             return
             ;;
         --push.url)

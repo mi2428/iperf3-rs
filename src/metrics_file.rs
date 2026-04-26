@@ -62,10 +62,33 @@ impl MetricsFileSink {
         format: MetricsFileFormat,
         metric_prefix: impl Into<String>,
     ) -> Result<Self> {
+        Self::with_prefix_and_labels(
+            path,
+            format,
+            metric_prefix,
+            std::iter::empty::<(String, String)>(),
+        )
+    }
+
+    /// Create a sink with a custom Prometheus metric prefix and labels.
+    ///
+    /// Labels are applied only to Prometheus text exposition output. JSONL
+    /// output carries structured metric fields and its own schema version.
+    pub fn with_prefix_and_labels<I, K, V>(
+        path: impl Into<PathBuf>,
+        format: MetricsFileFormat,
+        metric_prefix: impl Into<String>,
+        labels: I,
+    ) -> Result<Self>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
         let sink = Self {
             path: path.into(),
             format,
-            encoder: PrometheusEncoder::new(metric_prefix)?,
+            encoder: PrometheusEncoder::with_labels(metric_prefix, labels)?,
         };
         sink.create_empty_file()?;
         Ok(sink)
@@ -245,15 +268,20 @@ mod tests {
     #[test]
     fn prometheus_format_replaces_latest_snapshot() {
         let path = temp_path("prom");
-        let sink =
-            MetricsFileSink::with_prefix(&path, MetricsFileFormat::Prometheus, "nettest").unwrap();
+        let sink = MetricsFileSink::with_prefix_and_labels(
+            &path,
+            MetricsFileFormat::Prometheus,
+            "nettest",
+            [("site", "ci")],
+        )
+        .unwrap();
 
         sink.write_interval(&sample_metrics(1.0)).unwrap();
         sink.write_interval(&sample_metrics(2.0)).unwrap();
 
         let contents = fs::read_to_string(&path).unwrap();
-        assert!(contents.contains("nettest_transferred_bytes 2\n"));
-        assert!(!contents.contains("nettest_transferred_bytes 1\n"));
+        assert!(contents.contains("nettest_transferred_bytes{site=\"ci\"} 2\n"));
+        assert!(!contents.contains("nettest_transferred_bytes{site=\"ci\"} 1\n"));
         assert_no_temp_files_for(&path);
         let _ = fs::remove_file(path);
     }
