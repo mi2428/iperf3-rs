@@ -18,16 +18,17 @@
 //! Run a client and consume live interval metrics:
 //!
 //! ```no_run
+//! use std::time::Duration;
+//!
 //! use iperf3_rs::{IperfCommand, MetricEvent, MetricsMode, Result};
 //!
 //! fn main() -> Result<()> {
-//!     let mut command = IperfCommand::new();
+//!     let mut command = IperfCommand::client("127.0.0.1");
 //!     command
-//!         .args(["-c", "127.0.0.1", "-t", "10", "-i", "1"])
-//!         .metrics(MetricsMode::Interval);
+//!         .duration(Duration::from_secs(10))
+//!         .report_interval(Duration::from_secs(1));
 //!
-//!     let mut running = command.spawn()?;
-//!     let mut metrics = running.take_metrics().expect("metrics enabled");
+//!     let (running, mut metrics) = command.spawn_with_metrics(MetricsMode::Interval)?;
 //!
 //!     while let Some(event) = metrics.recv() {
 //!         match event {

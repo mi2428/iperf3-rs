@@ -10,6 +10,7 @@
 use std::env;
 use std::fmt;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use iperf3_rs::{IperfCommand, MetricEvent, Metrics, MetricsMode};
 
@@ -21,12 +22,11 @@ const DEFAULT_MIN_BANDWIDTH_BPS: f64 = 500_000.0;
 const DEFAULT_MAX_LOSS_PERCENT: f64 = 1.0;
 
 // The example fixes the iperf parameters so that the library usage is the main
-// thing to read. `IperfCommand` still receives normal argv-shaped iperf options,
-// so replacing these constants with user input would not require a different
-// library API.
-const IPERF_SECONDS: &str = "3";
-const IPERF_INTERVAL_SECONDS: &str = "1";
-const IPERF_UDP_BITRATE: &str = "1M";
+// thing to read. The typed helpers below are thin wrappers over normal iperf
+// options; `arg` and `args` remain available for less common upstream flags.
+const IPERF_SECONDS: u64 = 3;
+const IPERF_INTERVAL_SECONDS: u64 = 1;
+const IPERF_UDP_BITRATE_BPS: u64 = 1_000_000;
 
 fn main() -> ExitCode {
     match run() {
@@ -173,38 +173,23 @@ impl fmt::Display for CheckReport {
 }
 
 fn check_endpoint(endpoint: &Endpoint, config: &Config) -> Result<CheckReport> {
-    let port = endpoint.port.to_string();
-    let mut command = IperfCommand::new();
-    // Build the same argument vector that could be typed after `iperf3` on the
-    // command line. The wrapper does not reimplement iperf's option grammar:
-    // upstream libiperf still parses `-c`, `-p`, `-u`, `-b`, `-t`, `-i`, etc.
-    //
-    // The Rust application owns orchestration around libiperf: which endpoints
-    // to run, which thresholds matter, and what to do with the metrics.
+    let mut command = IperfCommand::client(endpoint.host.as_str());
+    // The typed builder still produces ordinary iperf arguments, then upstream
+    // libiperf parses them. The Rust application owns orchestration around
+    // libiperf: which endpoints to run, which thresholds matter, and what to do
+    // with the live metrics.
     command
-        .args([
-            "-c",
-            endpoint.host.as_str(),
-            "-p",
-            port.as_str(),
-            "-u",
-            "-b",
-            IPERF_UDP_BITRATE,
-            "-t",
-            IPERF_SECONDS,
-            "-i",
-            IPERF_INTERVAL_SECONDS,
-        ])
-        .metrics(MetricsMode::Interval);
+        .port(endpoint.port)
+        .udp()
+        .bitrate_bits_per_second(IPERF_UDP_BITRATE_BPS)
+        .duration(Duration::from_secs(IPERF_SECONDS))
+        .report_interval(Duration::from_secs(IPERF_INTERVAL_SECONDS));
 
-    // `spawn` starts the iperf run and returns immediately with handles for the
-    // process-local runner and the optional metrics stream. In interval mode,
+    // `spawn_with_metrics` starts the iperf run and returns immediately with
+    // both the process-local runner and the metrics stream. In interval mode,
     // each libiperf report interval becomes a `MetricEvent::Interval` while the
     // iperf run is still active.
-    let mut running = command.spawn()?;
-    let stream = running
-        .take_metrics()
-        .ok_or("metrics stream should exist when MetricsMode::Interval is enabled")?;
+    let (running, stream) = command.spawn_with_metrics(MetricsMode::Interval)?;
     let mut samples = Vec::new();
 
     // Drain the stream until the producer closes it. This is the same pattern a
@@ -293,6 +278,6 @@ fn print_usage() {
         "usage: iperf3-rs-bwcheck [--min-bandwidth-bps N] [--max-loss-percent N] HOST:PORT..."
     );
     eprintln!(
-        "fixed iperf parameters: -u -b {IPERF_UDP_BITRATE} -t {IPERF_SECONDS} -i {IPERF_INTERVAL_SECONDS}"
+        "fixed iperf parameters: -u -b {IPERF_UDP_BITRATE_BPS} -t {IPERF_SECONDS} -i {IPERF_INTERVAL_SECONDS}"
     );
 }

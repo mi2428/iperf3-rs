@@ -243,20 +243,22 @@ The same libiperf frontend is available as a Rust crate. This is intended for
 programs that want to start iperf tests directly from Rust instead of spawning
 the `iperf3-rs` CLI and scraping its output.
 
-`IperfCommand` accepts normal iperf arguments, excluding `argv[0]`, and passes
-them to upstream `iperf_parse_arguments()`:
+`IperfCommand` provides typed helpers for common options, while still accepting
+normal iperf arguments through `arg()` and `args()`. Both paths ultimately pass
+ordinary argv-shaped iperf options to upstream `iperf_parse_arguments()`:
 
 ```rust
+use std::time::Duration;
+
 use iperf3_rs::{IperfCommand, MetricEvent, MetricsMode, Result};
 
 fn main() -> Result<()> {
-    let mut command = IperfCommand::new();
+    let mut command = IperfCommand::client("127.0.0.1");
     command
-        .args(["-c", "127.0.0.1", "-t", "10", "-i", "1"])
-        .metrics(MetricsMode::Interval);
+        .duration(Duration::from_secs(10))
+        .report_interval(Duration::from_secs(1));
 
-    let mut running = command.spawn()?;
-    let metrics = running.take_metrics().expect("metrics enabled");
+    let (running, metrics) = command.spawn_with_metrics(MetricsMode::Interval)?;
 
     while let Some(event) = metrics.recv() {
         if let MetricEvent::Interval(sample) = event {
@@ -268,6 +270,11 @@ fn main() -> Result<()> {
     Ok(())
 }
 ```
+
+Typed helpers cover common roles and options such as `client`, `server_once`,
+`port`, `duration`, `report_interval`, `udp`, `bitrate_bits_per_second`,
+`reverse`, `bidirectional`, and `json`. Use `arg()` or `args()` for any upstream
+iperf3 option that does not need a dedicated Rust helper.
 
 Use `MetricsMode::Window(duration)` to receive the same representative window
 summaries used by `--push.interval`. `PushGateway` and `PushGatewayConfig` are
