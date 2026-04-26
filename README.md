@@ -74,16 +74,24 @@ When `--push.url` or `PUSH_URL` is set, iperf3-rs:
    output mode;
 3. receives the latest libiperf interval summary from the reporting path;
 4. maps each interval summary to Prometheus gauges;
-5. sends the newest interval sample to Pushgateway.
+5. sends either the newest interval sample or an aggregated window summary to
+   Pushgateway.
 
-The callback path is deliberately nonblocking. It sends JSON lines into a
-size-one channel and a worker thread performs HTTP writes. If Pushgateway is
-slow and interval events arrive faster than they can be pushed, the queued
-sample is replaced with the newest interval. For gauges, freshness is more
-useful than replaying stale samples.
+The callback path is deliberately nonblocking. In the default immediate mode,
+it sends interval metrics into a size-one channel and a worker thread performs
+HTTP writes. If Pushgateway is slow and interval events arrive faster than they
+can be pushed, the queued sample is replaced with the newest interval. For
+gauges, freshness is more useful than replaying stale samples.
 
 Metrics are emitted once per libiperf reporting interval. Use normal iperf3
 interval controls such as `-i 1` when you want one-second pushes.
+
+When `--push.interval` is set, iperf3-rs buffers libiperf interval samples in
+the worker thread and pushes representative `*_window_*` gauges once per window.
+The final partial window is flushed when the iperf test exits. This is not a
+historical datapoint replay mechanism; Pushgateway still stores the latest
+sample for the grouping key, and iperf3-rs performs the aggregation before the
+push.
 
 ## Install
 
@@ -278,6 +286,11 @@ iperf3-rs \
 
 --push.metric-prefix PREFIX
     Prometheus metric name prefix. Defaults to iperf3.
+
+--push.interval DURATION
+    Aggregate libiperf interval samples for this duration before pushing window
+    metrics. Accepts values like 500ms, 10s, 1m, or bare seconds. When omitted,
+    iperf3-rs pushes immediate interval metrics.
 ```
 
 ### Environment variables
@@ -292,6 +305,7 @@ PUSH_TIMEOUT=DURATION
 PUSH_RETRIES=N
 PUSH_USER_AGENT=VALUE
 PUSH_METRIC_PREFIX=PREFIX
+PUSH_INTERVAL=DURATION
 ```
 
 CLI values override environment defaults. `PUSH_LABELS` are applied before
@@ -331,7 +345,8 @@ contain characters such as `/` or spaces.
 
 ## Exported metrics
 
-With the default `--push.metric-prefix iperf3`, iperf3-rs emits these gauges:
+With the default `--push.metric-prefix iperf3`, iperf3-rs emits immediate
+interval gauges when `--push.interval` is not set:
 
 ```text
 iperf3_bytes
@@ -372,6 +387,65 @@ Metric mapping:
 Not every metric is meaningful for every iperf mode. UDP-prefixed fields are
 zero for normal TCP runs, and TCP_INFO-derived fields depend on libiperf and
 operating-system support for TCP information.
+
+When `--push.interval` or `PUSH_INTERVAL` is set, iperf3-rs emits window
+summary gauges instead of the immediate interval metric names:
+
+```text
+iperf3_window_duration_seconds
+iperf3_window_transferred_bytes
+iperf3_window_bandwidth_mean_bytes_per_second
+iperf3_window_bandwidth_min_bytes_per_second
+iperf3_window_bandwidth_max_bytes_per_second
+iperf3_window_tcp_rtt_mean_seconds
+iperf3_window_tcp_rtt_min_seconds
+iperf3_window_tcp_rtt_max_seconds
+iperf3_window_tcp_rttvar_mean_seconds
+iperf3_window_tcp_rttvar_min_seconds
+iperf3_window_tcp_rttvar_max_seconds
+iperf3_window_tcp_snd_cwnd_mean_bytes
+iperf3_window_tcp_snd_cwnd_min_bytes
+iperf3_window_tcp_snd_cwnd_max_bytes
+iperf3_window_tcp_snd_wnd_mean_bytes
+iperf3_window_tcp_snd_wnd_min_bytes
+iperf3_window_tcp_snd_wnd_max_bytes
+iperf3_window_tcp_pmtu_mean_bytes
+iperf3_window_tcp_pmtu_min_bytes
+iperf3_window_tcp_pmtu_max_bytes
+iperf3_window_udp_jitter_mean_seconds
+iperf3_window_udp_jitter_min_seconds
+iperf3_window_udp_jitter_max_seconds
+iperf3_window_tcp_retransmits
+iperf3_window_tcp_reorder_events
+iperf3_window_udp_packets
+iperf3_window_udp_lost_packets
+iperf3_window_udp_out_of_order_packets
+iperf3_window_omitted_intervals
+```
+
+Window metric semantics:
+
+| Metric shape | Meaning |
+| --- | --- |
+| `*_mean_*`, `*_min_*`, `*_max_*` | Arithmetic mean, minimum, and maximum of gauge-like interval values in the pushed window. Bandwidth mean is derived from total bytes divided by total interval duration. |
+| `iperf3_window_transferred_bytes` | Total transferred bytes across the pushed window. |
+| `iperf3_window_tcp_retransmits` | TCP retransmits accumulated across the pushed window. |
+| `iperf3_window_tcp_reorder_events` | TCP reordering events accumulated across the pushed window. |
+| `iperf3_window_udp_*_packets` | UDP packet counters accumulated across the pushed window. |
+| `iperf3_window_omitted_intervals` | Count of omitted libiperf intervals in the pushed window. |
+
+Example 10-second window export:
+
+```sh
+iperf3-rs \
+  -c 127.0.0.1 \
+  -t 60 \
+  -i 1 \
+  --push.url http://127.0.0.1:9091 \
+  --push.label test=testrun \
+  --push.label scenario=windowed \
+  --push.interval 10s
+```
 
 Use a custom prefix when multiple tools share a Pushgateway:
 
