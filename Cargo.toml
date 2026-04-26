@@ -33,7 +33,6 @@ include = [
   "/native/**",
   "/rust-toolchain.toml",
   "/src/**",
-  "/tests/integration_test.rs",
   "/tests/library_api_test.rs",
 ]
 
