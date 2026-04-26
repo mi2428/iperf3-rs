@@ -75,6 +75,7 @@ _iperf3_rs()
         --push.user-agent
         --push.metric-prefix
         --push.interval
+        --push.delete-on-exit
     "
 
     case "${cur}" in
@@ -92,6 +93,10 @@ _iperf3_rs()
             ;;
         --push.interval=*)
             COMPREPLY=($(compgen -P "--push.interval=" -W "500ms 1s 5s 10s 30s 1m" -- "${cur#*=}"))
+            return
+            ;;
+        --push.delete-on-exit=*)
+            COMPREPLY=($(compgen -P "--push.delete-on-exit=" -W "true false 1 0 yes no on off" -- "${cur#*=}"))
             return
             ;;
         --push.label=*)

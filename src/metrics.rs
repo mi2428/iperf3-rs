@@ -382,6 +382,7 @@ fn push_interval_metrics(rx: Receiver<Metrics>, sink: PushGateway) {
             eprintln!("failed to push metrics: {err:#}");
         }
     }
+    delete_pushgateway_on_finish(&sink);
 }
 
 fn push_window_metrics(rx: Receiver<Metrics>, sink: PushGateway, interval: Duration) {
@@ -424,6 +425,7 @@ fn push_window_metrics(rx: Receiver<Metrics>, sink: PushGateway, interval: Durat
     // The final iperf interval often arrives shortly before the process exits.
     // Flush a partial window so short tests still publish useful summaries.
     flush_window_metrics(&sink, &mut window);
+    delete_pushgateway_on_finish(&sink);
 }
 
 fn flush_window_metrics(sink: &PushGateway, window: &mut Vec<Metrics>) {
@@ -432,6 +434,14 @@ fn flush_window_metrics(sink: &PushGateway, window: &mut Vec<Metrics>) {
             eprintln!("failed to push window metrics: {err:#}");
         }
         window.clear();
+    }
+}
+
+fn delete_pushgateway_on_finish(sink: &PushGateway) {
+    if sink.delete_on_finish()
+        && let Err(err) = sink.delete()
+    {
+        eprintln!("failed to delete Pushgateway metrics: {err:#}");
     }
 }
 

@@ -26,6 +26,7 @@ pub struct AppOptions {
     pub push_user_agent: String,
     pub push_metric_prefix: String,
     pub push_interval: Option<Duration>,
+    pub push_delete_on_exit: bool,
     pub show_help: bool,
     pub show_version: bool,
 }
@@ -58,6 +59,7 @@ fn extract_app_options_with_env(
                 push_user_agent: PushGatewayConfig::default_user_agent(),
                 push_metric_prefix: PushGatewayConfig::DEFAULT_METRIC_PREFIX.to_owned(),
                 push_interval: None,
+                push_delete_on_exit: false,
                 show_help,
                 show_version,
             },
@@ -91,6 +93,10 @@ fn extract_app_options_with_env(
     let mut push_interval = get_env("PUSH_INTERVAL")
         .map(|raw| parse_duration_option("PUSH_INTERVAL", &raw))
         .transpose()?;
+    let mut push_delete_on_exit = get_env("PUSH_DELETE_ON_EXIT")
+        .map(|raw| parse_bool_option("PUSH_DELETE_ON_EXIT", &raw))
+        .transpose()?
+        .unwrap_or(false);
     let mut saw_push_job = false;
     let mut saw_push_label = !push_labels.is_empty();
     let mut saw_push_setting = false;
@@ -133,6 +139,10 @@ fn extract_app_options_with_env(
                 }
                 "--push.interval" => {
                     push_interval = Some(parse_duration_option("--push.interval", value)?);
+                    saw_push_setting = true;
+                }
+                "--push.delete-on-exit" => {
+                    push_delete_on_exit = parse_bool_option("--push.delete-on-exit", value)?;
                     saw_push_setting = true;
                 }
                 _ => pass_through.push(arg.clone()),
@@ -188,6 +198,11 @@ fn extract_app_options_with_env(
                 )?);
                 saw_push_setting = true;
             }
+            "--push.delete-on-exit" => {
+                push_delete_on_exit = true;
+                saw_push_setting = true;
+                i += 1;
+            }
             _ => {
                 pass_through.push(arg.clone());
                 i += 1;
@@ -220,6 +235,7 @@ fn extract_app_options_with_env(
             push_user_agent,
             push_metric_prefix,
             push_interval,
+            push_delete_on_exit,
             show_help: false,
             show_version: false,
         },
@@ -313,6 +329,14 @@ fn parse_retries(option: &str, raw: &str) -> Result<u32> {
         )
     })?;
     Ok(retries)
+}
+
+fn parse_bool_option(option: &str, raw: &str) -> Result<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => bail!("{option} must be one of true, false, 1, 0, yes, no, on, or off"),
+    }
 }
 
 #[cfg(kani)]
@@ -502,6 +526,7 @@ mod tests {
             "--push.metric-prefix".to_owned(),
             "nettest".to_owned(),
             "--push.interval=10s".to_owned(),
+            "--push.delete-on-exit".to_owned(),
             "-t".to_owned(),
             "3".to_owned(),
         ];
@@ -522,6 +547,7 @@ mod tests {
         assert_eq!(app.push_user_agent, "iperf3-rs/custom");
         assert_eq!(app.push_metric_prefix, "nettest");
         assert_eq!(app.push_interval, Some(Duration::from_secs(10)));
+        assert!(app.push_delete_on_exit);
         assert_eq!(iperf, ["iperf3-rs", "-c", "127.0.0.1", "-t", "3"]);
     }
 
@@ -682,6 +708,7 @@ mod tests {
             "PUSH_USER_AGENT" => Some("iperf3-rs/env".to_owned()),
             "PUSH_METRIC_PREFIX" => Some("nettest".to_owned()),
             "PUSH_INTERVAL" => Some("2m".to_owned()),
+            "PUSH_DELETE_ON_EXIT" => Some("yes".to_owned()),
             _ => None,
         })
         .unwrap();
@@ -692,6 +719,7 @@ mod tests {
         assert_eq!(app.push_user_agent, "iperf3-rs/env");
         assert_eq!(app.push_metric_prefix, "nettest");
         assert_eq!(app.push_interval, Some(Duration::from_secs(120)));
+        assert!(app.push_delete_on_exit);
         assert_eq!(iperf, ["iperf3-rs", "-s"]);
     }
 
@@ -703,6 +731,7 @@ mod tests {
             "--push.user-agent=iperf3-rs/test",
             "--push.metric-prefix=nettest",
             "--push.interval=10s",
+            "--push.delete-on-exit",
         ] {
             let args = vec!["iperf3-rs".to_owned(), option.to_owned()];
 
@@ -767,6 +796,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_malformed_push_delete_on_exit_value() {
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "--push.url".to_owned(),
+            "localhost:9091".to_owned(),
+            "--push.delete-on-exit=maybe".to_owned(),
+        ];
+
+        let err = extract_app_options_with_env(args, |_| None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--push.delete-on-exit must be one of"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
     fn parses_push_timeout_units() {
         assert_eq!(
             parse_duration_option("--push.timeout", "500ms").unwrap(),
@@ -784,6 +830,17 @@ mod tests {
             parse_duration_option("--push.timeout", "7").unwrap(),
             Duration::from_secs(7)
         );
+    }
+
+    #[test]
+    fn parses_bool_options() {
+        for value in ["1", "true", "yes", "on"] {
+            assert!(parse_bool_option("--push.delete-on-exit", value).unwrap());
+        }
+        for value in ["0", "false", "no", "off"] {
+            assert!(!parse_bool_option("--push.delete-on-exit", value).unwrap());
+        }
+        assert!(parse_bool_option("--push.delete-on-exit", "maybe").is_err());
     }
 
     #[test]
@@ -858,6 +915,7 @@ mod tests {
                 "PUSH_RETRIES" => Some("not-a-number".to_owned()),
                 "PUSH_METRIC_PREFIX" => Some("bad-prefix".to_owned()),
                 "PUSH_INTERVAL" => Some("not-a-duration".to_owned()),
+                "PUSH_DELETE_ON_EXIT" => Some("not-a-bool".to_owned()),
                 _ => None,
             })
             .unwrap();

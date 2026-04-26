@@ -395,6 +395,9 @@ Push options:
     Aggregate libiperf interval samples for this duration before pushing window
     metrics. Accepts values like 500ms, 10s, 1m, or bare seconds. When omitted,
     iperf3-rs pushes immediate interval metrics.
+
+--push.delete-on-exit
+    Delete this Pushgateway grouping key after the iperf run exits.
 ```
 
 Every push option has an environment default:
@@ -408,10 +411,13 @@ PUSH_RETRIES=N
 PUSH_USER_AGENT=VALUE
 PUSH_METRIC_PREFIX=PREFIX
 PUSH_INTERVAL=DURATION
+PUSH_DELETE_ON_EXIT=BOOL
 ```
 
 CLI values override environment defaults. `PUSH_LABELS` are applied before
 `--push.label` values. Duplicate label names are rejected.
+Boolean environment values accept `true`, `false`, `1`, `0`, `yes`, `no`, `on`,
+and `off`.
 
 Pushgateway grouping labels are encoded into the request path:
 

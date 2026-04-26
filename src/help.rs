@@ -58,6 +58,11 @@ pub fn render_wrapper_help() -> String {
                 description: "aggregate interval samples before pushing window metrics",
                 continuation: &[],
             },
+            HelpRow {
+                value: "--push.delete-on-exit",
+                description: "delete this Pushgateway grouping key after the run exits",
+                continuation: &[],
+            },
         ],
     );
     help.push('\n');
@@ -103,6 +108,11 @@ pub fn render_wrapper_help() -> String {
             HelpRow {
                 value: "PUSH_INTERVAL=DURATION",
                 description: "default value for --push.interval",
+                continuation: &[],
+            },
+            HelpRow {
+                value: "PUSH_DELETE_ON_EXIT=BOOL",
+                description: "default value for --push.delete-on-exit",
                 continuation: &[],
             },
         ],
@@ -161,9 +171,11 @@ mod tests {
         assert!(help.contains("--push.user-agent VALUE"));
         assert!(help.contains("--push.metric-prefix P"));
         assert!(help.contains("--push.interval DURATION"));
+        assert!(help.contains("--push.delete-on-exit"));
         assert!(help.contains("PUSH_LABELS=KEY=VALUE,..."));
         assert!(help.contains("PUSH_METRIC_PREFIX=P"));
         assert!(help.contains("PUSH_INTERVAL=DURATION"));
+        assert!(help.contains("PUSH_DELETE_ON_EXIT=BOOL"));
     }
 
     #[test]

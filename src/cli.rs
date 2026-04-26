@@ -56,6 +56,7 @@ fn run() -> Result<()> {
             retries: app.push_retries,
             user_agent: app.push_user_agent,
             metric_prefix: app.push_metric_prefix,
+            delete_on_finish: app.push_delete_on_exit,
         })?;
         Some(IntervalMetricsReporter::attach(
             &mut test,

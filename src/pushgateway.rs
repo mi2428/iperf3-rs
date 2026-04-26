@@ -36,6 +36,8 @@ pub struct PushGatewayConfig {
     pub user_agent: String,
     /// Prefix for emitted Prometheus metric names.
     pub metric_prefix: String,
+    /// Delete this grouping key from Pushgateway after the run finishes.
+    pub delete_on_finish: bool,
 }
 
 impl PushGatewayConfig {
@@ -59,6 +61,7 @@ impl PushGatewayConfig {
             retries: Self::DEFAULT_RETRIES,
             user_agent: Self::default_user_agent(),
             metric_prefix: Self::DEFAULT_METRIC_PREFIX.to_owned(),
+            delete_on_finish: false,
         }
     }
 
@@ -147,6 +150,12 @@ impl PushGatewayConfig {
         self
     }
 
+    /// Delete this grouping key from Pushgateway after direct delivery finishes.
+    pub fn delete_on_finish(mut self, delete: bool) -> Self {
+        self.delete_on_finish = delete;
+        self
+    }
+
     /// Validate this config before it is used for HTTP delivery.
     pub fn validate(&self) -> Result<()> {
         validate_endpoint(&self.endpoint)?;
@@ -166,6 +175,7 @@ pub struct PushGateway {
     url: Url,
     retries: u32,
     metric_prefix: String,
+    delete_on_finish: bool,
 }
 
 impl PushGateway {
@@ -202,6 +212,7 @@ impl PushGateway {
             url,
             retries: config.retries,
             metric_prefix: config.metric_prefix,
+            delete_on_finish: config.delete_on_finish,
         })
     }
 
@@ -215,6 +226,25 @@ impl PushGateway {
     pub fn push_window(&self, metrics: &WindowMetrics) -> Result<()> {
         let body = render_window_prometheus(metrics, &self.metric_prefix);
         self.push_body(&body)
+    }
+
+    /// Delete this sink's grouping key from Pushgateway.
+    pub fn delete(&self) -> Result<()> {
+        for attempt in 0..=self.retries {
+            match self.delete_once() {
+                Ok(()) => return Ok(()),
+                Err(err) if err.retryable && attempt < self.retries => {
+                    std::thread::sleep(retry_delay(attempt));
+                }
+                Err(err) => return Err(err.error),
+            }
+        }
+
+        unreachable!("delete retry loop always returns")
+    }
+
+    pub(crate) fn delete_on_finish(&self) -> bool {
+        self.delete_on_finish
     }
 
     fn push_body(&self, body: &str) -> Result<()> {
@@ -251,6 +281,31 @@ impl PushGateway {
             let status = response.status();
             return Err(PushAttemptError {
                 error: Error::pushgateway(format!("Pushgateway returned {status}")),
+                retryable: is_retryable_status(status),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn delete_once(&self) -> std::result::Result<(), PushAttemptError> {
+        let response =
+            self.client
+                .delete(self.url.clone())
+                .send()
+                .map_err(|err| PushAttemptError {
+                    error: Error::with_source(
+                        ErrorKind::PushGateway,
+                        "failed to send Pushgateway delete request",
+                        err,
+                    ),
+                    retryable: true,
+                })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            return Err(PushAttemptError {
+                error: Error::pushgateway(format!("Pushgateway delete returned {status}")),
                 retryable: is_retryable_status(status),
             });
         }
@@ -709,6 +764,10 @@ mod verification {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
     use super::*;
 
     #[test]
@@ -777,7 +836,11 @@ mod tests {
             config.metric_prefix,
             PushGatewayConfig::DEFAULT_METRIC_PREFIX
         );
+        assert!(!config.delete_on_finish);
         config.validate().unwrap();
+
+        let delete_config = config.delete_on_finish(true);
+        assert!(delete_config.delete_on_finish);
     }
 
     #[test]
@@ -837,6 +900,28 @@ mod tests {
         let url = PushGatewayConfig::parse_endpoint("localhost:9091").unwrap();
 
         assert_eq!(url.as_str(), "http://localhost:9091/");
+    }
+
+    #[test]
+    fn delete_sends_http_delete_to_grouping_url() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let endpoint = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0_u8; 1024];
+            let n = stream.read(&mut buffer).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+            String::from_utf8_lossy(&buffer[..n]).into_owned()
+        });
+
+        let gateway =
+            PushGateway::new(PushGatewayConfig::new(endpoint).label("scenario", "delete")).unwrap();
+        gateway.delete().unwrap();
+
+        let request = handle.join().unwrap();
+        assert!(request.starts_with("DELETE /metrics/job/iperf3/scenario/delete HTTP/1.1"));
     }
 
     #[test]

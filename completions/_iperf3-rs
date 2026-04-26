@@ -75,4 +75,5 @@ _arguments -s -S \
   '--push.user-agent[HTTP User-Agent for Pushgateway requests]:value:' \
   '--push.metric-prefix[Prometheus metric name prefix]:prefix:(iperf3)' \
   '--push.interval[aggregate interval samples before pushing window metrics]:duration:(500ms 1s 5s 10s 30s 1m)' \
+  '--push.delete-on-exit[delete this Pushgateway grouping key after the run exits]' \
   '*:argument:_default'
