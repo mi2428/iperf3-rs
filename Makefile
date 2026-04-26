@@ -176,7 +176,13 @@ multipass: ## Launch a Multipass VM and copy the source tree for manual Linux te
 	@archive="$$(mktemp "$${TMPDIR:-/tmp}/$(APP)-multipass.XXXXXX.tar.gz")"; \
 	trap 'rm -f "$$archive"' EXIT; \
 	printf 'Packing source tree for %s\n' "$(MULTIPASS_NAME)"; \
-	COPYFILE_DISABLE=1 tar \
+	tar_metadata_flags=(); \
+	for flag in --no-xattrs --no-mac-metadata --disable-copyfile; do \
+		if tar "$$flag" -cf /dev/null --files-from /dev/null >/dev/null 2>&1; then \
+			tar_metadata_flags+=("$$flag"); \
+		fi; \
+	done; \
+	COPYFILE_DISABLE=1 tar "$${tar_metadata_flags[@]}" \
 		--exclude './target' \
 		--exclude './dist' \
 		--exclude './bin' \
@@ -191,13 +197,13 @@ multipass: ## Launch a Multipass VM and copy the source tree for manual Linux te
 	$(MULTIPASS) exec "$(MULTIPASS_NAME)" -- chown -R ubuntu:ubuntu "/home/ubuntu/$(MULTIPASS_SOURCE_DIR)"; \
 	printf '\nMultipass VM is ready.\n'; \
 	printf '\nRun these commands to build inside the VM:\n'; \
-	printf '  - %s\n' "$(MULTIPASS) shell $(MULTIPASS_NAME)"; \
-	printf '  - %s\n' "cd ~/$(MULTIPASS_SOURCE_DIR)"; \
-	printf '  - %s\n' "sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl make pkg-config"; \
-	printf '  - %s\n' "command -v cargo >/dev/null || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"; \
-	printf '  - %s\n' "source \"\$$HOME/.cargo/env\""; \
-	printf '  - %s\n' "make build"; \
-	printf '  - %s\n' "./bin/iperf3-rs --version"
+	printf '  1) %s\n' "$(MULTIPASS) shell $(MULTIPASS_NAME)"; \
+	printf '  2) %s\n' "cd ~/$(MULTIPASS_SOURCE_DIR)"; \
+	printf '  3) %s\n' "sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl make pkg-config"; \
+	printf '  4) %s\n' "command -v cargo >/dev/null || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"; \
+	printf '  5) %s\n' "source \"\$$HOME/.cargo/env\""; \
+	printf '  6) %s\n' "make build"; \
+	printf '  7) %s\n' "./bin/iperf3-rs --version"
 
 .PHONY: clean
 clean: ## Remove local build artifacts
