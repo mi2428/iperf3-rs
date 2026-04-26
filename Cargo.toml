@@ -31,6 +31,8 @@ include = [
   "/iperf3/examples/Makefile.in",
   "/iperf3/iperf3.spec.in",
   "/iperf3/src/**",
+  "!/iperf3/src/private.pem",
+  "!/iperf3/src/public.pem",
   "/native/**",
   "/rust-toolchain.toml",
   "/src/**",
