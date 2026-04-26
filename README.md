@@ -31,7 +31,7 @@ for live observability:
 `iperf3-rs` takes a different path. It embeds the upstream library and registers
 a Rust-managed callback on libiperf's reporting path. Each interval is converted
 to Prometheus text format and pushed to Pushgateway immediately. In practice,
-this means dashboards can update during the test, not only after it.
+this means Prometheus-backed views can update during the test, not only after it.
 
 Because the frontend is Rust, the wrapper-specific pieces are normal Rust code:
 argument extraction, URL validation, Pushgateway HTTP behavior, metric
@@ -70,12 +70,11 @@ metrics, and live interval visibility before the client exits.
 When `--push.url` or `PUSH_URL` is set, iperf3-rs:
 
 1. lets libiperf parse the iperf3 arguments;
-2. determines the parsed role, such as client or server;
-3. installs an interval metrics callback without changing the user-requested
+2. installs an interval metrics callback without changing the user-requested
    output mode;
-4. receives the latest libiperf interval summary from the reporting path;
-5. maps each interval summary to Prometheus gauges;
-6. sends the newest interval sample to Pushgateway.
+3. receives the latest libiperf interval summary from the reporting path;
+4. maps each interval summary to Prometheus gauges;
+5. sends the newest interval sample to Pushgateway.
 
 The callback path is deliberately nonblocking. It sends JSON lines into a
 size-one channel and a worker thread performs HTTP writes. If Pushgateway is
@@ -312,10 +311,11 @@ iperf3-rs -c server-rs -t 10 -i 1
 Pushgateway grouping labels are encoded into the request path:
 
 ```text
-/metrics/job/{job}/{label_name}/{label_value}/.../iperf_mode/{client|server|unknown}
+/metrics/job/{job}/{label_name}/{label_value}/...
 ```
 
-`iperf3-rs` automatically appends `iperf_mode` after libiperf parses the role.
+`iperf3-rs` does not add role or mode labels automatically. Add explicit labels
+such as `mode=client` or `mode=server` with `--push.label` when you want them.
 User labels may use any Prometheus-style label name:
 
 ```text
@@ -325,7 +325,6 @@ User labels may use any Prometheus-style label name:
 The reserved label names are:
 
 - `job`
-- `iperf_mode`
 
 Label values must be non-empty. Path segments are percent-encoded, so values can
 contain characters such as `/` or spaces.
@@ -413,7 +412,6 @@ Grafana:     http://localhost:3000
 Grafana defaults to `admin` / `admin`. The compose file provisions:
 
 - a Prometheus datasource named `Prometheus` with UID `prometheus`;
-- an `iperf3-rs Metrics` dashboard under the `iperf3-rs` folder;
 - a Prometheus scrape config for `pushgateway:9091` with one-second scrape
   intervals.
 

@@ -337,7 +337,7 @@ mod tests {
             labels: vec![
                 ("test".to_owned(), "test/one".to_owned()),
                 ("scenario".to_owned(), "sample#1".to_owned()),
-                ("iperf_mode".to_owned(), "client".to_owned()),
+                ("mode".to_owned(), "client".to_owned()),
             ],
             timeout: Duration::from_secs(5),
             retries: 0,
@@ -348,7 +348,7 @@ mod tests {
 
         assert_eq!(
             gateway.url.as_str(),
-            "http://127.0.0.1:9091/base/metrics/job/iperf%20job/test/test%2Fone/scenario/sample%231/iperf_mode/client"
+            "http://127.0.0.1:9091/base/metrics/job/iperf%20job/test/test%2Fone/scenario/sample%231/mode/client"
         );
     }
 

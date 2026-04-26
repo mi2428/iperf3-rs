@@ -10,7 +10,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use args::extract_app_options;
-use iperf::{IperfTest, Role};
+use iperf::IperfTest;
 use metrics::IntervalMetricsReporter;
 use pushgateway::{PushGateway, PushGatewayConfig};
 
@@ -49,19 +49,10 @@ fn run() -> Result<()> {
     test.parse_arguments(&iperf_args)?;
 
     let reporter = if let Some(push_url) = app.push_url {
-        // Role is known only after libiperf parses argv, so the automatic
-        // `iperf_mode` grouping label is attached here.
-        let mode = match test.role() {
-            Role::Client => "client",
-            Role::Server => "server",
-            Role::Unknown(_) => "unknown",
-        };
-        let mut labels = app.push_labels;
-        labels.push(("iperf_mode".to_owned(), mode.to_owned()));
         let sink = PushGateway::new(PushGatewayConfig {
             endpoint: push_url,
             job: app.push_job,
-            labels,
+            labels: app.push_labels,
             timeout: app.push_timeout,
             retries: app.push_retries,
             user_agent: app.push_user_agent,

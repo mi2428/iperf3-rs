@@ -346,7 +346,7 @@ fn parse_label(raw: &str) -> Result<(String, String)> {
         .split_once('=')
         .ok_or_else(|| anyhow!("--push.label requires KEY=VALUE"))?;
     // Pushgateway grouping keys become Prometheus labels, so reject names that
-    // would fail ingestion or conflict with labels managed by this wrapper.
+    // would fail ingestion or conflict with the job segment managed separately.
     if !is_valid_label_name(name) {
         bail!("invalid --push.label name '{name}'");
     }
@@ -369,7 +369,7 @@ fn is_reserved_label_name(name: &str) -> bool {
 }
 
 fn is_reserved_label_name_bytes(name: &[u8]) -> bool {
-    name == b"job" || name == b"iperf_mode"
+    name == b"job"
 }
 
 fn is_valid_label_name_bytes(name: &[u8]) -> bool {
@@ -425,7 +425,7 @@ mod verification {
     use super::*;
 
     const MAX_LABEL_NAME_BYTES: usize = 4;
-    const MAX_RESERVED_LABEL_NAME_BYTES: usize = 10;
+    const MAX_RESERVED_LABEL_NAME_BYTES: usize = 3;
 
     #[kani::proof]
     #[kani::unwind(6)]
@@ -449,14 +449,14 @@ mod verification {
     }
 
     #[kani::proof]
-    #[kani::unwind(12)]
-    fn reserved_label_name_matches_reserved_grouping_keys_for_bounded_ascii() {
+    #[kani::unwind(5)]
+    fn reserved_label_name_matches_reserved_grouping_key_for_bounded_ascii() {
         let len: usize = kani::any();
         kani::assume(len <= MAX_RESERVED_LABEL_NAME_BYTES);
         let bytes: [u8; MAX_RESERVED_LABEL_NAME_BYTES] = kani::any();
 
         let name = &bytes[..len];
-        let expected = name == b"job" || name == b"iperf_mode";
+        let expected = name == b"job";
 
         assert_eq!(is_reserved_label_name_bytes(name), expected);
     }
@@ -511,6 +511,7 @@ mod tests {
             "--push.label".to_owned(),
             "test=testrun".to_owned(),
             "--push.label=scenario=sample1".to_owned(),
+            "--push.label=mode=client".to_owned(),
             "--push.timeout=2s".to_owned(),
             "--push.retries".to_owned(),
             "2".to_owned(),
@@ -528,7 +529,8 @@ mod tests {
             app.push_labels,
             [
                 ("test".to_owned(), "testrun".to_owned()),
-                ("scenario".to_owned(), "sample1".to_owned())
+                ("scenario".to_owned(), "sample1".to_owned()),
+                ("mode".to_owned(), "client".to_owned())
             ]
         );
         assert_eq!(app.push_timeout, Duration::from_secs(2));
@@ -648,13 +650,7 @@ mod tests {
 
     #[test]
     fn rejects_malformed_push_label() {
-        for label in [
-            "missing-equals",
-            "9bad=value",
-            "job=value",
-            "iperf_mode=client",
-            "ok=",
-        ] {
+        for label in ["missing-equals", "9bad=value", "job=value", "ok="] {
             let args = vec![
                 "iperf3-rs".to_owned(),
                 "--push.url".to_owned(),

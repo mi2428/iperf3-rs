@@ -38,7 +38,7 @@ const BIDIR_SCENARIO: &str = "tcp-bidir";
 // - an upstream iperf3 client can complete a JSON test against iperf3-rs;
 // - the metrics-enabled iperf3-rs server publishes non-zero
 //   `iperf3_bytes` and `iperf3_bandwidth` samples with the expected
-//   server-mode integration labels;
+//   integration labels;
 // - that same metrics-enabled server keeps the normal upstream human-readable
 //   stdout shape instead of going silent;
 // - an iperf3-rs client can complete a JSON test against upstream iperf3;
@@ -46,7 +46,7 @@ const BIDIR_SCENARIO: &str = "tcp-bidir";
 //   complete JSON document rather than turning it into JSON stream output;
 // - an iperf3-rs client run from the metrics-enabled `client-rs` service
 //   publishes non-zero `iperf3_bytes` and `iperf3_bandwidth` samples with the
-//   expected client-mode integration labels;
+//   expected integration labels;
 // - TCP runs expose sender-side TCP_INFO metrics while UDP-only metrics stay at
 //   zero for TCP scenarios;
 // - a metrics-enabled iperf3-rs client without `-J` keeps normal
@@ -90,54 +90,23 @@ fn compose_interop_and_pushgateway_metrics() {
     wait_for_pushgateway_metrics(
         &project,
         SERVER_SCENARIO,
-        "server",
         &["iperf3_bytes", "iperf3_bandwidth"],
     );
-    assert_metric_value_eq(
-        &project,
-        "iperf3_udp_packets",
-        SERVER_SCENARIO,
-        "server",
-        0.0,
-    );
-    assert_metric_value_eq(
-        &project,
-        "iperf3_udp_lost_packets",
-        SERVER_SCENARIO,
-        "server",
-        0.0,
-    );
-    assert_metric_value_eq(
-        &project,
-        "iperf3_udp_jitter_seconds",
-        SERVER_SCENARIO,
-        "server",
-        0.0,
-    );
-    assert_metric_value_eq(
-        &project,
-        "iperf3_tcp_rtt_seconds",
-        SERVER_SCENARIO,
-        "server",
-        0.0,
-    );
+    assert_metric_value_eq(&project, "iperf3_udp_packets", SERVER_SCENARIO, 0.0);
+    assert_metric_value_eq(&project, "iperf3_udp_lost_packets", SERVER_SCENARIO, 0.0);
+    assert_metric_value_eq(&project, "iperf3_udp_jitter_seconds", SERVER_SCENARIO, 0.0);
+    assert_metric_value_eq(&project, "iperf3_tcp_rtt_seconds", SERVER_SCENARIO, 0.0);
     assert_metric_value_eq(
         &project,
         "iperf3_udp_out_of_order_packets",
         SERVER_SCENARIO,
-        "server",
         0.0,
     );
-    assert_metric_value_eq(&project, "iperf3_omitted", SERVER_SCENARIO, "server", 0.0);
+    assert_metric_value_eq(&project, "iperf3_omitted", SERVER_SCENARIO, 0.0);
     wait_for_service_log_contains(&project, "server-rs", "Server listening on");
     wait_for_service_log_contains(&project, "server-rs", "[ ID]");
-    let first_server_push = wait_for_metric_value_gt(
-        &project,
-        "push_time_seconds",
-        SERVER_SCENARIO,
-        "server",
-        0.0,
-    );
+    let first_server_push =
+        wait_for_metric_value_gt(&project, "push_time_seconds", SERVER_SCENARIO, 0.0);
 
     // Interop check 2: the iperf3-rs client must be able to talk to the
     // upstream iperf3 server and return a complete JSON summary containing
@@ -189,7 +158,6 @@ fn compose_interop_and_pushgateway_metrics() {
     wait_for_pushgateway_metrics(
         &project,
         CLIENT_SCENARIO,
-        "client",
         &[
             "iperf3_bytes",
             "iperf3_bandwidth",
@@ -200,35 +168,16 @@ fn compose_interop_and_pushgateway_metrics() {
             "iperf3_tcp_pmtu_bytes",
         ],
     );
-    assert_metric_value_eq(
-        &project,
-        "iperf3_udp_packets",
-        CLIENT_SCENARIO,
-        "client",
-        0.0,
-    );
-    assert_metric_value_eq(
-        &project,
-        "iperf3_udp_lost_packets",
-        CLIENT_SCENARIO,
-        "client",
-        0.0,
-    );
-    assert_metric_value_eq(
-        &project,
-        "iperf3_udp_jitter_seconds",
-        CLIENT_SCENARIO,
-        "client",
-        0.0,
-    );
+    assert_metric_value_eq(&project, "iperf3_udp_packets", CLIENT_SCENARIO, 0.0);
+    assert_metric_value_eq(&project, "iperf3_udp_lost_packets", CLIENT_SCENARIO, 0.0);
+    assert_metric_value_eq(&project, "iperf3_udp_jitter_seconds", CLIENT_SCENARIO, 0.0);
     assert_metric_value_eq(
         &project,
         "iperf3_udp_out_of_order_packets",
         CLIENT_SCENARIO,
-        "client",
         0.0,
     );
-    assert_metric_value_eq(&project, "iperf3_omitted", CLIENT_SCENARIO, "client", 0.0);
+    assert_metric_value_eq(&project, "iperf3_omitted", CLIENT_SCENARIO, 0.0);
 
     // The same long-running server should keep its callback and Pushgateway
     // configuration across client connections. Pushgateway maintains
@@ -239,7 +188,6 @@ fn compose_interop_and_pushgateway_metrics() {
         &project,
         "push_time_seconds",
         SERVER_SCENARIO,
-        "server",
         first_server_push,
     );
 
@@ -262,7 +210,6 @@ fn compose_interop_and_pushgateway_metrics() {
     wait_for_pushgateway_metrics(
         &project,
         LIVE_SCENARIO,
-        "client",
         &["iperf3_bytes", "iperf3_bandwidth"],
     );
     assert!(
@@ -298,30 +245,21 @@ fn compose_interop_and_pushgateway_metrics() {
     wait_for_pushgateway_metrics(
         &project,
         UDP_SCENARIO,
-        "client",
         &["iperf3_bytes", "iperf3_bandwidth", "iperf3_udp_packets"],
     );
     assert_metric_value_eq(
         &project,
         "iperf3_udp_out_of_order_packets",
         UDP_SCENARIO,
-        "client",
         0.0,
     );
     // Jitter is measured by the UDP receiver, so it should appear on the
     // metrics-enabled server rather than on the sending client.
-    wait_for_metric_value_gt(
-        &project,
-        "iperf3_udp_jitter_seconds",
-        SERVER_SCENARIO,
-        "server",
-        0.0,
-    );
+    wait_for_metric_value_gt(&project, "iperf3_udp_jitter_seconds", SERVER_SCENARIO, 0.0);
     assert_metric_value_eq(
         &project,
         "iperf3_udp_out_of_order_packets",
         SERVER_SCENARIO,
-        "server",
         0.0,
     );
 
@@ -347,7 +285,6 @@ fn compose_interop_and_pushgateway_metrics() {
     wait_for_pushgateway_metrics(
         &project,
         REVERSE_SCENARIO,
-        "client",
         &["iperf3_bytes", "iperf3_bandwidth"],
     );
 
@@ -373,7 +310,6 @@ fn compose_interop_and_pushgateway_metrics() {
     wait_for_pushgateway_metrics(
         &project,
         BIDIR_SCENARIO,
-        "client",
         &["iperf3_bytes", "iperf3_bandwidth"],
     );
 }
@@ -859,40 +795,30 @@ fn json_path_number(json: &Value, path: &[&str]) -> Option<f64> {
 fn wait_for_pushgateway_metrics(
     project: &ComposeProject,
     scenario: &str,
-    mode: &str,
     required_metrics: &[&str],
 ) {
-    wait_for(
-        &format!("pushgateway metrics for {scenario}/{mode}"),
-        || {
-            let output =
-                project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
-            if !output.status.success() {
-                return output;
-            }
+    wait_for(&format!("pushgateway metrics for {scenario}"), || {
+        let output =
+            project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
+        if !output.status.success() {
+            return output;
+        }
 
-            let metrics = String::from_utf8_lossy(&output.stdout);
-            if required_metrics
-                .iter()
-                .all(|name| metric_value_gt_zero(&metrics, name, scenario, mode))
-            {
-                output
-            } else {
-                failed_output_like(output)
-            }
-        },
-    );
+        let metrics = String::from_utf8_lossy(&output.stdout);
+        if required_metrics
+            .iter()
+            .all(|name| metric_value_gt_zero(&metrics, name, scenario))
+        {
+            output
+        } else {
+            failed_output_like(output)
+        }
+    });
 }
 
-fn wait_for_metric_value_gt(
-    project: &ComposeProject,
-    name: &str,
-    scenario: &str,
-    mode: &str,
-    min: f64,
-) -> f64 {
+fn wait_for_metric_value_gt(project: &ComposeProject, name: &str, scenario: &str, min: f64) -> f64 {
     let output = wait_for(
-        &format!("pushgateway {name} for {scenario}/{mode} > {min}"),
+        &format!("pushgateway {name} for {scenario} > {min}"),
         || {
             let output =
                 project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
@@ -901,33 +827,25 @@ fn wait_for_metric_value_gt(
             }
 
             let metrics = String::from_utf8_lossy(&output.stdout);
-            match metric_value(&metrics, name, scenario, mode) {
+            match metric_value(&metrics, name, scenario) {
                 Some(value) if value > min => output,
                 _ => failed_output_like(output),
             }
         },
     );
     let metrics = String::from_utf8_lossy(&output.stdout);
-    metric_value(&metrics, name, scenario, mode)
-        .expect("metric value should exist after successful wait")
+    metric_value(&metrics, name, scenario).expect("metric value should exist after successful wait")
 }
 
-fn assert_metric_value_eq(
-    project: &ComposeProject,
-    name: &str,
-    scenario: &str,
-    mode: &str,
-    expected: f64,
-) {
+fn assert_metric_value_eq(project: &ComposeProject, name: &str, scenario: &str, expected: f64) {
     let output = project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
     assert_command_success("pushgateway metrics scrape", &output);
     let metrics = String::from_utf8_lossy(&output.stdout);
-    let actual = metric_value(&metrics, name, scenario, mode).unwrap_or_else(|| {
-        panic!("missing metric {name} for {scenario}/{mode}\nmetrics:\n{metrics}")
-    });
+    let actual = metric_value(&metrics, name, scenario)
+        .unwrap_or_else(|| panic!("missing metric {name} for {scenario}\nmetrics:\n{metrics}"));
     assert_eq!(
         actual, expected,
-        "unexpected metric {name} for {scenario}/{mode}\nmetrics:\n{metrics}"
+        "unexpected metric {name} for {scenario}\nmetrics:\n{metrics}"
     );
 }
 
@@ -942,28 +860,27 @@ fn failed_output_like(output: Output) -> Output {
     failed
 }
 
-fn metric_value_gt_zero(metrics: &str, name: &str, scenario: &str, mode: &str) -> bool {
-    metric_value(metrics, name, scenario, mode)
+fn metric_value_gt_zero(metrics: &str, name: &str, scenario: &str) -> bool {
+    metric_value(metrics, name, scenario)
         .map(|value| value > 0.0)
         .unwrap_or_default()
 }
 
-fn metric_value(metrics: &str, name: &str, scenario: &str, mode: &str) -> Option<f64> {
+fn metric_value(metrics: &str, name: &str, scenario: &str) -> Option<f64> {
     // Pushgateway exposes all retained groups on /metrics, so the labels are
-    // part of the success condition. They scope the assertion to the iperf3-rs
-    // run performed above.
+    // part of the success condition. `job` is the Pushgateway path root, while
+    // `test` and `scenario` are the user-provided grouping labels used by this
+    // integration run.
     let prefix = format!("{name}{{");
     let job_label = format!(r#"job="{PUSH_JOB}""#);
     let test_label = format!(r#"test="{PUSH_TEST}""#);
     let scenario_label = format!(r#"scenario="{scenario}""#);
-    let mode_label = format!(r#"iperf_mode="{mode}""#);
     metrics
         .lines()
         .filter(|line| line.starts_with(&prefix))
         .filter(|line| line.contains(&job_label))
         .filter(|line| line.contains(&test_label))
         .filter(|line| line.contains(&scenario_label))
-        .filter(|line| line.contains(&mode_label))
         .filter_map(|line| line.split_whitespace().last())
         .filter_map(|value| value.parse::<f64>().ok())
         .next()
