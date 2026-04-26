@@ -368,11 +368,39 @@ fn parse_retries(option: &str, raw: &str) -> Result<u32> {
 }
 
 fn parse_bool_option(option: &str, raw: &str) -> Result<bool> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        _ => bail!("{option} must be one of true, false, 1, 0, yes, no, on, or off"),
+    parse_bool_literal(raw.trim())
+        .ok_or_else(|| anyhow!("{option} must be one of true, false, 1, 0, yes, no, on, or off"))
+}
+
+fn parse_bool_literal(raw: &str) -> Option<bool> {
+    parse_bool_literal_bytes(raw.as_bytes())
+}
+
+fn parse_bool_literal_bytes(raw: &[u8]) -> Option<bool> {
+    if bytes_eq_ignore_ascii_case(raw, b"1")
+        || bytes_eq_ignore_ascii_case(raw, b"true")
+        || bytes_eq_ignore_ascii_case(raw, b"yes")
+        || bytes_eq_ignore_ascii_case(raw, b"on")
+    {
+        return Some(true);
     }
+    if bytes_eq_ignore_ascii_case(raw, b"0")
+        || bytes_eq_ignore_ascii_case(raw, b"false")
+        || bytes_eq_ignore_ascii_case(raw, b"no")
+        || bytes_eq_ignore_ascii_case(raw, b"off")
+    {
+        return Some(false);
+    }
+    None
+}
+
+fn bytes_eq_ignore_ascii_case(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .all(|(left, right)| left.eq_ignore_ascii_case(right))
 }
 
 fn parse_metrics_format(option: &str, raw: &str) -> Result<MetricsFileFormat> {
@@ -539,7 +567,37 @@ mod verification {
     fn retry_count_acceptance_matches_configured_limit() {
         let retries: u32 = kani::any();
 
-        assert_eq!(is_valid_retry_count(retries), retries <= MAX_PUSH_RETRIES);
+        assert_eq!(
+            is_valid_retry_count(retries),
+            retries <= PushGatewayConfig::MAX_RETRIES
+        );
+    }
+
+    #[kani::proof]
+    #[kani::unwind(7)]
+    fn bool_literal_parser_matches_documented_values_for_bounded_bytes() {
+        let len: usize = kani::any();
+        kani::assume(len <= 5);
+        let bytes: [u8; 5] = kani::any();
+        let raw = &bytes[..len];
+
+        let expected_true = bytes_eq_ignore_ascii_case(raw, b"1")
+            || bytes_eq_ignore_ascii_case(raw, b"true")
+            || bytes_eq_ignore_ascii_case(raw, b"yes")
+            || bytes_eq_ignore_ascii_case(raw, b"on");
+        let expected_false = bytes_eq_ignore_ascii_case(raw, b"0")
+            || bytes_eq_ignore_ascii_case(raw, b"false")
+            || bytes_eq_ignore_ascii_case(raw, b"no")
+            || bytes_eq_ignore_ascii_case(raw, b"off");
+        let expected = if expected_true {
+            Some(true)
+        } else if expected_false {
+            Some(false)
+        } else {
+            None
+        };
+
+        assert_eq!(parse_bool_literal_bytes(raw), expected);
     }
 }
 

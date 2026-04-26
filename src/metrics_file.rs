@@ -21,9 +21,13 @@ pub(crate) enum MetricsFileFormat {
 
 impl MetricsFileFormat {
     pub(crate) fn parse(raw: &str) -> Option<Self> {
-        match raw.trim() {
-            "jsonl" => Some(Self::Jsonl),
-            "prometheus" => Some(Self::Prometheus),
+        Self::parse_trimmed_bytes(raw.trim().as_bytes())
+    }
+
+    fn parse_trimmed_bytes(raw: &[u8]) -> Option<Self> {
+        match raw {
+            b"jsonl" => Some(Self::Jsonl),
+            b"prometheus" => Some(Self::Prometheus),
             _ => None,
         }
     }
@@ -106,6 +110,28 @@ fn file_error(
         format!("{message}: {}", path.display()),
         source,
     )
+}
+
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(12)]
+    fn metrics_format_parser_matches_documented_values_for_bounded_bytes() {
+        let len: usize = kani::any();
+        kani::assume(len <= 10);
+        let bytes: [u8; 10] = kani::any();
+        let raw = &bytes[..len];
+
+        let expected = match raw {
+            b"jsonl" => Some(MetricsFileFormat::Jsonl),
+            b"prometheus" => Some(MetricsFileFormat::Prometheus),
+            _ => None,
+        };
+
+        assert_eq!(MetricsFileFormat::parse_trimmed_bytes(raw), expected);
+    }
 }
 
 #[cfg(test)]
