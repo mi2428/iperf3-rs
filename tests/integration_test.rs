@@ -47,8 +47,8 @@ const BIDIR_SCENARIO: &str = "tcp-bidir";
 // - an iperf3-rs client run from the metrics-enabled `client-rs` service
 //   publishes non-zero `iperf3_bytes` and `iperf3_bandwidth` samples with the
 //   expected client-mode integration labels;
-// - TCP runs expose sender-side TCP_INFO metrics, including generic jitter from
-//   RTT variation, while UDP-only metrics stay at zero for TCP scenarios;
+// - TCP runs expose sender-side TCP_INFO metrics while UDP-only metrics stay at
+//   zero for TCP scenarios;
 // - a metrics-enabled iperf3-rs client without `-J` keeps normal
 //   human-readable stdout;
 // - client metrics appear in Pushgateway while a longer run is still active;
@@ -93,15 +93,27 @@ fn compose_interop_and_pushgateway_metrics() {
         "server",
         &["iperf3_bytes", "iperf3_bandwidth"],
     );
-    assert_metric_value_eq(&project, "iperf3_packets", SERVER_SCENARIO, "server", 0.0);
     assert_metric_value_eq(
         &project,
-        "iperf3_error_packets",
+        "iperf3_udp_packets",
         SERVER_SCENARIO,
         "server",
         0.0,
     );
-    assert_metric_value_eq(&project, "iperf3_jitter", SERVER_SCENARIO, "server", 0.0);
+    assert_metric_value_eq(
+        &project,
+        "iperf3_udp_lost_packets",
+        SERVER_SCENARIO,
+        "server",
+        0.0,
+    );
+    assert_metric_value_eq(
+        &project,
+        "iperf3_udp_jitter_seconds",
+        SERVER_SCENARIO,
+        "server",
+        0.0,
+    );
     assert_metric_value_eq(
         &project,
         "iperf3_tcp_rtt_seconds",
@@ -181,7 +193,6 @@ fn compose_interop_and_pushgateway_metrics() {
         &[
             "iperf3_bytes",
             "iperf3_bandwidth",
-            "iperf3_jitter",
             "iperf3_tcp_rtt_seconds",
             "iperf3_tcp_rttvar_seconds",
             "iperf3_tcp_snd_cwnd_bytes",
@@ -189,10 +200,23 @@ fn compose_interop_and_pushgateway_metrics() {
             "iperf3_tcp_pmtu_bytes",
         ],
     );
-    assert_metric_value_eq(&project, "iperf3_packets", CLIENT_SCENARIO, "client", 0.0);
     assert_metric_value_eq(
         &project,
-        "iperf3_error_packets",
+        "iperf3_udp_packets",
+        CLIENT_SCENARIO,
+        "client",
+        0.0,
+    );
+    assert_metric_value_eq(
+        &project,
+        "iperf3_udp_lost_packets",
+        CLIENT_SCENARIO,
+        "client",
+        0.0,
+    );
+    assert_metric_value_eq(
+        &project,
+        "iperf3_udp_jitter_seconds",
         CLIENT_SCENARIO,
         "client",
         0.0,
@@ -250,9 +274,9 @@ fn compose_interop_and_pushgateway_metrics() {
     );
     assert_child_success(&live_args, live_client);
 
-    // UDP uses different interval fields from TCP. Requiring packets in addition
-    // to bytes and bandwidth ensures the sender-side UDP metric mapping is
-    // exercised by the Docker integration path.
+    // UDP uses different interval fields from TCP. Requiring UDP-prefixed packet
+    // metrics in addition to bytes and bandwidth ensures the sender-side UDP
+    // mapping is exercised by the Docker integration path.
     let udp = retry_json_client("iperf3-rs UDP client to iperf3-rs server", || {
         project.client_output(&[
             "iperf3-rs",
@@ -275,7 +299,7 @@ fn compose_interop_and_pushgateway_metrics() {
         &project,
         UDP_SCENARIO,
         "client",
-        &["iperf3_bytes", "iperf3_bandwidth", "iperf3_packets"],
+        &["iperf3_bytes", "iperf3_bandwidth", "iperf3_udp_packets"],
     );
     assert_metric_value_eq(
         &project,
@@ -286,7 +310,13 @@ fn compose_interop_and_pushgateway_metrics() {
     );
     // Jitter is measured by the UDP receiver, so it should appear on the
     // metrics-enabled server rather than on the sending client.
-    wait_for_metric_value_gt(&project, "iperf3_jitter", SERVER_SCENARIO, "server", 0.0);
+    wait_for_metric_value_gt(
+        &project,
+        "iperf3_udp_jitter_seconds",
+        SERVER_SCENARIO,
+        "server",
+        0.0,
+    );
     assert_metric_value_eq(
         &project,
         "iperf3_udp_out_of_order_packets",
