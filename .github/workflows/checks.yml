@@ -243,6 +243,95 @@ jobs:
           SKIP_INTEGRATION_IMAGE_BUILD: "true"
         run: cargo test --test integration_test -- --ignored --nocapture --test-threads=1
 
+  dist:
+    name: Dist
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+            suffix: linux-amd64
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            suffix: linux-arm64
+    env:
+      LINUX_BUILD_IMAGE: rust:1.95-bullseye
+      LINUX_CACHE_KEY: rust-1.95-bullseye
+      LINUX_SMOKE_IMAGE: debian:bullseye-slim
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Show Docker versions
+        run: |
+          docker version
+
+      - name: Cache Linux dist build outputs
+        uses: actions/cache@v5
+        with:
+          path: |
+            .cargo-linux/${{ matrix.arch }}
+            target/linux-${{ matrix.arch }}-${{ env.LINUX_CACHE_KEY }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-${{ env.LINUX_CACHE_KEY }}-dist-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-${{ env.LINUX_CACHE_KEY }}-dist-
+
+      - name: Build Linux dist binary
+        env:
+          ARCH: ${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          set -Eeuo pipefail
+
+          mkdir -p "dist" ".cargo-linux/${ARCH}" ".home-linux/${LINUX_CACHE_KEY}/${ARCH}"
+          host_uid="$(id -u)"
+          host_gid="$(id -g)"
+
+          docker run --rm \
+            --platform "${PLATFORM}" \
+            -e "HOME=/workspace/.home-linux/${LINUX_CACHE_KEY}/${ARCH}" \
+            -e "CARGO_HOME=/workspace/.cargo-linux/${ARCH}" \
+            -e "CARGO_TARGET_DIR=/workspace/target/linux-${ARCH}-${LINUX_CACHE_KEY}" \
+            -e "IPERF3_RS_CONFIGURE_ARGS=${IPERF3_RS_CONFIGURE_ARGS}" \
+            -v "${PWD}:/workspace" \
+            -w /workspace \
+            "${LINUX_BUILD_IMAGE}" \
+            bash -eu -o pipefail -c " \
+              apt-get update >/dev/null; \
+              apt-get install -y --no-install-recommends build-essential make pkg-config ca-certificates >/dev/null; \
+              cargo build --release; \
+              cp target/linux-${ARCH}-${LINUX_CACHE_KEY}/release/iperf3-rs dist/iperf3-rs-${SUFFIX}; \
+              chmod +x dist/iperf3-rs-${SUFFIX}; \
+              chown -R ${host_uid}:${host_gid} dist target/linux-${ARCH}-${LINUX_CACHE_KEY} .cargo-linux/${ARCH} .home-linux/${LINUX_CACHE_KEY}/${ARCH}"
+
+      - name: Smoke Linux dist binary on Debian bullseye
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          set -Eeuo pipefail
+
+          docker run --rm \
+            --platform "${PLATFORM}" \
+            -v "${PWD}:/workspace:ro" \
+            -w /workspace \
+            "${LINUX_SMOKE_IMAGE}" \
+            "/workspace/dist/iperf3-rs-${SUFFIX}" -h >/dev/null
+
+          docker run --rm \
+            --platform "${PLATFORM}" \
+            -v "${PWD}:/workspace:ro" \
+            -w /workspace \
+            "${LINUX_SMOKE_IMAGE}" \
+            "/workspace/dist/iperf3-rs-${SUFFIX}" --version >/dev/null
+
   required:
     name: Required
     runs-on: ubuntu-latest
@@ -252,6 +341,7 @@ jobs:
       - test
       - kani
       - integration
+      - dist
     if: always()
     steps:
       - name: Require all checks
@@ -261,3 +351,4 @@ jobs:
           test "${{ needs.test.result }}" = "success"
           test "${{ needs.kani.result }}" = "success"
           test "${{ needs.integration.result }}" = "success"
+          test "${{ needs.dist.result }}" = "success"

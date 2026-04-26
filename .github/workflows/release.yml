@@ -108,10 +108,11 @@ jobs:
       # - N "local" tasks that build each platform's binaries and platform-specific installers
       matrix: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix }}
     runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.container && matrix.container.image || null }}
+    container: ${{ matrix.container && matrix.container.image || (contains(join(matrix.targets, ','), 'unknown-linux-gnu') && 'rust:1.95-bullseye' || null) }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
+      RELEASE_CACHE_ABI: ${{ contains(join(matrix.targets, ','), 'unknown-linux-gnu') && 'glibc-bullseye' || 'native' }}
     steps:
       - name: enable windows longpaths
         run: |
@@ -136,12 +137,19 @@ jobs:
       - name: "Install Linux build dependencies"
         if: "runner.os == 'Linux'"
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          if command -v sudo >/dev/null 2>&1; then
+            sudo_cmd=sudo
+          else
+            sudo_cmd=
+          fi
+          ${sudo_cmd} apt-get update
+          ${sudo_cmd} apt-get install -y --no-install-recommends \
             build-essential \
             ca-certificates \
+            jq \
             make \
-            pkg-config
+            pkg-config \
+            xz-utils
         shell: "bash"
       - name: "Cache Cargo sources"
         uses: "actions/cache@v5"
@@ -155,9 +163,9 @@ jobs:
       - name: "Cache Rust build outputs"
         uses: "actions/cache@v5"
         with:
-          "key": "${{ runner.os }}-${{ join(matrix.targets, '-') }}-release-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}"
+          "key": "${{ runner.os }}-${{ join(matrix.targets, '-') }}-${{ env.RELEASE_CACHE_ABI }}-release-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}"
           "path": "target"
-          "restore-keys": "${{ runner.os }}-${{ join(matrix.targets, '-') }}-release-target-"
+          "restore-keys": "${{ runner.os }}-${{ join(matrix.targets, '-') }}-${{ env.RELEASE_CACHE_ABI }}-release-target-"
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest
@@ -175,6 +183,24 @@ jobs:
           # Actually do builds and make zips and whatnot
           dist build ${{ needs.plan.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
           echo "dist ran successfully"
+      - name: Smoke Linux release artifact on Debian bullseye
+        if: ${{ contains(join(matrix.targets, ','), 'unknown-linux-gnu') }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          archive="$(find target/distrib -maxdepth 1 -type f -name '*unknown-linux-gnu.tar.xz' | head -n 1)"
+          test -n "${archive}"
+
+          rm -rf /tmp/iperf3-rs-release-smoke
+          mkdir -p /tmp/iperf3-rs-release-smoke
+          tar -xJf "${archive}" -C /tmp/iperf3-rs-release-smoke
+
+          binary="$(find /tmp/iperf3-rs-release-smoke -type f -name iperf3-rs -perm /111 | head -n 1)"
+          test -n "${binary}"
+
+          "${binary}" -h >/dev/null
+          "${binary}" --version >/dev/null
       - id: cargo-dist
         name: Post-build
         # We force bash here just because github makes it really hard to get values up
