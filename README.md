@@ -290,7 +290,8 @@ Protocol-specific fields such as TCP RTT or UDP jitter are exposed as
 `Option<f64>`, so application code can distinguish an observed zero from a
 metric that libiperf did not report for that protocol or traffic direction.
 SCTP runs are identified as `TransportProtocol::Sctp` when libiperf reports
-that protocol.
+that protocol. Interval samples also include `role`, `direction`,
+`stream_count`, and `timestamp_unix_seconds` context.
 
 Applications that want to use their own delivery path can reuse the same
 encoding and file output as the CLI. `PrometheusEncoder` renders interval and
@@ -557,6 +558,7 @@ interval gauges when `--push.interval` is not set:
 ```text
 iperf3_transferred_bytes
 iperf3_bandwidth_bits_per_second
+iperf3_stream_count
 iperf3_tcp_retransmits
 iperf3_tcp_rtt_seconds
 iperf3_tcp_rttvar_seconds
@@ -577,6 +579,7 @@ Metric mapping:
 | --- | --- | --- |
 | `iperf3_transferred_bytes` | `bytes_transferred` | Interval bytes from the aggregate report side. |
 | `iperf3_bandwidth_bits_per_second` | `bytes_transferred`, `interval_duration` | Bits per second for the interval. |
+| `iperf3_stream_count` | matched streams | Number of libiperf streams represented by the interval sample. |
 | `iperf3_tcp_retransmits` | `interval_retrans` | TCP sender retransmits when reported by libiperf and the OS. |
 | `iperf3_tcp_rtt_seconds` | `rtt` | TCP sender smoothed RTT from TCP_INFO, converted from microseconds to seconds. |
 | `iperf3_tcp_rttvar_seconds` | `rttvar` | TCP sender RTT variance from TCP_INFO, converted from microseconds to seconds. |

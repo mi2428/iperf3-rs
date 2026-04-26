@@ -35,12 +35,39 @@ pub enum TransportProtocol {
     Other(i32),
 }
 
+/// Direction of the libiperf streams represented by a metrics sample.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum MetricDirection {
+    /// Direction was not reported.
+    #[default]
+    Unknown,
+    /// Streams sending from this iperf process.
+    Sender,
+    /// Streams receiving into this iperf process.
+    Receiver,
+    /// Another upstream direction id.
+    Other(i32),
+}
+
 impl TransportProtocol {
     fn from_callback_value(value: c_int) -> Self {
         match value {
             1 => Self::Tcp,
             2 => Self::Udp,
             3 => Self::Sctp,
+            0 => Self::Unknown,
+            other => Self::Other(other),
+        }
+    }
+}
+
+impl MetricDirection {
+    fn from_callback_value(value: c_int) -> Self {
+        match value {
+            1 => Self::Sender,
+            2 => Self::Receiver,
             0 => Self::Unknown,
             other => Self::Other(other),
         }
@@ -61,6 +88,10 @@ pub struct Metrics {
     pub timestamp_unix_seconds: f64,
     /// Role of the iperf test that produced this interval.
     pub role: Role,
+    /// Sender/receiver direction represented by this aggregate sample.
+    pub direction: MetricDirection,
+    /// Number of libiperf streams represented by this aggregate sample.
+    pub stream_count: usize,
     /// Transport protocol used by this interval.
     pub protocol: TransportProtocol,
     /// Bytes transferred during the interval.
@@ -685,6 +716,8 @@ unsafe extern "C" fn metrics_callback(
     interval_duration_seconds: c_double,
     omitted: c_double,
     protocol: c_int,
+    direction: c_int,
+    stream_count: c_int,
     tcp_retransmits_available: c_int,
     tcp_rtt_seconds_available: c_int,
     tcp_rttvar_seconds_available: c_int,
@@ -713,6 +746,8 @@ unsafe extern "C" fn metrics_callback(
         Metrics {
             timestamp_unix_seconds: current_unix_timestamp_seconds(),
             role: target.role,
+            direction: MetricDirection::from_callback_value(direction),
+            stream_count: nonnegative_usize(stream_count),
             protocol: TransportProtocol::from_callback_value(protocol),
             bytes,
             bandwidth_bits_per_second,
@@ -745,6 +780,10 @@ fn current_unix_timestamp_seconds() -> f64 {
 
 fn available(flag: c_int, value: c_double) -> Option<f64> {
     (flag != 0).then_some(value)
+}
+
+fn nonnegative_usize(value: c_int) -> usize {
+    usize::try_from(value).unwrap_or(0)
 }
 
 fn enqueue_latest(target: &CallbackTarget, metrics: Metrics) {
@@ -1050,6 +1089,26 @@ mod tests {
         assert_eq!(
             TransportProtocol::from_callback_value(99),
             TransportProtocol::Other(99)
+        );
+    }
+
+    #[test]
+    fn metric_direction_maps_callback_values() {
+        assert_eq!(
+            MetricDirection::from_callback_value(0),
+            MetricDirection::Unknown
+        );
+        assert_eq!(
+            MetricDirection::from_callback_value(1),
+            MetricDirection::Sender
+        );
+        assert_eq!(
+            MetricDirection::from_callback_value(2),
+            MetricDirection::Receiver
+        );
+        assert_eq!(
+            MetricDirection::from_callback_value(99),
+            MetricDirection::Other(99)
         );
     }
 

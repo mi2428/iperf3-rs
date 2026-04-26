@@ -80,8 +80,8 @@ pub use command::{IperfCommand, IperfResult, RunningIperf};
 pub use error::{Error, ErrorKind, Result};
 pub use iperf::{Role, libiperf_version, usage_long};
 pub use metrics::{
-    MetricEvent, Metrics, MetricsMode, MetricsStream, TransportProtocol, WindowGaugeStats,
-    WindowMetrics, aggregate_window,
+    MetricDirection, MetricEvent, Metrics, MetricsMode, MetricsStream, TransportProtocol,
+    WindowGaugeStats, WindowMetrics, aggregate_window,
 };
 #[cfg(feature = "serde")]
 pub use metrics_file::{MetricsFileFormat, MetricsFileSink};

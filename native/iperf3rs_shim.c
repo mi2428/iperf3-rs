@@ -51,6 +51,7 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
     double omitted = 0.0;
     double interval_duration = 0.0;
     int protocol = 0;
+    int direction = 0;
     int matched_streams = 0;
     int tcp_rtt_count = 0;
     int tcp_rttvar_count = 0;
@@ -80,6 +81,7 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
     } else {
         stream_must_be_sender = test->mode * test->mode;
     }
+    direction = stream_must_be_sender ? 1 : 2;
 
     if (test->protocol->id == Ptcp) {
         protocol = 1;
@@ -199,6 +201,8 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
         interval_duration,
         omitted,
         protocol,
+        direction,
+        matched_streams,
         tcp_retransmits_available,
         tcp_rtt_seconds_available,
         tcp_rttvar_seconds_available,

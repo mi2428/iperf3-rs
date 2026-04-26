@@ -9,9 +9,9 @@ use std::{
 };
 
 use iperf3_rs::{
-    ErrorKind, IperfCommand, MetricEvent, Metrics, MetricsFileFormat, MetricsFileSink, MetricsMode,
-    PrometheusEncoder, PushGatewayConfig, TransportProtocol, WindowMetrics, libiperf_version,
-    usage_long,
+    ErrorKind, IperfCommand, MetricDirection, MetricEvent, Metrics, MetricsFileFormat,
+    MetricsFileSink, MetricsMode, PrometheusEncoder, PushGatewayConfig, TransportProtocol,
+    WindowMetrics, libiperf_version, usage_long,
 };
 
 #[test]
@@ -62,6 +62,12 @@ fn command_spawn_streams_interval_metrics_against_one_off_server() {
             .iter()
             .all(|sample| sample.protocol == TransportProtocol::Tcp)
     );
+    assert!(
+        samples
+            .iter()
+            .all(|sample| sample.direction == MetricDirection::Sender)
+    );
+    assert!(samples.iter().all(|sample| sample.stream_count > 0));
     assert!(samples.iter().all(|sample| sample.udp_packets.is_none()));
 }
 

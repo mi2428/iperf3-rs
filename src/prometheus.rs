@@ -175,6 +175,12 @@ fn render_interval_prometheus_with_labels(
         metrics.bandwidth_bits_per_second,
         &label_set,
     );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "stream_count"),
+        metrics.stream_count as f64,
+        &label_set,
+    );
     gauge_option(
         &mut out,
         &metric_name(prefix, "tcp_retransmits"),
@@ -523,6 +529,7 @@ mod tests {
         });
 
         assert!(rendered.contains("iperf3_transferred_bytes 1\n"));
+        assert!(rendered.contains("iperf3_stream_count 0\n"));
         assert!(rendered.contains("iperf3_tcp_rtt_seconds 0.006\n"));
         assert!(rendered.contains("iperf3_udp_packets 2\n"));
         assert!(rendered.contains("iperf3_udp_lost_packets 3\n"));
@@ -583,6 +590,7 @@ mod tests {
         for name in [
             "iperf3_transferred_bytes",
             "iperf3_bandwidth_bits_per_second",
+            "iperf3_stream_count",
             "iperf3_omitted_intervals",
         ] {
             assert!(rendered.contains(&format!("# TYPE {name} gauge\n")));

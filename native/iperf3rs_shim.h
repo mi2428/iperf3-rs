@@ -21,6 +21,8 @@ typedef void (*iperf3rs_metrics_callback)(
     double interval_duration_seconds,
     double omitted,
     int protocol,
+    int direction,
+    int stream_count,
     int tcp_retransmits_available,
     int tcp_rtt_seconds_available,
     int tcp_rttvar_seconds_available,
