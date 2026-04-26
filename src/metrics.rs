@@ -133,8 +133,8 @@ pub struct WindowMetrics {
     pub duration_seconds: f64,
     /// Total bytes transferred across this window.
     pub transferred_bytes: f64,
-    /// Bandwidth statistics in bytes per second.
-    pub bandwidth_bytes_per_second: WindowGaugeStats,
+    /// Bandwidth statistics in bits per second.
+    pub bandwidth_bits_per_second: WindowGaugeStats,
     /// TCP smoothed RTT statistics in seconds.
     pub tcp_rtt_seconds: WindowGaugeStats,
     /// TCP RTT variance statistics in seconds.
@@ -787,7 +787,7 @@ pub fn aggregate_window(samples: &[Metrics]) -> Option<WindowMetrics> {
     for metrics in samples {
         duration_seconds += finite_nonnegative(metrics.interval_duration_seconds);
         transferred_bytes += finite_nonnegative(metrics.bytes);
-        bandwidth.observe(metrics.bandwidth_bits_per_second / 8.0);
+        bandwidth.observe(metrics.bandwidth_bits_per_second);
         tcp_rtt.observe_option(metrics.tcp_rtt_seconds);
         tcp_rttvar.observe_option(metrics.tcp_rttvar_seconds);
         tcp_snd_cwnd.observe_option(metrics.tcp_snd_cwnd_bytes);
@@ -805,7 +805,7 @@ pub fn aggregate_window(samples: &[Metrics]) -> Option<WindowMetrics> {
     }
 
     let bandwidth_mean = if duration_seconds > 0.0 {
-        transferred_bytes / duration_seconds
+        (transferred_bytes * 8.0) / duration_seconds
     } else {
         bandwidth.finish().mean
     };
@@ -813,7 +813,7 @@ pub fn aggregate_window(samples: &[Metrics]) -> Option<WindowMetrics> {
     Some(WindowMetrics {
         duration_seconds,
         transferred_bytes,
-        bandwidth_bytes_per_second: bandwidth.finish_with_mean(bandwidth_mean),
+        bandwidth_bits_per_second: bandwidth.finish_with_mean(bandwidth_mean),
         tcp_rtt_seconds: tcp_rtt.finish(),
         tcp_rttvar_seconds: tcp_rttvar.finish(),
         tcp_snd_cwnd_bytes: tcp_snd_cwnd.finish(),
@@ -962,7 +962,7 @@ mod verification {
 
     #[kani::proof]
     #[kani::unwind(3)]
-    fn window_bandwidth_mean_uses_total_bytes_over_duration_for_unit_intervals() {
+    fn window_bandwidth_mean_uses_total_bits_over_duration_for_unit_intervals() {
         let bytes_a: u8 = kani::any();
         let bytes_b: u8 = kani::any();
 
@@ -972,8 +972,8 @@ mod verification {
         ];
         let window = aggregate_window(&samples).expect("nonempty windows summarize");
 
-        let expected = (f64::from(bytes_a) + f64::from(bytes_b)) / 2.0;
-        assert_eq!(window.bandwidth_bytes_per_second.mean, expected);
+        let expected = ((f64::from(bytes_a) + f64::from(bytes_b)) * 8.0) / 2.0;
+        assert_eq!(window.bandwidth_bits_per_second.mean, expected);
     }
 
     #[kani::proof]
@@ -1002,7 +1002,7 @@ mod verification {
         ];
         let window = aggregate_window(&samples).expect("nonempty windows summarize");
 
-        assert_ordered(window.bandwidth_bytes_per_second);
+        assert_ordered(window.bandwidth_bits_per_second);
         assert_ordered(window.tcp_rtt_seconds);
     }
 
@@ -1098,7 +1098,7 @@ mod tests {
         };
         assert_eq!(window.transferred_bytes, 12.0);
         assert_eq!(window.duration_seconds, 2.0);
-        assert_eq!(window.bandwidth_bytes_per_second.mean, 6.0);
+        assert_eq!(window.bandwidth_bits_per_second.mean, 48.0);
         worker.join().unwrap();
         assert_eq!(stream.next(), None);
     }
@@ -1175,12 +1175,12 @@ mod tests {
         assert_eq!(window.duration_seconds, 4.0);
         assert_eq!(window.transferred_bytes, 1000.0);
         assert_eq!(
-            window.bandwidth_bytes_per_second,
+            window.bandwidth_bits_per_second,
             WindowGaugeStats {
                 samples: 2,
-                mean: 250.0,
-                min: 100.0,
-                max: 300.0
+                mean: 2000.0,
+                min: 800.0,
+                max: 2400.0
             }
         );
         assert_eq!(
@@ -1224,12 +1224,12 @@ mod tests {
 
         assert_eq!(window.duration_seconds, 0.0);
         assert_eq!(
-            window.bandwidth_bytes_per_second,
+            window.bandwidth_bits_per_second,
             WindowGaugeStats {
                 samples: 2,
-                mean: 200.0,
-                min: 100.0,
-                max: 300.0
+                mean: 1600.0,
+                min: 800.0,
+                max: 2400.0
             }
         );
     }
@@ -1258,12 +1258,12 @@ mod tests {
         assert_eq!(window.transferred_bytes, 8.0);
         assert_eq!(window.tcp_retransmits, Some(2.0));
         assert_eq!(
-            window.bandwidth_bytes_per_second,
+            window.bandwidth_bits_per_second,
             WindowGaugeStats {
                 samples: 1,
-                mean: 8.0,
-                min: 8.0,
-                max: 8.0
+                mean: 64.0,
+                min: 64.0,
+                max: 64.0
             }
         );
     }

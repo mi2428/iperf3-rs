@@ -530,8 +530,8 @@ With the default `--metrics.prefix iperf3`, iperf3-rs emits immediate
 interval gauges when `--push.interval` is not set:
 
 ```text
-iperf3_bytes
-iperf3_bandwidth
+iperf3_transferred_bytes
+iperf3_bandwidth_bits_per_second
 iperf3_tcp_retransmits
 iperf3_tcp_rtt_seconds
 iperf3_tcp_rttvar_seconds
@@ -543,15 +543,15 @@ iperf3_udp_packets
 iperf3_udp_lost_packets
 iperf3_udp_jitter_seconds
 iperf3_udp_out_of_order_packets
-iperf3_omitted
+iperf3_omitted_intervals
 ```
 
 Metric mapping:
 
 | Metric | Source field | Notes |
 | --- | --- | --- |
-| `iperf3_bytes` | `bytes_transferred` | Interval bytes from the aggregate report side. |
-| `iperf3_bandwidth` | `bytes_transferred`, `interval_duration` | Bits per second for the interval. |
+| `iperf3_transferred_bytes` | `bytes_transferred` | Interval bytes from the aggregate report side. |
+| `iperf3_bandwidth_bits_per_second` | `bytes_transferred`, `interval_duration` | Bits per second for the interval. |
 | `iperf3_tcp_retransmits` | `interval_retrans` | TCP sender retransmits when reported by libiperf and the OS. |
 | `iperf3_tcp_rtt_seconds` | `rtt` | TCP sender smoothed RTT from TCP_INFO, converted from microseconds to seconds. |
 | `iperf3_tcp_rttvar_seconds` | `rttvar` | TCP sender RTT variance from TCP_INFO, converted from microseconds to seconds. |
@@ -563,7 +563,7 @@ Metric mapping:
 | `iperf3_udp_lost_packets` | `interval_cnt_error` | UDP packets inferred lost from sequence gaps. |
 | `iperf3_udp_jitter_seconds` | `jitter` | UDP receiver jitter in seconds. |
 | `iperf3_udp_out_of_order_packets` | `out_of_order` | UDP out-of-order packets observed in the interval. |
-| `iperf3_omitted` | `omitted` | `1` for omitted warm-up intervals, otherwise `0`. |
+| `iperf3_omitted_intervals` | `omitted` | `1` for omitted warm-up intervals, otherwise `0`. |
 
 Not every metric is meaningful for every iperf mode. UDP-prefixed fields are
 zero for normal TCP runs, and TCP_INFO-derived fields depend on libiperf and
@@ -575,9 +575,9 @@ summary gauges instead of the immediate interval metric names:
 ```text
 iperf3_window_duration_seconds
 iperf3_window_transferred_bytes
-iperf3_window_bandwidth_mean_bytes_per_second
-iperf3_window_bandwidth_min_bytes_per_second
-iperf3_window_bandwidth_max_bytes_per_second
+iperf3_window_bandwidth_mean_bits_per_second
+iperf3_window_bandwidth_min_bits_per_second
+iperf3_window_bandwidth_max_bits_per_second
 iperf3_window_tcp_rtt_mean_seconds
 iperf3_window_tcp_rtt_min_seconds
 iperf3_window_tcp_rtt_max_seconds
@@ -608,7 +608,7 @@ Window metric semantics:
 
 | Metric shape | Meaning |
 | --- | --- |
-| `*_mean_*`, `*_min_*`, `*_max_*` | Arithmetic mean, minimum, and maximum of gauge-like interval values in the pushed window. Bandwidth mean is derived from total bytes divided by total interval duration. |
+| `*_mean_*`, `*_min_*`, `*_max_*` | Arithmetic mean, minimum, and maximum of gauge-like interval values in the pushed window. Bandwidth mean is derived from total transferred bits divided by total interval duration. |
 | `iperf3_window_transferred_bytes` | Total transferred bytes across the pushed window. |
 | `iperf3_window_tcp_retransmits` | TCP retransmits accumulated across the pushed window. |
 | `iperf3_window_tcp_reorder_events` | TCP reordering events accumulated across the pushed window. |
@@ -640,7 +640,7 @@ iperf3-rs \
   --metrics.prefix nettest
 ```
 
-This emits `nettest_bytes`, `nettest_bandwidth`, and so on.
+This emits `nettest_transferred_bytes`, `nettest_bandwidth_bits_per_second`, and so on.
 
 ## Local Observability Stack
 

@@ -594,13 +594,13 @@ mod tests {
             },
             "iperf3",
         );
-        assert!(rendered.contains("iperf3_bytes 1\n"));
+        assert!(rendered.contains("iperf3_transferred_bytes 1\n"));
         assert!(rendered.contains("iperf3_tcp_rtt_seconds 0.006\n"));
         assert!(rendered.contains("iperf3_udp_packets 2\n"));
         assert!(rendered.contains("iperf3_udp_lost_packets 3\n"));
         assert!(rendered.contains("iperf3_udp_jitter_seconds 0.004\n"));
         assert!(rendered.contains("iperf3_udp_out_of_order_packets 12\n"));
-        assert!(rendered.contains("iperf3_omitted 1\n"));
+        assert!(rendered.contains("iperf3_omitted_intervals 1\n"));
     }
 
     #[test]
@@ -724,7 +724,11 @@ mod tests {
     fn renders_all_expected_metric_names() {
         let rendered = render_prometheus(&Metrics::default(), "iperf3");
 
-        for name in ["iperf3_bytes", "iperf3_bandwidth", "iperf3_omitted"] {
+        for name in [
+            "iperf3_transferred_bytes",
+            "iperf3_bandwidth_bits_per_second",
+            "iperf3_omitted_intervals",
+        ] {
             assert!(rendered.contains(&format!("# TYPE {name} gauge\n")));
             assert!(rendered.contains(&format!("{name} 0\n")));
         }
@@ -752,7 +756,7 @@ mod tests {
             &WindowMetrics {
                 duration_seconds: 10.0,
                 transferred_bytes: 1000.0,
-                bandwidth_bytes_per_second: WindowGaugeStats {
+                bandwidth_bits_per_second: WindowGaugeStats {
                     samples: 2,
                     mean: 100.0,
                     min: 90.0,
@@ -775,9 +779,9 @@ mod tests {
 
         assert!(rendered.contains("iperf3_window_duration_seconds 10\n"));
         assert!(rendered.contains("iperf3_window_transferred_bytes 1000\n"));
-        assert!(rendered.contains("iperf3_window_bandwidth_mean_bytes_per_second 100\n"));
-        assert!(rendered.contains("iperf3_window_bandwidth_min_bytes_per_second 90\n"));
-        assert!(rendered.contains("iperf3_window_bandwidth_max_bytes_per_second 110\n"));
+        assert!(rendered.contains("iperf3_window_bandwidth_mean_bits_per_second 100\n"));
+        assert!(rendered.contains("iperf3_window_bandwidth_min_bits_per_second 90\n"));
+        assert!(rendered.contains("iperf3_window_bandwidth_max_bits_per_second 110\n"));
         assert!(rendered.contains("iperf3_window_tcp_rtt_mean_seconds 0.01\n"));
         assert!(rendered.contains("iperf3_window_tcp_rtt_min_seconds 0.005\n"));
         assert!(rendered.contains("iperf3_window_tcp_rtt_max_seconds 0.02\n"));
@@ -801,9 +805,9 @@ mod tests {
         }
 
         for name in [
-            "iperf3_window_bandwidth_mean_bytes_per_second",
-            "iperf3_window_bandwidth_min_bytes_per_second",
-            "iperf3_window_bandwidth_max_bytes_per_second",
+            "iperf3_window_bandwidth_mean_bits_per_second",
+            "iperf3_window_bandwidth_min_bits_per_second",
+            "iperf3_window_bandwidth_max_bits_per_second",
             "iperf3_window_tcp_rtt_mean_seconds",
             "iperf3_window_tcp_rtt_min_seconds",
             "iperf3_window_tcp_rtt_max_seconds",
@@ -836,9 +840,9 @@ mod tests {
     fn renders_metric_names_with_custom_prefix() {
         let rendered = render_prometheus(&Metrics::default(), "nettest");
 
-        assert!(rendered.contains("# TYPE nettest_bytes gauge\n"));
-        assert!(rendered.contains("nettest_bandwidth 0\n"));
-        assert!(!rendered.contains("iperf3_bytes"));
+        assert!(rendered.contains("# TYPE nettest_transferred_bytes gauge\n"));
+        assert!(rendered.contains("nettest_bandwidth_bits_per_second 0\n"));
+        assert!(!rendered.contains("iperf3_transferred_bytes"));
     }
 
     #[test]

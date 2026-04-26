@@ -241,8 +241,8 @@ mod tests {
         sink.write_interval(&sample_metrics(2.0)).unwrap();
 
         let contents = fs::read_to_string(&path).unwrap();
-        assert!(contents.contains("nettest_bytes 2\n"));
-        assert!(!contents.contains("nettest_bytes 1\n"));
+        assert!(contents.contains("nettest_transferred_bytes 2\n"));
+        assert!(!contents.contains("nettest_transferred_bytes 1\n"));
         assert_no_temp_files_for(&path);
         let _ = fs::remove_file(path);
     }

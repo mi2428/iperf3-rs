@@ -78,7 +78,7 @@ fn command_spawn_streams_window_metrics_against_one_off_server() {
     assert!(
         windows
             .iter()
-            .any(|window| window.bandwidth_bytes_per_second.samples > 0)
+            .any(|window| window.bandwidth_bits_per_second.samples > 0)
     );
     assert!(windows.iter().all(|window| window.udp_packets.is_none()));
 }
@@ -98,8 +98,8 @@ fn command_run_with_pushgateway_pushes_interval_metrics() {
             Ok(()) => {
                 let request = sink.wait();
                 assert!(request.contains("/metrics/job/iperf3/scenario/library-direct"));
-                assert!(request.contains("iperf3_bytes"));
-                assert!(request.contains("iperf3_bandwidth"));
+                assert!(request.contains("iperf3_transferred_bytes"));
+                assert!(request.contains("iperf3_bandwidth_bits_per_second"));
                 return;
             }
             Err(err) => {
@@ -121,8 +121,8 @@ fn public_prometheus_encoder_renders_metrics_without_pushgateway() {
     sample.interval_duration_seconds = 1.0;
 
     let interval = encoder.encode_interval(&sample);
-    assert!(interval.contains("nettest_bytes 32\n"));
-    assert!(interval.contains("nettest_bandwidth 256\n"));
+    assert!(interval.contains("nettest_transferred_bytes 32\n"));
+    assert!(interval.contains("nettest_bandwidth_bits_per_second 256\n"));
 
     let mut window_metrics = WindowMetrics::new();
     window_metrics.duration_seconds = 2.0;
@@ -193,9 +193,9 @@ fn cli_writes_prometheus_metrics_file_with_custom_prefix() {
     assert!(stdout.contains("sender"));
 
     let metrics = fs::read_to_string(&metrics_file).unwrap();
-    assert!(metrics.contains("nettest_bytes "));
-    assert!(metrics.contains("nettest_bandwidth "));
-    assert!(!metrics.contains("iperf3_bytes "));
+    assert!(metrics.contains("nettest_transferred_bytes "));
+    assert!(metrics.contains("nettest_bandwidth_bits_per_second "));
+    assert!(!metrics.contains("iperf3_transferred_bytes "));
     let _ = fs::remove_file(metrics_file);
 }
 

@@ -21,7 +21,7 @@ use support::*;
 // - Pushgateway reports readiness;
 // - an upstream iperf3 client can complete a JSON test against iperf3-rs;
 // - the metrics-enabled iperf3-rs server publishes non-zero
-//   `iperf3_bytes` and `iperf3_bandwidth` samples with the expected
+//   `iperf3_transferred_bytes` and `iperf3_bandwidth_bits_per_second` samples with the expected
 //   integration labels;
 // - that same metrics-enabled server keeps the normal upstream human-readable
 //   stdout shape instead of going silent;
@@ -29,7 +29,7 @@ use support::*;
 // - an iperf3-rs client with metrics enabled still preserves `-J` as a normal
 //   complete JSON document rather than turning it into JSON stream output;
 // - an iperf3-rs client run from the metrics-enabled `client-rs` service
-//   publishes non-zero `iperf3_bytes` and `iperf3_bandwidth` samples with the
+//   publishes non-zero `iperf3_transferred_bytes` and `iperf3_bandwidth_bits_per_second` samples with the
 //   expected integration labels;
 // - TCP runs expose sender-side TCP_INFO metrics while UDP-only metrics stay at
 //   zero for TCP scenarios;
@@ -80,14 +80,17 @@ fn compose_interop_and_pushgateway_metrics() {
     wait_for_pushgateway_metrics(
         &project,
         SERVER_SCENARIO,
-        &["iperf3_bytes", "iperf3_bandwidth"],
+        &[
+            "iperf3_transferred_bytes",
+            "iperf3_bandwidth_bits_per_second",
+        ],
     );
     assert_metric_absent(&project, "iperf3_udp_packets", SERVER_SCENARIO);
     assert_metric_absent(&project, "iperf3_udp_lost_packets", SERVER_SCENARIO);
     assert_metric_absent(&project, "iperf3_udp_jitter_seconds", SERVER_SCENARIO);
     assert_metric_absent(&project, "iperf3_tcp_rtt_seconds", SERVER_SCENARIO);
     assert_metric_absent(&project, "iperf3_udp_out_of_order_packets", SERVER_SCENARIO);
-    assert_metric_value_eq(&project, "iperf3_omitted", SERVER_SCENARIO, 0.0);
+    assert_metric_value_eq(&project, "iperf3_omitted_intervals", SERVER_SCENARIO, 0.0);
     wait_for_service_log_contains(&project, "server-rs", "Server listening on");
     wait_for_service_log_contains(&project, "server-rs", "[ ID]");
     let first_server_push =
@@ -144,8 +147,8 @@ fn compose_interop_and_pushgateway_metrics() {
         &project,
         CLIENT_SCENARIO,
         &[
-            "iperf3_bytes",
-            "iperf3_bandwidth",
+            "iperf3_transferred_bytes",
+            "iperf3_bandwidth_bits_per_second",
             "iperf3_tcp_rtt_seconds",
             "iperf3_tcp_rttvar_seconds",
             "iperf3_tcp_snd_cwnd_bytes",
@@ -157,7 +160,7 @@ fn compose_interop_and_pushgateway_metrics() {
     assert_metric_absent(&project, "iperf3_udp_lost_packets", CLIENT_SCENARIO);
     assert_metric_absent(&project, "iperf3_udp_jitter_seconds", CLIENT_SCENARIO);
     assert_metric_absent(&project, "iperf3_udp_out_of_order_packets", CLIENT_SCENARIO);
-    assert_metric_value_eq(&project, "iperf3_omitted", CLIENT_SCENARIO, 0.0);
+    assert_metric_value_eq(&project, "iperf3_omitted_intervals", CLIENT_SCENARIO, 0.0);
 
     // The same long-running server should keep its callback and Pushgateway
     // configuration across client connections. Pushgateway maintains
@@ -190,7 +193,10 @@ fn compose_interop_and_pushgateway_metrics() {
     wait_for_pushgateway_metrics(
         &project,
         LIVE_SCENARIO,
-        &["iperf3_bytes", "iperf3_bandwidth"],
+        &[
+            "iperf3_transferred_bytes",
+            "iperf3_bandwidth_bits_per_second",
+        ],
     );
     assert!(
         live_client
@@ -218,13 +224,13 @@ iperf3-rs \
   --metrics.prefix nettest \
   -c server-rs -t 3 -i 1 > "$stdout"
 test -s "$metrics"
-awk '$1 == "nettest_bytes" && $2 > 0 { found=1 } END { exit found ? 0 : 1 }' "$metrics" || {
-  echo "missing positive nettest_bytes in metrics file" >&2
+awk '$1 == "nettest_transferred_bytes" && $2 > 0 { found=1 } END { exit found ? 0 : 1 }' "$metrics" || {
+  echo "missing positive nettest_transferred_bytes in metrics file" >&2
   cat "$metrics" >&2
   exit 1
 }
-awk '$1 == "nettest_bandwidth" && $2 > 0 { found=1 } END { exit found ? 0 : 1 }' "$metrics" || {
-  echo "missing positive nettest_bandwidth in metrics file" >&2
+awk '$1 == "nettest_bandwidth_bits_per_second" && $2 > 0 { found=1 } END { exit found ? 0 : 1 }' "$metrics" || {
+  echo "missing positive nettest_bandwidth_bits_per_second in metrics file" >&2
   cat "$metrics" >&2
   exit 1
 }
@@ -240,7 +246,10 @@ cat "$stdout"
     wait_for_pushgateway_metrics(
         &project,
         FILE_SCENARIO,
-        &["nettest_bytes", "nettest_bandwidth"],
+        &[
+            "nettest_transferred_bytes",
+            "nettest_bandwidth_bits_per_second",
+        ],
     );
 
     // Delete-on-exit check: require retained metrics to appear while the client
@@ -262,7 +271,10 @@ cat "$stdout"
     wait_for_pushgateway_metrics(
         &project,
         DELETE_SCENARIO,
-        &["iperf3_bytes", "iperf3_bandwidth"],
+        &[
+            "iperf3_transferred_bytes",
+            "iperf3_bandwidth_bits_per_second",
+        ],
     );
     assert!(
         delete_client
@@ -272,8 +284,12 @@ cat "$stdout"
         "delete-on-exit client exited before live metrics were observed"
     );
     assert_child_success(&delete_args, delete_client);
-    wait_for_metric_absent(&project, "iperf3_bytes", DELETE_SCENARIO);
-    assert_metric_absent(&project, "iperf3_bandwidth", DELETE_SCENARIO);
+    wait_for_metric_absent(&project, "iperf3_transferred_bytes", DELETE_SCENARIO);
+    assert_metric_absent(
+        &project,
+        "iperf3_bandwidth_bits_per_second",
+        DELETE_SCENARIO,
+    );
 
     // Window push check: `--push.interval` intentionally changes the exported
     // metric family names. The Pushgateway should retain representative window
@@ -303,11 +319,15 @@ cat "$stdout"
         &[
             "iperf3_window_duration_seconds",
             "iperf3_window_transferred_bytes",
-            "iperf3_window_bandwidth_mean_bytes_per_second",
+            "iperf3_window_bandwidth_mean_bits_per_second",
             "iperf3_window_tcp_rtt_mean_seconds",
         ],
     );
-    assert_metric_absent(&project, "iperf3_bandwidth", WINDOW_SCENARIO);
+    assert_metric_absent(
+        &project,
+        "iperf3_bandwidth_bits_per_second",
+        WINDOW_SCENARIO,
+    );
 
     // UDP uses different interval fields from TCP. Requiring UDP-prefixed packet
     // metrics in addition to bytes and bandwidth ensures the sender-side UDP
@@ -333,7 +353,11 @@ cat "$stdout"
     wait_for_pushgateway_metrics(
         &project,
         UDP_SCENARIO,
-        &["iperf3_bytes", "iperf3_bandwidth", "iperf3_udp_packets"],
+        &[
+            "iperf3_transferred_bytes",
+            "iperf3_bandwidth_bits_per_second",
+            "iperf3_udp_packets",
+        ],
     );
     assert_metric_value_eq(
         &project,
@@ -373,7 +397,10 @@ cat "$stdout"
     wait_for_pushgateway_metrics(
         &project,
         REVERSE_SCENARIO,
-        &["iperf3_bytes", "iperf3_bandwidth"],
+        &[
+            "iperf3_transferred_bytes",
+            "iperf3_bandwidth_bits_per_second",
+        ],
     );
 
     // Bidirectional mode emits both forward and reverse stream data. Requiring
@@ -398,6 +425,9 @@ cat "$stdout"
     wait_for_pushgateway_metrics(
         &project,
         BIDIR_SCENARIO,
-        &["iperf3_bytes", "iperf3_bandwidth"],
+        &[
+            "iperf3_transferred_bytes",
+            "iperf3_bandwidth_bits_per_second",
+        ],
     );
 }
