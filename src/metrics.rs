@@ -976,6 +976,51 @@ mod verification {
     }
 
     #[kani::proof]
+    fn callback_availability_flag_controls_optional_metric() {
+        let flag: c_int = kani::any();
+        let value = f64::from(kani::any::<i16>());
+
+        assert_eq!(available(flag, value), (flag != 0).then_some(value));
+    }
+
+    #[kani::proof]
+    fn callback_stream_count_never_wraps_negative_values() {
+        let raw: i16 = kani::any();
+        let expected = if raw < 0 { 0 } else { raw as usize };
+
+        assert_eq!(nonnegative_usize(c_int::from(raw)), expected);
+    }
+
+    #[kani::proof]
+    fn callback_context_mappers_preserve_known_values() {
+        let protocol: i8 = kani::any();
+        let direction: i8 = kani::any();
+
+        let expected_protocol = match protocol {
+            0 => TransportProtocol::Unknown,
+            1 => TransportProtocol::Tcp,
+            2 => TransportProtocol::Udp,
+            3 => TransportProtocol::Sctp,
+            other => TransportProtocol::Other(c_int::from(other)),
+        };
+        let expected_direction = match direction {
+            0 => MetricDirection::Unknown,
+            1 => MetricDirection::Sender,
+            2 => MetricDirection::Receiver,
+            other => MetricDirection::Other(c_int::from(other)),
+        };
+
+        assert_eq!(
+            TransportProtocol::from_callback_value(c_int::from(protocol)),
+            expected_protocol
+        );
+        assert_eq!(
+            MetricDirection::from_callback_value(c_int::from(direction)),
+            expected_direction
+        );
+    }
+
+    #[kani::proof]
     #[kani::unwind(3)]
     fn window_counters_are_nonnegative_for_bounded_inputs() {
         let sample = Metrics {

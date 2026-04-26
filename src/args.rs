@@ -975,6 +975,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_metrics_prefix_for_pushgateway_without_file_metrics() {
+        for option in ["--metrics.prefix=nettest", "--push.metric-prefix=nettest"] {
+            let args = vec![
+                "iperf3-rs".to_owned(),
+                "--push.url=localhost:9091".to_owned(),
+                option.to_owned(),
+                "-c".to_owned(),
+                "127.0.0.1".to_owned(),
+            ];
+
+            let (app, iperf) = extract_app_options_with_env(args, |_| None).unwrap();
+            assert_eq!(app.push_url.unwrap().as_str(), "http://localhost:9091/");
+            assert!(app.metrics_file.is_none());
+            assert_eq!(app.metrics_prefix, "nettest");
+            assert_eq!(iperf, ["iperf3-rs", "-c", "127.0.0.1"]);
+        }
+    }
+
+    #[test]
     fn metrics_prefix_requires_an_output_sink() {
         for option in ["--metrics.prefix=nettest", "--push.metric-prefix=nettest"] {
             let args = vec!["iperf3-rs".to_owned(), option.to_owned()];
