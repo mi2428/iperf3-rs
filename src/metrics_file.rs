@@ -11,6 +11,7 @@ use crate::metrics::{MetricEvent, Metrics, WindowMetrics};
 use crate::prometheus::PrometheusEncoder;
 use crate::{Error, ErrorKind, Result};
 
+const JSONL_SCHEMA_VERSION: u32 = 1;
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// File output format for metrics snapshots.
@@ -118,7 +119,15 @@ impl MetricsFileSink {
             .append(true)
             .open(&self.path)
             .map_err(|err| file_error("failed to open metrics file", &self.path, err))?;
-        serde_json::to_writer(&mut file, &JsonlEvent { event, metrics }).map_err(|err| {
+        serde_json::to_writer(
+            &mut file,
+            &JsonlEvent {
+                schema_version: JSONL_SCHEMA_VERSION,
+                event,
+                metrics,
+            },
+        )
+        .map_err(|err| {
             Error::with_source(ErrorKind::MetricsFile, "failed to encode metrics JSON", err)
         })?;
         file.write_all(b"\n")
@@ -136,6 +145,7 @@ impl MetricsFileSink {
 
 #[derive(Serialize)]
 struct JsonlEvent<'a, T> {
+    schema_version: u32,
     event: &'static str,
     #[serde(flatten)]
     metrics: &'a T,
@@ -225,6 +235,7 @@ mod tests {
         let contents = fs::read_to_string(&path).unwrap();
         let lines = contents.lines().collect::<Vec<_>>();
         assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains(r#""schema_version":1"#));
         assert!(lines[0].contains(r#""event":"interval""#));
         assert!(lines[0].contains(r#""bytes":1.0"#));
         assert!(lines[1].contains(r#""bytes":2.0"#));
@@ -260,6 +271,7 @@ mod tests {
         .unwrap();
 
         let contents = fs::read_to_string(&path).unwrap();
+        assert!(contents.contains(r#""schema_version":1"#));
         assert!(contents.contains(r#""event":"window""#));
         assert!(contents.contains(r#""duration_seconds":2.0"#));
         assert!(contents.contains(r#""transferred_bytes":64.0"#));

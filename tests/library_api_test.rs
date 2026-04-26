@@ -152,6 +152,7 @@ fn public_metrics_file_sink_writes_jsonl_events() {
     sink.write_event(&MetricEvent::Interval(sample)).unwrap();
 
     let metrics = fs::read_to_string(&metrics_file).unwrap();
+    assert!(metrics.contains(r#""schema_version":1"#));
     assert!(metrics.contains(r#""event":"interval""#));
     assert!(metrics.contains(r#""bytes":32.0"#));
     let _ = fs::remove_file(metrics_file);
@@ -169,11 +170,9 @@ fn cli_writes_jsonl_metrics_file_without_replacing_stdout() {
     assert!(stdout.contains("sender"));
 
     let metrics = fs::read_to_string(&metrics_file).unwrap();
-    assert!(
-        metrics
-            .lines()
-            .any(|line| line.contains(r#""event":"interval""#))
-    );
+    assert!(metrics.lines().any(
+        |line| line.contains(r#""schema_version":1"#) && line.contains(r#""event":"interval""#)
+    ));
     assert!(metrics.contains(r#""bandwidth_bits_per_second":"#));
     let _ = fs::remove_file(metrics_file);
 }

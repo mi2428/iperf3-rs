@@ -510,7 +510,8 @@ iperf3-rs \
   --metrics.file iperf3-metrics.jsonl
 ```
 
-The default `jsonl` format writes one JSON object per libiperf interval. The
+The default `jsonl` format writes one JSON object per libiperf interval. Each
+record includes `schema_version: 1`, an `event` kind, and the metric fields. The
 `prometheus` format writes the latest interval as Prometheus text exposition and
 atomically replaces the file on each interval, which is useful for textfile
 collectors or for keeping the final interval snapshot as a CI artifact:
