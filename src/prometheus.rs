@@ -152,6 +152,7 @@ fn is_valid_label_name_bytes(name: &[u8]) -> bool {
     true
 }
 
+#[cfg(feature = "pushgateway")]
 pub(crate) fn render_interval_prometheus(metrics: &Metrics, prefix: &str) -> String {
     render_interval_prometheus_with_labels(metrics, prefix, &[])
 }
@@ -256,6 +257,7 @@ fn render_interval_prometheus_with_labels(
     out
 }
 
+#[cfg(feature = "pushgateway")]
 pub(crate) fn render_window_prometheus(metrics: &WindowMetrics, prefix: &str) -> String {
     render_window_prometheus_with_labels(metrics, prefix, &[])
 }
