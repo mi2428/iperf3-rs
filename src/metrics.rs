@@ -4,13 +4,13 @@ use std::collections::HashMap;
 use std::os::raw::{c_double, c_int};
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(any(feature = "pushgateway", test))]
 use crossbeam_channel::bounded;
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError, unbounded};
 
-use crate::iperf::{IperfTest, RawIperfTest};
+use crate::iperf::{IperfTest, RawIperfTest, Role};
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 use crate::metrics_file::MetricsFileSink;
 #[cfg(feature = "pushgateway")]
@@ -52,7 +52,12 @@ impl TransportProtocol {
 /// Protocol-specific fields use `Option<f64>` so callers can distinguish an
 /// observed zero from a value that libiperf or the operating system did not
 /// report for this interval.
+#[non_exhaustive]
 pub struct Metrics {
+    /// Unix timestamp, in seconds, when Rust received this interval sample.
+    pub timestamp_unix_seconds: f64,
+    /// Role of the iperf test that produced this interval.
+    pub role: Role,
     /// Transport protocol used by this interval.
     pub protocol: TransportProtocol,
     /// Bytes transferred during the interval.
@@ -83,13 +88,21 @@ pub struct Metrics {
     pub udp_out_of_order_packets: Option<f64>,
     /// Interval duration in seconds.
     pub interval_duration_seconds: f64,
-    /// `1` for omitted warm-up intervals, otherwise `0`.
-    pub omitted: f64,
+    /// Whether this sample belongs to an omitted warm-up interval.
+    pub omitted: bool,
+}
+
+impl Metrics {
+    /// Build an empty metrics sample with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 /// Mean, minimum, and maximum values for a gauge-like metric in a window.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct WindowGaugeStats {
     /// Number of observed samples represented by these statistics.
     pub samples: usize,
@@ -101,12 +114,20 @@ pub struct WindowGaugeStats {
     pub max: f64,
 }
 
+impl WindowGaugeStats {
+    /// Build empty gauge statistics.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 /// Summary of one aggregated metrics window.
 ///
 /// Counter-like fields are accumulated across the window. Gauge-like fields use
 /// [`WindowGaugeStats`].
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct WindowMetrics {
     /// Total interval duration represented by this window.
     pub duration_seconds: f64,
@@ -138,6 +159,13 @@ pub struct WindowMetrics {
     pub udp_out_of_order_packets: Option<f64>,
     /// Number of omitted libiperf intervals in the window.
     pub omitted_intervals: f64,
+}
+
+impl WindowMetrics {
+    /// Build an empty window summary with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 /// Controls whether a run emits live metrics and how interval samples are shaped.
@@ -342,7 +370,7 @@ impl CallbackMetricsReporter {
         test: &mut IperfTest,
         queue: MetricsQueue,
     ) -> Result<(Self, Receiver<Metrics>)> {
-        let (target, rx) = callback_channel(queue);
+        let (target, rx) = callback_channel(queue, test.role());
         let test_key = test.as_ptr() as usize;
         callbacks()
             .lock()
@@ -370,7 +398,7 @@ pub(crate) enum MetricsQueue {
     All,
 }
 
-fn callback_channel(queue: MetricsQueue) -> (CallbackTarget, Receiver<Metrics>) {
+fn callback_channel(queue: MetricsQueue, role: Role) -> (CallbackTarget, Receiver<Metrics>) {
     match queue {
         MetricsQueue::All => {
             // Window aggregation and library streams need every libiperf
@@ -380,6 +408,7 @@ fn callback_channel(queue: MetricsQueue) -> (CallbackTarget, Receiver<Metrics>) 
                 CallbackTarget {
                     tx,
                     latest_rx: None,
+                    role,
                 },
                 rx,
             )
@@ -394,6 +423,7 @@ fn callback_channel(queue: MetricsQueue) -> (CallbackTarget, Receiver<Metrics>) 
                 CallbackTarget {
                     tx,
                     latest_rx: Some(rx.clone()),
+                    role,
                 },
                 rx,
             )
@@ -623,6 +653,7 @@ impl Drop for IntervalMetricsReporter {
 struct CallbackTarget {
     tx: Sender<Metrics>,
     latest_rx: Option<Receiver<Metrics>>,
+    role: Role,
 }
 
 static CALLBACKS: OnceLock<Mutex<HashMap<usize, CallbackTarget>>> = OnceLock::new();
@@ -677,6 +708,8 @@ unsafe extern "C" fn metrics_callback(
     enqueue_latest(
         target,
         Metrics {
+            timestamp_unix_seconds: current_unix_timestamp_seconds(),
+            role: target.role,
             protocol: TransportProtocol::from_callback_value(protocol),
             bytes,
             bandwidth_bits_per_second,
@@ -695,9 +728,16 @@ unsafe extern "C" fn metrics_callback(
                 udp_out_of_order_packets,
             ),
             interval_duration_seconds,
-            omitted,
+            omitted: omitted != 0.0,
         },
     );
+}
+
+fn current_unix_timestamp_seconds() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 fn available(flag: c_int, value: c_double) -> Option<f64> {
@@ -759,7 +799,9 @@ pub fn aggregate_window(samples: &[Metrics]) -> Option<WindowMetrics> {
         udp_packets.observe(metrics.udp_packets);
         udp_lost_packets.observe(metrics.udp_lost_packets);
         udp_out_of_order_packets.observe(metrics.udp_out_of_order_packets);
-        omitted_intervals += finite_nonnegative(metrics.omitted);
+        if metrics.omitted {
+            omitted_intervals += 1.0;
+        }
     }
 
     let bandwidth_mean = if duration_seconds > 0.0 {
@@ -902,7 +944,7 @@ mod verification {
             udp_lost_packets: Some(f64::from(kani::any::<i16>())),
             udp_out_of_order_packets: Some(f64::from(kani::any::<i16>())),
             interval_duration_seconds: f64::from(kani::any::<i16>()),
-            omitted: f64::from(kani::any::<i16>()),
+            omitted: kani::any(),
             ..Metrics::default()
         };
 
@@ -990,6 +1032,7 @@ mod tests {
         let target = CallbackTarget {
             tx,
             latest_rx: Some(rx.clone()),
+            role: Role::Client,
         };
 
         enqueue_latest(
@@ -1123,7 +1166,7 @@ mod tests {
                 tcp_snd_cwnd_bytes: Some(3000.0),
                 udp_packets: Some(3.0),
                 interval_duration_seconds: 3.0,
-                omitted: 1.0,
+                omitted: true,
                 ..Metrics::default()
             },
         ])

@@ -115,20 +115,20 @@ fn command_run_with_pushgateway_pushes_interval_metrics() {
 fn public_prometheus_encoder_renders_metrics_without_pushgateway() {
     let encoder = PrometheusEncoder::new("nettest").unwrap();
 
-    let interval = encoder.encode_interval(&Metrics {
-        bytes: 32.0,
-        bandwidth_bits_per_second: 256.0,
-        interval_duration_seconds: 1.0,
-        ..Metrics::default()
-    });
+    let mut sample = Metrics::new();
+    sample.bytes = 32.0;
+    sample.bandwidth_bits_per_second = 256.0;
+    sample.interval_duration_seconds = 1.0;
+
+    let interval = encoder.encode_interval(&sample);
     assert!(interval.contains("nettest_bytes 32\n"));
     assert!(interval.contains("nettest_bandwidth 256\n"));
 
-    let window = encoder.encode_window(&WindowMetrics {
-        duration_seconds: 2.0,
-        transferred_bytes: 64.0,
-        ..WindowMetrics::default()
-    });
+    let mut window_metrics = WindowMetrics::new();
+    window_metrics.duration_seconds = 2.0;
+    window_metrics.transferred_bytes = 64.0;
+
+    let window = encoder.encode_window(&window_metrics);
     assert!(window.contains("nettest_window_duration_seconds 2\n"));
     assert!(window.contains("nettest_window_transferred_bytes 64\n"));
 }
@@ -138,13 +138,12 @@ fn public_metrics_file_sink_writes_jsonl_events() {
     let metrics_file = temp_metrics_path("jsonl");
     let sink = MetricsFileSink::new(&metrics_file, MetricsFileFormat::Jsonl).unwrap();
 
-    sink.write_event(&MetricEvent::Interval(Metrics {
-        bytes: 32.0,
-        bandwidth_bits_per_second: 256.0,
-        interval_duration_seconds: 1.0,
-        ..Metrics::default()
-    }))
-    .unwrap();
+    let mut sample = Metrics::new();
+    sample.bytes = 32.0;
+    sample.bandwidth_bits_per_second = 256.0;
+    sample.interval_duration_seconds = 1.0;
+
+    sink.write_event(&MetricEvent::Interval(sample)).unwrap();
 
     let metrics = fs::read_to_string(&metrics_file).unwrap();
     assert!(metrics.contains(r#""event":"interval""#));

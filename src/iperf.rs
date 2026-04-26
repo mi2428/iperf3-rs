@@ -84,6 +84,8 @@ pub(crate) use ffi::iperf_test as RawIperfTest;
 
 /// Role selected by libiperf after parsing iperf arguments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum Role {
     /// Client mode, equivalent to `iperf3 -c`.
     Client,
@@ -91,6 +93,12 @@ pub enum Role {
     Server,
     /// A role byte libiperf returned that this crate does not recognize.
     Unknown(i8),
+}
+
+impl Default for Role {
+    fn default() -> Self {
+        Self::Unknown(0)
+    }
 }
 
 pub struct IperfTest {

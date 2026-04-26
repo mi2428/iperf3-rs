@@ -238,7 +238,7 @@ fn summarize_samples(samples: &[Metrics]) -> Result<MetricsSummary> {
 
     // Omitted intervals are warm-up intervals excluded by iperf. They should not
     // affect an application-level pass/fail decision.
-    for sample in samples.iter().filter(|sample| sample.omitted == 0.0) {
+    for sample in samples.iter().filter(|sample| !sample.omitted) {
         bytes += finite_nonnegative(sample.bytes);
         seconds += finite_nonnegative(sample.interval_duration_seconds);
         packets += finite_nonnegative(sample.udp_packets.unwrap_or(0.0));

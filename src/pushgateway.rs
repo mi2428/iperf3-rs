@@ -22,6 +22,7 @@ const PUSH_RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
 
 /// Configuration for a [`PushGateway`] sink.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PushGatewayConfig {
     /// Base Pushgateway URL.
     ///
@@ -588,7 +589,7 @@ mod tests {
                 udp_jitter_seconds: Some(0.004),
                 udp_out_of_order_packets: Some(12.0),
                 interval_duration_seconds: 1.0,
-                omitted: 1.0,
+                omitted: true,
                 ..Metrics::default()
             },
             "iperf3",

@@ -140,7 +140,11 @@ pub(crate) fn render_interval_prometheus(metrics: &Metrics, prefix: &str) -> Str
         &metric_name(prefix, "udp_out_of_order_packets"),
         metrics.udp_out_of_order_packets,
     );
-    gauge(&mut out, &metric_name(prefix, "omitted"), metrics.omitted);
+    gauge(
+        &mut out,
+        &metric_name(prefix, "omitted"),
+        if metrics.omitted { 1.0 } else { 0.0 },
+    );
     out
 }
 
@@ -326,7 +330,7 @@ mod tests {
             udp_jitter_seconds: Some(0.004),
             udp_out_of_order_packets: Some(12.0),
             interval_duration_seconds: 1.0,
-            omitted: 1.0,
+            omitted: true,
             ..Metrics::default()
         });
 
