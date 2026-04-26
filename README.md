@@ -269,6 +269,11 @@ summaries used by `--push.interval`. `PushGateway` and `PushGatewayConfig` are
 also exported for applications that want to push the collected metrics
 themselves.
 
+See [examples/bwcheck](examples/bwcheck/) for a small library
+crate application that receives `HOST:PORT` endpoints, runs fixed UDP iperf
+tests, consumes live interval metrics, and fails when bandwidth or loss
+thresholds are not met.
+
 The first public API keeps high-level `IperfCommand` runs serialized inside one
 process because libiperf still has process-global error, signal, and output
 state. For local client/server interop tests, run the peer as a separate

@@ -55,7 +55,7 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock', 'examples/*/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -63,15 +63,19 @@ jobs:
         uses: actions/cache@v5
         with:
           path: target
-          key: ${{ runner.os }}-${{ github.job }}-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}
+          key: ${{ runner.os }}-${{ github.job }}-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h', 'examples/*/Cargo.toml', 'examples/*/Cargo.lock', 'examples/*/src/**', 'examples/*/integration_test.rs') }}
           restore-keys: |
             ${{ runner.os }}-${{ github.job }}-target-
 
       - name: Check Rust formatting
-        run: cargo fmt --all --check
+        run: |
+          cargo fmt --all --check
+          cargo fmt --manifest-path examples/bwcheck/Cargo.toml --check
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: |
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo clippy --manifest-path examples/bwcheck/Cargo.toml --all-targets -- -D warnings
 
       - name: Build rustdoc
         env:
@@ -111,7 +115,7 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock', 'examples/*/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -119,12 +123,14 @@ jobs:
         uses: actions/cache@v5
         with:
           path: target
-          key: ${{ runner.os }}-${{ github.job }}-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}
+          key: ${{ runner.os }}-${{ github.job }}-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h', 'examples/*/Cargo.toml', 'examples/*/Cargo.lock', 'examples/*/src/**', 'examples/*/integration_test.rs') }}
           restore-keys: |
             ${{ runner.os }}-${{ github.job }}-target-
 
       - name: Run unit tests
-        run: cargo test
+        run: |
+          cargo test
+          cargo test --manifest-path examples/bwcheck/Cargo.toml
 
   kani:
     name: Kani
@@ -153,7 +159,7 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock', 'examples/*/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -161,7 +167,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: target
-          key: ${{ runner.os }}-${{ github.job }}-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}
+          key: ${{ runner.os }}-${{ github.job }}-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h', 'examples/*/Cargo.toml', 'examples/*/Cargo.lock', 'examples/*/src/**', 'examples/*/integration_test.rs') }}
           restore-keys: |
             ${{ runner.os }}-${{ github.job }}-target-
 
@@ -200,7 +206,7 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock', 'examples/*/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -208,7 +214,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: target
-          key: ${{ runner.os }}-${{ github.job }}-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}
+          key: ${{ runner.os }}-${{ github.job }}-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h', 'examples/*/Cargo.toml', 'examples/*/Cargo.lock', 'examples/*/src/**', 'examples/*/integration_test.rs') }}
           restore-keys: |
             ${{ runner.os }}-${{ github.job }}-target-
 
@@ -247,6 +253,24 @@ jobs:
           RELEASE_SMOKE_IMAGE: iperf3-rs:release-smoke-ci
           SKIP_INTEGRATION_IMAGE_BUILD: "true"
         run: cargo test --test integration_test -- --ignored --nocapture --test-threads=1
+
+      - name: Build bwcheck example image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: examples/bwcheck/Dockerfile
+          tags: iperf3-rs-bwcheck:test
+          load: true
+          cache-from: type=gha,scope=iperf3-rs-example-bwcheck
+          cache-to: type=gha,mode=max,scope=iperf3-rs-example-bwcheck
+
+      - name: Run bwcheck example integration
+        env:
+          CARGO_TARGET_DIR: target/examples/bwcheck
+          COMPOSE: docker compose
+          DOCKER: docker
+          SKIP_EXAMPLE_IMAGE_BUILD: "true"
+        run: cargo test --manifest-path examples/bwcheck/Cargo.toml --test integration_test -- --ignored --nocapture --test-threads=1
 
   dist:
     name: Dist

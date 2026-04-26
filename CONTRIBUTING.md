@@ -30,6 +30,7 @@ make doc
 make test
 make check
 make integration
+make integration EXAMPLES=bwcheck
 make kani
 make check integration kani
 make dist OS=darwin,linux ARCH=amd64,arm64
@@ -100,6 +101,7 @@ requests still work from the scratch release image.
 |-- iperf3/              # esnet/iperf3 git submodule
 |-- completions/         # bash, zsh, and fish completions
 |-- docker/              # Prometheus and Grafana provisioning
+|-- examples/            # library-crate usage examples with their own tests
 |-- tests/               # Docker Compose integration tests
 |-- Dockerfile           # build, integration-test, and release image stages
 |-- docker-compose.yml   # local observability stack
@@ -138,6 +140,19 @@ It verifies:
 The test uses environment-based Pushgateway defaults for both `client-rs` and
 `server-rs` services so the commands under test stay close to normal iperf3
 usage.
+
+Example applications can carry their own Docker Compose integration tests. Run
+one from the repository root with:
+
+```sh
+make integration EXAMPLES=bwcheck
+```
+
+Use `EXAMPLES=all` to run every example directory that has both a
+`Cargo.toml` and `integration_test.rs`. The bwcheck example protects
+library-crate usage by importing `iperf3-rs`, running UDP clients through
+`IperfCommand`, consuming live interval metrics, and checking bandwidth/loss
+threshold behavior.
 
 ## Kani
 
