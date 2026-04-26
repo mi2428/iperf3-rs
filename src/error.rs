@@ -64,6 +64,7 @@ impl Error {
         Self::new(ErrorKind::Libiperf, message)
     }
 
+    #[cfg(feature = "pushgateway")]
     pub(crate) fn pushgateway(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::PushGateway, message)
     }
@@ -76,6 +77,7 @@ impl Error {
         Self::new(ErrorKind::Internal, message)
     }
 
+    #[cfg(feature = "pushgateway")]
     pub(crate) fn with_source(
         kind: ErrorKind,
         message: impl Into<String>,

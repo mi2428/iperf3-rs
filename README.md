@@ -310,6 +310,15 @@ separate run shapes. If an application needs to both inspect live events and
 customize delivery, use `spawn_with_metrics()` and call `PushGateway::push()` or
 `PushGateway::push_window()` from application code.
 
+The `pushgateway` feature is enabled by default and provides the CLI,
+`PushGateway`, `PushGatewayConfig`, and HTTP delivery dependencies. Library-only
+consumers that only need `IperfCommand` and `MetricsStream` can disable default
+features:
+
+```toml
+iperf3-rs = { version = "1", default-features = false }
+```
+
 See
 [examples/bwcheck](https://github.com/mi2428/iperf3-rs/tree/main/examples/bwcheck)
 for a complete example application. It accepts `HOST:PORT` endpoints, runs

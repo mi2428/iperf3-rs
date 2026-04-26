@@ -12,10 +12,12 @@ use std::time::Duration;
 use crossbeam_channel::{Sender, bounded};
 
 use crate::iperf::{IperfTest, Role};
+#[cfg(feature = "pushgateway")]
+use crate::metrics::IntervalMetricsReporter;
 use crate::metrics::{
-    CallbackMetricsReporter, IntervalMetricsReporter, MetricEvent, MetricsMode, MetricsStream,
-    metric_event_stream,
+    CallbackMetricsReporter, MetricEvent, MetricsMode, MetricsStream, metric_event_stream,
 };
+#[cfg(feature = "pushgateway")]
 use crate::pushgateway::{PushGateway, PushGatewayConfig};
 use crate::{Error, Result};
 
@@ -49,10 +51,12 @@ pub struct IperfCommand {
     program: String,
     args: Vec<String>,
     metrics_mode: MetricsMode,
+    #[cfg(feature = "pushgateway")]
     pushgateway: Option<PushGatewayRun>,
     allow_unbounded_server: bool,
 }
 
+#[cfg(feature = "pushgateway")]
 #[derive(Debug, Clone)]
 struct PushGatewayRun {
     config: PushGatewayConfig,
@@ -66,6 +70,7 @@ impl IperfCommand {
             program: "iperf3-rs".to_owned(),
             args: Vec::new(),
             metrics_mode: MetricsMode::Disabled,
+            #[cfg(feature = "pushgateway")]
             pushgateway: None,
             allow_unbounded_server: false,
         }
@@ -188,18 +193,21 @@ impl IperfCommand {
     /// single reporter callback. Use [`IperfCommand::spawn_with_metrics`] plus
     /// [`PushGateway::push`] or [`PushGateway::push_window`] when application
     /// code needs both live inspection and custom push behavior.
+    #[cfg(feature = "pushgateway")]
     pub fn pushgateway(&mut self, config: PushGatewayConfig, mode: MetricsMode) -> &mut Self {
         self.pushgateway = Some(PushGatewayRun { config, mode });
         self
     }
 
     /// Disable direct Pushgateway delivery for this command.
+    #[cfg(feature = "pushgateway")]
     pub fn clear_pushgateway(&mut self) -> &mut Self {
         self.pushgateway = None;
         self
     }
 
     /// Run the iperf test to completion while pushing metrics to Pushgateway.
+    #[cfg(feature = "pushgateway")]
     pub fn run_with_pushgateway(
         &mut self,
         config: PushGatewayConfig,
@@ -212,6 +220,7 @@ impl IperfCommand {
     }
 
     /// Run iperf on a worker thread while pushing metrics to Pushgateway.
+    #[cfg(feature = "pushgateway")]
     pub fn spawn_with_pushgateway(
         &mut self,
         config: PushGatewayConfig,
@@ -358,6 +367,7 @@ struct RunSetup {
     callback: Option<CallbackMetricsReporter>,
     stream: Option<MetricsStream>,
     worker: Option<JoinHandle<()>>,
+    #[cfg(feature = "pushgateway")]
     push_reporter: Option<IntervalMetricsReporter>,
 }
 
@@ -385,6 +395,7 @@ fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Re
     if let Some(worker) = setup.worker.take() {
         let _ = worker.join();
     }
+    #[cfg(feature = "pushgateway")]
     drop(setup.push_reporter.take());
 
     let metrics = setup
@@ -402,6 +413,7 @@ fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Re
 
 fn setup_run(command: IperfCommand) -> Result<RunSetup> {
     validate_metrics_mode(command.metrics_mode)?;
+    #[cfg(feature = "pushgateway")]
     validate_pushgateway_request(&command)?;
 
     let mut test = IperfTest::new()?;
@@ -409,6 +421,7 @@ fn setup_run(command: IperfCommand) -> Result<RunSetup> {
     let role = test.role();
     validate_server_lifecycle(&command, &test, role)?;
 
+    #[cfg(feature = "pushgateway")]
     let (callback, stream, worker, push_reporter) = match command.metrics_mode.callback_queue() {
         Some(queue) => {
             let (callback, rx) = CallbackMetricsReporter::attach(&mut test, queue)?;
@@ -423,6 +436,15 @@ fn setup_run(command: IperfCommand) -> Result<RunSetup> {
         }
         None => (None, None, None, None),
     };
+    #[cfg(not(feature = "pushgateway"))]
+    let (callback, stream, worker) = match command.metrics_mode.callback_queue() {
+        Some(queue) => {
+            let (callback, rx) = CallbackMetricsReporter::attach(&mut test, queue)?;
+            let (stream, worker) = metric_event_stream(rx, command.metrics_mode);
+            (Some(callback), Some(stream), Some(worker))
+        }
+        None => (None, None, None),
+    };
 
     Ok(RunSetup {
         test,
@@ -430,6 +452,7 @@ fn setup_run(command: IperfCommand) -> Result<RunSetup> {
         callback,
         stream,
         worker,
+        #[cfg(feature = "pushgateway")]
         push_reporter,
     })
 }
@@ -464,6 +487,7 @@ fn validate_metrics_mode(mode: MetricsMode) -> Result<()> {
     }
 }
 
+#[cfg(feature = "pushgateway")]
 fn validate_pushgateway_request(command: &IperfCommand) -> Result<()> {
     let Some(pushgateway) = &command.pushgateway else {
         return Ok(());
@@ -476,6 +500,7 @@ fn validate_pushgateway_request(command: &IperfCommand) -> Result<()> {
     validate_pushgateway_mode(pushgateway.mode)
 }
 
+#[cfg(feature = "pushgateway")]
 fn validate_pushgateway_mode(mode: MetricsMode) -> Result<()> {
     match mode {
         MetricsMode::Disabled => Err(Error::invalid_metrics_mode(
@@ -489,6 +514,7 @@ fn validate_pushgateway_mode(mode: MetricsMode) -> Result<()> {
     }
 }
 
+#[cfg(feature = "pushgateway")]
 impl MetricsMode {
     fn push_interval(self) -> Option<Duration> {
         match self {
@@ -556,6 +582,7 @@ mod tests {
     use std::time::Duration;
 
     use crate::ErrorKind;
+    #[cfg(feature = "pushgateway")]
     use url::Url;
 
     use super::*;
@@ -654,6 +681,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "pushgateway")]
     #[test]
     fn pushgateway_helper_records_delivery_config() {
         let config = PushGatewayConfig::new(Url::parse("http://localhost:9091").unwrap())
@@ -675,6 +703,7 @@ mod tests {
         assert!(command.pushgateway.is_none());
     }
 
+    #[cfg(feature = "pushgateway")]
     #[test]
     fn pushgateway_convenience_helpers_do_not_persist_config() {
         let mut command = IperfCommand::new();
@@ -749,6 +778,7 @@ mod tests {
         assert!(err.to_string().contains("greater than zero"));
     }
 
+    #[cfg(feature = "pushgateway")]
     #[test]
     fn direct_pushgateway_rejects_disabled_or_zero_window_mode() {
         for mode in [MetricsMode::Disabled, MetricsMode::Window(Duration::ZERO)] {
@@ -769,6 +799,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "pushgateway")]
     #[test]
     fn direct_pushgateway_is_rejected_when_metrics_stream_is_enabled() {
         let command = {

@@ -6,9 +6,12 @@ use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError, bounded, unbounded};
+#[cfg(any(feature = "pushgateway", test))]
+use crossbeam_channel::bounded;
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError, unbounded};
 
 use crate::iperf::{IperfTest, RawIperfTest};
+#[cfg(feature = "pushgateway")]
 use crate::pushgateway::PushGateway;
 use crate::{Error, Result};
 
@@ -205,11 +208,13 @@ impl Iterator for MetricsStream {
     }
 }
 
+#[cfg(feature = "pushgateway")]
 pub(crate) struct IntervalMetricsReporter {
     callback: Option<CallbackMetricsReporter>,
     worker: Option<JoinHandle<()>>,
 }
 
+#[cfg(feature = "pushgateway")]
 impl IntervalMetricsReporter {
     pub(crate) fn attach(
         test: &mut IperfTest,
@@ -269,6 +274,7 @@ impl Drop for CallbackMetricsReporter {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MetricsQueue {
+    #[cfg(feature = "pushgateway")]
     Latest,
     All,
 }
@@ -287,6 +293,7 @@ fn callback_channel(queue: MetricsQueue) -> (CallbackTarget, Receiver<Metrics>) 
                 rx,
             )
         }
+        #[cfg(feature = "pushgateway")]
         MetricsQueue::Latest => {
             // Pushgateway stores only the latest value for a grouping key.
             // Keep the callback nonblocking and replace stale queued samples if
@@ -376,6 +383,7 @@ fn flush_window_event(tx: &Sender<MetricEvent>, window: &mut Vec<Metrics>) -> bo
     tx.send(MetricEvent::Window(metrics)).is_ok()
 }
 
+#[cfg(feature = "pushgateway")]
 fn push_interval_metrics(rx: Receiver<Metrics>, sink: PushGateway) {
     for metrics in rx {
         if let Err(err) = sink.push(&metrics) {
@@ -385,6 +393,7 @@ fn push_interval_metrics(rx: Receiver<Metrics>, sink: PushGateway) {
     delete_pushgateway_on_finish(&sink);
 }
 
+#[cfg(feature = "pushgateway")]
 fn push_window_metrics(rx: Receiver<Metrics>, sink: PushGateway, interval: Duration) {
     let mut window = Vec::new();
     let mut deadline = None;
@@ -428,6 +437,7 @@ fn push_window_metrics(rx: Receiver<Metrics>, sink: PushGateway, interval: Durat
     delete_pushgateway_on_finish(&sink);
 }
 
+#[cfg(feature = "pushgateway")]
 fn flush_window_metrics(sink: &PushGateway, window: &mut Vec<Metrics>) {
     if let Some(metrics) = aggregate_window(window) {
         if let Err(err) = sink.push_window(&metrics) {
@@ -437,6 +447,7 @@ fn flush_window_metrics(sink: &PushGateway, window: &mut Vec<Metrics>) {
     }
 }
 
+#[cfg(feature = "pushgateway")]
 fn delete_pushgateway_on_finish(sink: &PushGateway) {
     if sink.delete_on_finish()
         && let Err(err) = sink.delete()
@@ -445,6 +456,7 @@ fn delete_pushgateway_on_finish(sink: &PushGateway) {
     }
 }
 
+#[cfg(feature = "pushgateway")]
 impl Drop for IntervalMetricsReporter {
     fn drop(&mut self) {
         drop(self.callback.take());

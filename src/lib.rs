@@ -57,17 +57,20 @@
 //! process is dedicated to that long-lived server. Use separate processes for
 //! parallel independent tests.
 
-use std::process::ExitCode;
-
+#[cfg(feature = "pushgateway")]
 mod args;
+#[cfg(feature = "pushgateway")]
 mod cli;
 mod command;
 mod error;
+#[cfg(feature = "pushgateway")]
 mod help;
 
 mod iperf;
 mod metrics;
+#[cfg(feature = "pushgateway")]
 mod pushgateway;
+#[cfg(feature = "pushgateway")]
 mod version;
 
 pub use command::{IperfCommand, IperfResult, RunningIperf};
@@ -77,9 +80,11 @@ pub use metrics::{
     MetricEvent, Metrics, MetricsMode, MetricsStream, TransportProtocol, WindowGaugeStats,
     WindowMetrics, aggregate_window,
 };
+#[cfg(feature = "pushgateway")]
 pub use pushgateway::{PushGateway, PushGatewayConfig};
 
+#[cfg(feature = "pushgateway")]
 #[doc(hidden)]
-pub fn __private_cli_main() -> ExitCode {
+pub fn __private_cli_main() -> std::process::ExitCode {
     cli::main()
 }
