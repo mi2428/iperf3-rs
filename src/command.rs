@@ -234,8 +234,14 @@ fn notify_ready(ready: Option<Sender<ReadyMessage>>, message: ReadyMessage) {
 fn run_lock() -> &'static Mutex<()> {
     // libiperf still has process-global state, including its current error and
     // signal/output hooks. The first public API keeps high-level runs
-    // serialized until a broader concurrency contract is deliberately designed
-    // and tested.
+    // serialized so callers do not accidentally depend on best-effort
+    // in-process parallelism that libiperf does not clearly promise.
+    //
+    // If parallel library runs become important, prefer adding a process-backed
+    // runner first. A helper process gives each libiperf instance its own
+    // globals while keeping this Rust API stable. Removing this lock for true
+    // in-process concurrency should come only after upstream and shim state are
+    // audited and covered by stress tests.
     RUN_LOCK.get_or_init(|| Mutex::new(()))
 }
 
