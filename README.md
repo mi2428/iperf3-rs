@@ -67,6 +67,11 @@ maintain a separate clone of the iperf3 option grammar.
 The wire protocol is upstream iperf3 as well. You can mix `iperf3-rs` and the
 reference `iperf3` binary in either direction:
 
+This is not a from-scratch Rust reimplementation of iperf3. Compatibility comes
+from calling the same upstream libiperf implementation that the reference CLI
+uses, so updating the vendored upstream revision keeps iperf3-rs aligned with
+esnet/iperf3 behavior instead of maintaining a parallel protocol stack.
+
 ```sh
 # Rust server, upstream client
 iperf3-rs -s
