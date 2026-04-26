@@ -190,16 +190,10 @@ Kani is not a replacement for integration tests. Use it to lock down parsing, en
 ### cargo-dist
 
 Releases are driven by cargo-dist. Publishing a tag such as `v1.0.0` runs `.github/workflows/release.yml`.
+`release.yml` is intentionally hand-edited for the Linux release container and smoke test, so `dist-workspace.toml` sets `allow-dirty = ["ci"]`.
 
-Configured release targets live in `dist-workspace.toml`:
-
-- `x86_64-apple-darwin`
-- `aarch64-apple-darwin`
-- `x86_64-unknown-linux-gnu`
-- `aarch64-unknown-linux-gnu`
-
-Linux artifacts are built in a Debian bullseye-based Rust image and smoke-tested in `debian:bullseye-slim` with `-h` and `--version`. This keeps the glibc baseline suitable for older Debian/Raspberry Pi OS systems.
-
+Linux artifacts are built in a Debian bullseye-based Rust image and smoke-tested in `debian:bullseye-slim` with `-h` and `--version`.
+This keeps the glibc baseline suitable for older Debian/Raspberry Pi OS systems.
 Use `make dist OS=... ARCH=...` for local release-style builds under `dist/`.
 
 ## GitHub Actions

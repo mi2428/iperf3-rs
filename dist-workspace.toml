@@ -5,6 +5,9 @@ members = ["cargo:."]
 [dist]
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.31.0"
+# Keep the hand-edited release workflow. It pins the Linux release build to the
+# old-glibc container and smoke-tests the resulting binary.
+allow-dirty = ["ci"]
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
