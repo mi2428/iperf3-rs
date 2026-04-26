@@ -1,3 +1,5 @@
+//! Metric structures and streams produced from libiperf interval callbacks.
+
 use std::collections::HashMap;
 use std::os::raw::c_double;
 use std::sync::{Mutex, OnceLock};
@@ -11,50 +13,94 @@ use crate::iperf::{IperfTest, RawIperfTest};
 use crate::pushgateway::PushGateway;
 
 #[derive(Debug, Clone, Default, PartialEq)]
+/// One libiperf interval sample.
+///
+/// Fields are normalized to Prometheus-friendly units where practical. TCP
+/// fields are zero when libiperf or the operating system does not report them;
+/// UDP fields are zero for normal TCP tests.
 pub struct Metrics {
+    /// Bytes transferred during the interval.
     pub bytes: f64,
+    /// Interval throughput in bits per second.
     pub bandwidth_bits_per_second: f64,
+    /// TCP retransmits reported for the interval.
     pub tcp_retransmits: f64,
+    /// TCP smoothed RTT in seconds.
     pub tcp_rtt_seconds: f64,
+    /// TCP RTT variance in seconds.
     pub tcp_rttvar_seconds: f64,
+    /// TCP sender congestion window in bytes.
     pub tcp_snd_cwnd_bytes: f64,
+    /// TCP sender window in bytes when available.
     pub tcp_snd_wnd_bytes: f64,
+    /// TCP path MTU in bytes when available.
     pub tcp_pmtu_bytes: f64,
+    /// TCP reordering events when available.
     pub tcp_reorder_events: f64,
+    /// UDP packet count reported for the interval.
     pub udp_packets: f64,
+    /// UDP packets inferred lost from sequence gaps.
     pub udp_lost_packets: f64,
+    /// UDP receiver jitter in seconds.
     pub udp_jitter_seconds: f64,
+    /// UDP out-of-order packets observed in the interval.
     pub udp_out_of_order_packets: f64,
+    /// Interval duration in seconds.
     pub interval_duration_seconds: f64,
+    /// `1` for omitted warm-up intervals, otherwise `0`.
     pub omitted: f64,
 }
 
+/// Mean, minimum, and maximum values for a gauge-like metric in a window.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct WindowGaugeStats {
+    /// Arithmetic mean over samples in the window.
     pub mean: f64,
+    /// Minimum observed value in the window.
     pub min: f64,
+    /// Maximum observed value in the window.
     pub max: f64,
 }
 
+/// Summary of one aggregated metrics window.
+///
+/// Counter-like fields are accumulated across the window. Gauge-like fields use
+/// [`WindowGaugeStats`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WindowMetrics {
+    /// Total interval duration represented by this window.
     pub duration_seconds: f64,
+    /// Total bytes transferred across this window.
     pub transferred_bytes: f64,
+    /// Bandwidth statistics in bytes per second.
     pub bandwidth_bytes_per_second: WindowGaugeStats,
+    /// TCP smoothed RTT statistics in seconds.
     pub tcp_rtt_seconds: WindowGaugeStats,
+    /// TCP RTT variance statistics in seconds.
     pub tcp_rttvar_seconds: WindowGaugeStats,
+    /// TCP sender congestion window statistics in bytes.
     pub tcp_snd_cwnd_bytes: WindowGaugeStats,
+    /// TCP sender window statistics in bytes.
     pub tcp_snd_wnd_bytes: WindowGaugeStats,
+    /// TCP path MTU statistics in bytes.
     pub tcp_pmtu_bytes: WindowGaugeStats,
+    /// UDP jitter statistics in seconds.
     pub udp_jitter_seconds: WindowGaugeStats,
+    /// TCP retransmits accumulated across the window.
     pub tcp_retransmits: f64,
+    /// TCP reordering events accumulated across the window.
     pub tcp_reorder_events: f64,
+    /// UDP packet count accumulated across the window.
     pub udp_packets: f64,
+    /// UDP lost packet count accumulated across the window.
     pub udp_lost_packets: f64,
+    /// UDP out-of-order packet count accumulated across the window.
     pub udp_out_of_order_packets: f64,
+    /// Number of omitted libiperf intervals in the window.
     pub omitted_intervals: f64,
 }
 
+/// Controls whether a run emits live metrics and how interval samples are shaped.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MetricsMode {
@@ -68,6 +114,7 @@ pub enum MetricsMode {
 }
 
 impl MetricsMode {
+    /// Return `true` when this mode installs the libiperf metrics callback.
     pub const fn is_enabled(self) -> bool {
         !matches!(self, Self::Disabled)
     }
@@ -82,6 +129,7 @@ impl MetricsMode {
     }
 }
 
+/// Metric event emitted by a running iperf test.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum MetricEvent {
@@ -126,13 +174,13 @@ impl Iterator for MetricsStream {
     }
 }
 
-pub struct IntervalMetricsReporter {
+pub(crate) struct IntervalMetricsReporter {
     callback: Option<CallbackMetricsReporter>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl IntervalMetricsReporter {
-    pub fn attach(
+    pub(crate) fn attach(
         test: &mut IperfTest,
         sink: PushGateway,
         push_interval: Option<Duration>,
@@ -443,6 +491,10 @@ fn enqueue_latest(target: &CallbackTarget, metrics: Metrics) {
     }
 }
 
+/// Aggregate raw interval samples into one representative window.
+///
+/// Counter-like fields are summed. Gauge-like fields return mean/min/max
+/// statistics. Invalid and negative counter values are treated as zero.
 pub fn aggregate_window(samples: &[Metrics]) -> Option<WindowMetrics> {
     if samples.is_empty() {
         return None;

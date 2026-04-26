@@ -1,3 +1,8 @@
+//! Minimal Rust wrapper around upstream libiperf.
+//!
+//! Most users should prefer [`crate::IperfCommand`]. This module keeps the FFI
+//! boundary localized and exposes only small value types at the crate root.
+
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_double, c_int};
 use std::ptr::NonNull;
@@ -63,12 +68,16 @@ mod ffi {
     }
 }
 
-pub use ffi::iperf_test as RawIperfTest;
+pub(crate) use ffi::iperf_test as RawIperfTest;
 
+/// Role selected by libiperf after parsing iperf arguments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
+    /// Client mode, equivalent to `iperf3 -c`.
     Client,
+    /// Server mode, equivalent to `iperf3 -s`.
     Server,
+    /// A role byte libiperf returned that this crate does not recognize.
     Unknown(i8),
 }
 
@@ -88,7 +97,7 @@ impl IperfTest {
         Ok(test)
     }
 
-    pub fn as_ptr(&self) -> *mut RawIperfTest {
+    pub(crate) fn as_ptr(&self) -> *mut RawIperfTest {
         self.ptr.as_ptr()
     }
 
@@ -116,7 +125,7 @@ impl IperfTest {
         Ok(())
     }
 
-    pub fn enable_interval_metrics(&mut self, callback: ffi::MetricsCallback) {
+    pub(crate) fn enable_interval_metrics(&mut self, callback: ffi::MetricsCallback) {
         unsafe { ffi::iperf3rs_enable_interval_metrics(self.as_ptr(), Some(callback)) };
     }
 
@@ -193,7 +202,7 @@ impl Drop for IperfTest {
     }
 }
 
-pub fn current_error() -> String {
+pub(crate) fn current_error() -> String {
     let ptr = unsafe { ffi::iperf3rs_current_error() };
     if ptr.is_null() {
         let errno = unsafe { ffi::iperf3rs_current_errno() };
@@ -204,6 +213,7 @@ pub fn current_error() -> String {
         .into_owned()
 }
 
+/// Return the upstream libiperf version string.
 pub fn libiperf_version() -> String {
     let ptr = unsafe { ffi::iperf_get_iperf_version() };
     if ptr.is_null() {
@@ -214,6 +224,10 @@ pub fn libiperf_version() -> String {
         .into_owned()
 }
 
+/// Render the upstream iperf3 long help text.
+///
+/// The CLI combines this text with iperf3-rs-specific options before printing
+/// `--help`.
 pub fn usage_long() -> Result<String> {
     let ptr = unsafe { ffi::iperf3rs_usage_long() };
     if ptr.is_null() {

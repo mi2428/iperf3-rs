@@ -1,3 +1,10 @@
+//! High-level command API for running libiperf tests from Rust.
+//!
+//! `IperfCommand` deliberately accepts argv-style iperf arguments rather than a
+//! typed Rust clone of every upstream option. This keeps compatibility anchored
+//! to libiperf's own parser while still giving Rust callers structured results
+//! and live metric streams.
+
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 
@@ -15,6 +22,21 @@ static RUN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 ///
 /// Arguments are the normal iperf arguments without `argv[0]`; `IperfCommand`
 /// inserts a program name before passing them to `iperf_parse_arguments`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use iperf3_rs::IperfCommand;
+///
+/// fn main() -> anyhow::Result<()> {
+///     let mut command = IperfCommand::new();
+///     command.args(["-c", "127.0.0.1", "-t", "5"]);
+///
+///     let result = command.run()?;
+///     println!("{:?}", result.role());
+///     Ok(())
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct IperfCommand {
     program: String,
@@ -23,7 +45,7 @@ pub struct IperfCommand {
 }
 
 impl IperfCommand {
-    /// Create a command with no iperf mode selected yet.
+    /// Create a command with no iperf role selected yet.
     pub fn new() -> Self {
         Self {
             program: "iperf3-rs".to_owned(),
@@ -66,6 +88,9 @@ impl IperfCommand {
     }
 
     /// Run iperf on a worker thread and optionally stream metric events live.
+    ///
+    /// If metrics are enabled, call [`RunningIperf::take_metrics`] before
+    /// [`RunningIperf::wait`] to consume live events.
     pub fn spawn(&mut self) -> Result<RunningIperf> {
         let command = self.clone();
         let (ready_tx, ready_rx) = bounded::<ReadyMessage>(1);

@@ -1,3 +1,5 @@
+//! Hidden entry point used by the binary target.
+
 use std::env;
 use std::process::ExitCode;
 
@@ -13,6 +15,7 @@ use crate::version;
 const EXIT_OPTION_ERROR: u8 = 1;
 const EXIT_IPERF_ERROR: u8 = 2;
 
+/// Run the iperf3-rs CLI and return its process exit code.
 pub fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,

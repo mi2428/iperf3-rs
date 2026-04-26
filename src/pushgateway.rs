@@ -1,3 +1,9 @@
+//! Pushgateway rendering and HTTP delivery helpers.
+//!
+//! The CLI uses these types internally, and library users can also construct a
+//! [`PushGateway`] when they want to push [`crate::Metrics`] or
+//! [`crate::WindowMetrics`] collected from [`crate::MetricsStream`].
+
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
@@ -10,17 +16,29 @@ use crate::metrics::{Metrics, WindowGaugeStats, WindowMetrics};
 const PUSH_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
 const PUSH_RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
 
+/// Configuration for a [`PushGateway`] sink.
 #[derive(Debug, Clone)]
 pub struct PushGatewayConfig {
+    /// Base Pushgateway URL.
+    ///
+    /// The final request path is built as
+    /// `/metrics/job/{job}/{label}/{value}/...`.
     pub endpoint: Url,
+    /// Pushgateway job name.
     pub job: String,
+    /// Grouping labels encoded into the Pushgateway request path.
     pub labels: Vec<(String, String)>,
+    /// Per-request HTTP timeout.
     pub timeout: Duration,
+    /// Number of retries after the first failed request.
     pub retries: u32,
+    /// HTTP `User-Agent` header.
     pub user_agent: String,
+    /// Prefix for emitted Prometheus metric names.
     pub metric_prefix: String,
 }
 
+/// HTTP sink for pushing iperf metrics to Prometheus Pushgateway.
 pub struct PushGateway {
     client: Client,
     url: Url,
@@ -29,6 +47,7 @@ pub struct PushGateway {
 }
 
 impl PushGateway {
+    /// Build a Pushgateway sink from validated configuration.
     pub fn new(config: PushGatewayConfig) -> Result<Self> {
         let mut url = config.endpoint;
         let mut path = url.path().trim_end_matches('/').to_owned();
@@ -60,11 +79,13 @@ impl PushGateway {
         })
     }
 
+    /// Push one immediate interval sample.
     pub fn push(&self, metrics: &Metrics) -> Result<()> {
         let body = render_prometheus(metrics, &self.metric_prefix);
         self.push_body(&body)
     }
 
+    /// Push one aggregated window summary.
     pub fn push_window(&self, metrics: &WindowMetrics) -> Result<()> {
         let body = render_window_prometheus(metrics, &self.metric_prefix);
         self.push_body(&body)
