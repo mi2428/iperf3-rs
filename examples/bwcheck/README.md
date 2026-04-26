@@ -29,7 +29,7 @@ fixed iperf parameters: -u -b 1000000 -t 3 -i 1
 
 Run it from the repository root:
 
-```console
+```text
 $ cargo run --manifest-path examples/bwcheck/Cargo.toml -- \
     --min-bandwidth-bps 100000 --max-loss-percent 10 198.18.0.1:5201
 ```
