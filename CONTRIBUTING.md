@@ -86,10 +86,13 @@ requests still work from the scratch release image.
 .
 |-- src/
 |   |-- args.rs          # iperf3-rs option extraction and validation
+|   |-- cli.rs           # CLI orchestration over the library modules
+|   |-- command.rs       # public Rust command API over libiperf
 |   |-- help.rs          # wrapper help inserted into upstream help text
 |   |-- iperf.rs         # Rust wrapper around libiperf FFI
+|   |-- lib.rs           # public crate entry point and re-exports
 |   |-- main.rs          # CLI entry point
-|   |-- metrics.rs       # interval callback, window aggregation, and Pushgateway handoff
+|   |-- metrics.rs       # interval callback, event streams, and window aggregation
 |   |-- pushgateway.rs   # Pushgateway URL construction, rendering, and HTTP writes
 |   `-- version.rs       # one-line version rendering
 |-- native/              # small C shim over libiperf
@@ -151,6 +154,10 @@ Kani currently checks selected pure logic:
 - Prometheus label-name validation matches the intended ASCII shape;
 - reserved label-name detection matches the configured reserved keys;
 - duration arithmetic handles minute overflow.
+- command metrics-window validation rejects zero-duration windows;
+- metrics callback mode selection matches the requested stream mode;
+- window aggregation keeps counter summaries nonnegative and gauge summaries
+  ordered for bounded symbolic samples.
 
 Kani is not a replacement for integration tests here; it is used to lock down
 small, security-sensitive or correctness-sensitive parsing and encoding rules.

@@ -226,6 +226,54 @@ iperf3-rs --version
 The help output includes the iperf3-rs push options first, then the upstream
 iperf3 option list rendered by libiperf.
 
+## Rust library API
+
+The same libiperf frontend is available as a Rust crate. This is intended for
+programs that want to start iperf tests directly from Rust instead of spawning
+the `iperf3-rs` CLI and scraping its output.
+
+`IperfCommand` accepts normal iperf arguments, excluding `argv[0]`, and passes
+them to upstream `iperf_parse_arguments()`:
+
+```rust
+use iperf3_rs::{IperfCommand, MetricEvent, MetricsMode};
+
+fn run_client() -> anyhow::Result<()> {
+    let mut command = IperfCommand::new();
+    command
+        .args(["-c", "127.0.0.1", "-t", "10", "-i", "1"])
+        .metrics(MetricsMode::Interval);
+
+    let mut running = command.spawn()?;
+    let mut metrics = running.take_metrics().expect("metrics enabled");
+
+    while let Some(event) = metrics.recv() {
+        match event {
+            MetricEvent::Interval(sample) => {
+                println!("{} bit/s", sample.bandwidth_bits_per_second);
+            }
+            MetricEvent::Window(window) => {
+                println!("{} bytes", window.transferred_bytes);
+            }
+            _ => {}
+        }
+    }
+
+    running.wait()?;
+    Ok(())
+}
+```
+
+Use `MetricsMode::Window(duration)` to receive the same representative window
+summaries used by `--push.interval`. `PushGateway` and `PushGatewayConfig` are
+also exported for applications that want to push the collected metrics
+themselves.
+
+The first public API keeps high-level `IperfCommand` runs serialized inside one
+process because libiperf still has process-global error, signal, and output
+state. For local client/server interop tests, run the peer as a separate
+process, container, or VM.
+
 ## Pushgateway export
 
 Start an iperf3-rs server:
