@@ -153,6 +153,7 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
         udp_lost_packets,
         udp_jitter_seconds,
         udp_out_of_order_packets,
+        interval_duration,
         omitted);
 }
 

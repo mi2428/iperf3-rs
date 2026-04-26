@@ -5,7 +5,7 @@ use reqwest::StatusCode;
 use reqwest::blocking::Client;
 use url::Url;
 
-use crate::metrics::Metrics;
+use crate::metrics::{Metrics, WindowGaugeStats, WindowMetrics};
 
 const PUSH_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
 const PUSH_RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
@@ -62,8 +62,17 @@ impl PushGateway {
 
     pub fn push(&self, metrics: &Metrics) -> Result<()> {
         let body = render_prometheus(metrics, &self.metric_prefix);
+        self.push_body(&body)
+    }
+
+    pub fn push_window(&self, metrics: &WindowMetrics) -> Result<()> {
+        let body = render_window_prometheus(metrics, &self.metric_prefix);
+        self.push_body(&body)
+    }
+
+    fn push_body(&self, body: &str) -> Result<()> {
         for attempt in 0..=self.retries {
-            match self.push_once(&body) {
+            match self.push_once(body) {
                 Ok(()) => return Ok(()),
                 Err(err) if err.retryable && attempt < self.retries => {
                     std::thread::sleep(retry_delay(attempt));
@@ -186,8 +195,120 @@ fn render_prometheus(metrics: &Metrics, prefix: &str) -> String {
     out
 }
 
+fn render_window_prometheus(metrics: &WindowMetrics, prefix: &str) -> String {
+    let mut out = String::new();
+    gauge(
+        &mut out,
+        &metric_name(prefix, "window_duration_seconds"),
+        metrics.duration_seconds,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "window_transferred_bytes"),
+        metrics.transferred_bytes,
+    );
+    gauge_stats(
+        &mut out,
+        prefix,
+        "window_bandwidth",
+        "bytes_per_second",
+        metrics.bandwidth_bytes_per_second,
+    );
+    gauge_stats(
+        &mut out,
+        prefix,
+        "window_tcp_rtt",
+        "seconds",
+        metrics.tcp_rtt_seconds,
+    );
+    gauge_stats(
+        &mut out,
+        prefix,
+        "window_tcp_rttvar",
+        "seconds",
+        metrics.tcp_rttvar_seconds,
+    );
+    gauge_stats(
+        &mut out,
+        prefix,
+        "window_tcp_snd_cwnd",
+        "bytes",
+        metrics.tcp_snd_cwnd_bytes,
+    );
+    gauge_stats(
+        &mut out,
+        prefix,
+        "window_tcp_snd_wnd",
+        "bytes",
+        metrics.tcp_snd_wnd_bytes,
+    );
+    gauge_stats(
+        &mut out,
+        prefix,
+        "window_tcp_pmtu",
+        "bytes",
+        metrics.tcp_pmtu_bytes,
+    );
+    gauge_stats(
+        &mut out,
+        prefix,
+        "window_udp_jitter",
+        "seconds",
+        metrics.udp_jitter_seconds,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "window_tcp_retransmits"),
+        metrics.tcp_retransmits,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "window_tcp_reorder_events"),
+        metrics.tcp_reorder_events,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "window_udp_packets"),
+        metrics.udp_packets,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "window_udp_lost_packets"),
+        metrics.udp_lost_packets,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "window_udp_out_of_order_packets"),
+        metrics.udp_out_of_order_packets,
+    );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "window_omitted_intervals"),
+        metrics.omitted_intervals,
+    );
+    out
+}
+
 fn metric_name(prefix: &str, suffix: &str) -> String {
     format!("{prefix}_{suffix}")
+}
+
+fn gauge_stats(out: &mut String, prefix: &str, stem: &str, unit: &str, stats: WindowGaugeStats) {
+    gauge(
+        out,
+        &metric_name(prefix, &format!("{stem}_mean_{unit}")),
+        stats.mean,
+    );
+    gauge(
+        out,
+        &metric_name(prefix, &format!("{stem}_min_{unit}")),
+        stats.min,
+    );
+    gauge(
+        out,
+        &metric_name(prefix, &format!("{stem}_max_{unit}")),
+        stats.max,
+    );
 }
 
 fn gauge(out: &mut String, name: &str, value: f64) {
@@ -316,6 +437,7 @@ mod tests {
                 udp_lost_packets: 3.0,
                 udp_jitter_seconds: 0.004,
                 udp_out_of_order_packets: 12.0,
+                interval_duration_seconds: 1.0,
                 omitted: 1.0,
             },
             "iperf3",
@@ -371,6 +493,85 @@ mod tests {
             "iperf3_udp_jitter_seconds",
             "iperf3_udp_out_of_order_packets",
             "iperf3_omitted",
+        ] {
+            assert!(rendered.contains(&format!("# TYPE {name} gauge\n")));
+            assert!(rendered.contains(&format!("{name} 0\n")));
+        }
+    }
+
+    #[test]
+    fn renders_window_prometheus_gauges() {
+        let rendered = render_window_prometheus(
+            &WindowMetrics {
+                duration_seconds: 10.0,
+                transferred_bytes: 1000.0,
+                bandwidth_bytes_per_second: WindowGaugeStats {
+                    mean: 100.0,
+                    min: 90.0,
+                    max: 110.0,
+                },
+                tcp_rtt_seconds: WindowGaugeStats {
+                    mean: 0.010,
+                    min: 0.005,
+                    max: 0.020,
+                },
+                tcp_retransmits: 3.0,
+                udp_packets: 4.0,
+                udp_lost_packets: 1.0,
+                omitted_intervals: 2.0,
+                ..WindowMetrics::default()
+            },
+            "iperf3",
+        );
+
+        assert!(rendered.contains("iperf3_window_duration_seconds 10\n"));
+        assert!(rendered.contains("iperf3_window_transferred_bytes 1000\n"));
+        assert!(rendered.contains("iperf3_window_bandwidth_mean_bytes_per_second 100\n"));
+        assert!(rendered.contains("iperf3_window_bandwidth_min_bytes_per_second 90\n"));
+        assert!(rendered.contains("iperf3_window_bandwidth_max_bytes_per_second 110\n"));
+        assert!(rendered.contains("iperf3_window_tcp_rtt_mean_seconds 0.01\n"));
+        assert!(rendered.contains("iperf3_window_tcp_rtt_min_seconds 0.005\n"));
+        assert!(rendered.contains("iperf3_window_tcp_rtt_max_seconds 0.02\n"));
+        assert!(rendered.contains("iperf3_window_tcp_retransmits 3\n"));
+        assert!(rendered.contains("iperf3_window_udp_packets 4\n"));
+        assert!(rendered.contains("iperf3_window_udp_lost_packets 1\n"));
+        assert!(rendered.contains("iperf3_window_omitted_intervals 2\n"));
+    }
+
+    #[test]
+    fn renders_all_expected_window_metric_names() {
+        let rendered = render_window_prometheus(&WindowMetrics::default(), "iperf3");
+
+        for name in [
+            "iperf3_window_duration_seconds",
+            "iperf3_window_transferred_bytes",
+            "iperf3_window_bandwidth_mean_bytes_per_second",
+            "iperf3_window_bandwidth_min_bytes_per_second",
+            "iperf3_window_bandwidth_max_bytes_per_second",
+            "iperf3_window_tcp_rtt_mean_seconds",
+            "iperf3_window_tcp_rtt_min_seconds",
+            "iperf3_window_tcp_rtt_max_seconds",
+            "iperf3_window_tcp_rttvar_mean_seconds",
+            "iperf3_window_tcp_rttvar_min_seconds",
+            "iperf3_window_tcp_rttvar_max_seconds",
+            "iperf3_window_tcp_snd_cwnd_mean_bytes",
+            "iperf3_window_tcp_snd_cwnd_min_bytes",
+            "iperf3_window_tcp_snd_cwnd_max_bytes",
+            "iperf3_window_tcp_snd_wnd_mean_bytes",
+            "iperf3_window_tcp_snd_wnd_min_bytes",
+            "iperf3_window_tcp_snd_wnd_max_bytes",
+            "iperf3_window_tcp_pmtu_mean_bytes",
+            "iperf3_window_tcp_pmtu_min_bytes",
+            "iperf3_window_tcp_pmtu_max_bytes",
+            "iperf3_window_udp_jitter_mean_seconds",
+            "iperf3_window_udp_jitter_min_seconds",
+            "iperf3_window_udp_jitter_max_seconds",
+            "iperf3_window_tcp_retransmits",
+            "iperf3_window_tcp_reorder_events",
+            "iperf3_window_udp_packets",
+            "iperf3_window_udp_lost_packets",
+            "iperf3_window_udp_out_of_order_packets",
+            "iperf3_window_omitted_intervals",
         ] {
             assert!(rendered.contains(&format!("# TYPE {name} gauge\n")));
             assert!(rendered.contains(&format!("{name} 0\n")));

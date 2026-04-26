@@ -53,6 +53,11 @@ pub fn render_wrapper_help() -> String {
                 description: "Prometheus metric name prefix (default: iperf3)",
                 continuation: &[],
             },
+            HelpRow {
+                value: "--push.interval DURATION",
+                description: "aggregate interval samples before pushing window metrics",
+                continuation: &[],
+            },
         ],
     );
     help.push('\n');
@@ -93,6 +98,11 @@ pub fn render_wrapper_help() -> String {
             HelpRow {
                 value: "PUSH_METRIC_PREFIX=P",
                 description: "default value for --push.metric-prefix",
+                continuation: &[],
+            },
+            HelpRow {
+                value: "PUSH_INTERVAL=DURATION",
+                description: "default value for --push.interval",
                 continuation: &[],
             },
         ],
@@ -150,8 +160,10 @@ mod tests {
         assert!(help.contains("--push.retries N"));
         assert!(help.contains("--push.user-agent VALUE"));
         assert!(help.contains("--push.metric-prefix P"));
+        assert!(help.contains("--push.interval DURATION"));
         assert!(help.contains("PUSH_LABELS=KEY=VALUE,..."));
         assert!(help.contains("PUSH_METRIC_PREFIX=P"));
+        assert!(help.contains("PUSH_INTERVAL=DURATION"));
     }
 
     #[test]

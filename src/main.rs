@@ -58,7 +58,11 @@ fn run() -> Result<()> {
             user_agent: app.push_user_agent,
             metric_prefix: app.push_metric_prefix,
         })?;
-        Some(IntervalMetricsReporter::attach(&mut test, sink)?)
+        Some(IntervalMetricsReporter::attach(
+            &mut test,
+            sink,
+            app.push_interval,
+        )?)
     } else {
         None
     };

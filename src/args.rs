@@ -25,6 +25,7 @@ pub struct AppOptions {
     pub push_retries: u32,
     pub push_user_agent: String,
     pub push_metric_prefix: String,
+    pub push_interval: Option<Duration>,
     pub show_help: bool,
     pub show_version: bool,
 }
@@ -56,6 +57,7 @@ fn extract_app_options_with_env(
                 push_retries: DEFAULT_PUSH_RETRIES,
                 push_user_agent: default_push_user_agent(),
                 push_metric_prefix: DEFAULT_PUSH_METRIC_PREFIX.to_owned(),
+                push_interval: None,
                 show_help,
                 show_version,
             },
@@ -85,6 +87,9 @@ fn extract_app_options_with_env(
         .map(|raw| parse_metric_prefix("PUSH_METRIC_PREFIX", &raw))
         .transpose()?
         .unwrap_or_else(|| DEFAULT_PUSH_METRIC_PREFIX.to_owned());
+    let mut push_interval = get_env("PUSH_INTERVAL")
+        .map(|raw| parse_duration_option("PUSH_INTERVAL", &raw))
+        .transpose()?;
     let mut saw_push_job = false;
     let mut saw_push_label = !push_labels.is_empty();
     let mut saw_push_setting = false;
@@ -123,6 +128,10 @@ fn extract_app_options_with_env(
                 }
                 "--push.metric-prefix" => {
                     push_metric_prefix = parse_metric_prefix("--push.metric-prefix", value)?;
+                    saw_push_setting = true;
+                }
+                "--push.interval" => {
+                    push_interval = Some(parse_duration_option("--push.interval", value)?);
                     saw_push_setting = true;
                 }
                 _ => pass_through.push(arg.clone()),
@@ -171,6 +180,13 @@ fn extract_app_options_with_env(
                 )?;
                 saw_push_setting = true;
             }
+            "--push.interval" => {
+                push_interval = Some(parse_duration_option(
+                    "--push.interval",
+                    &take_value(&rest, &mut i, "--push.interval")?,
+                )?);
+                saw_push_setting = true;
+            }
             _ => {
                 pass_through.push(arg.clone());
                 i += 1;
@@ -202,6 +218,7 @@ fn extract_app_options_with_env(
             push_retries,
             push_user_agent,
             push_metric_prefix,
+            push_interval,
             show_help: false,
             show_version: false,
         },
@@ -518,6 +535,7 @@ mod tests {
             "--push.user-agent=iperf3-rs/custom".to_owned(),
             "--push.metric-prefix".to_owned(),
             "nettest".to_owned(),
+            "--push.interval=10s".to_owned(),
             "-t".to_owned(),
             "3".to_owned(),
         ];
@@ -537,6 +555,7 @@ mod tests {
         assert_eq!(app.push_retries, 2);
         assert_eq!(app.push_user_agent, "iperf3-rs/custom");
         assert_eq!(app.push_metric_prefix, "nettest");
+        assert_eq!(app.push_interval, Some(Duration::from_secs(10)));
         assert_eq!(iperf, ["iperf3-rs", "-c", "127.0.0.1", "-t", "3"]);
     }
 
@@ -608,6 +627,7 @@ mod tests {
             "--push.retries",
             "--push.user-agent",
             "--push.metric-prefix",
+            "--push.interval",
         ] {
             let args = vec!["iperf3-rs".to_owned(), option.to_owned()];
 
@@ -695,6 +715,7 @@ mod tests {
             "PUSH_RETRIES" => Some("3".to_owned()),
             "PUSH_USER_AGENT" => Some("iperf3-rs/env".to_owned()),
             "PUSH_METRIC_PREFIX" => Some("nettest".to_owned()),
+            "PUSH_INTERVAL" => Some("2m".to_owned()),
             _ => None,
         })
         .unwrap();
@@ -704,6 +725,7 @@ mod tests {
         assert_eq!(app.push_retries, 3);
         assert_eq!(app.push_user_agent, "iperf3-rs/env");
         assert_eq!(app.push_metric_prefix, "nettest");
+        assert_eq!(app.push_interval, Some(Duration::from_secs(120)));
         assert_eq!(iperf, ["iperf3-rs", "-s"]);
     }
 
@@ -714,6 +736,7 @@ mod tests {
             "--push.retries=1",
             "--push.user-agent=iperf3-rs/test",
             "--push.metric-prefix=nettest",
+            "--push.interval=10s",
         ] {
             let args = vec!["iperf3-rs".to_owned(), option.to_owned()];
 
@@ -749,6 +772,16 @@ mod tests {
                 "--push.metric-prefix",
                 "bad-prefix",
                 "invalid --push.metric-prefix metric prefix",
+            ),
+            (
+                "--push.interval",
+                "0",
+                "--push.interval must be greater than zero",
+            ),
+            (
+                "--push.interval",
+                "1h",
+                "invalid --push.interval duration: 1h",
             ),
         ] {
             let args = vec![
@@ -858,6 +891,7 @@ mod tests {
                 "PUSH_TIMEOUT" => Some("not-a-duration".to_owned()),
                 "PUSH_RETRIES" => Some("not-a-number".to_owned()),
                 "PUSH_METRIC_PREFIX" => Some("bad-prefix".to_owned()),
+                "PUSH_INTERVAL" => Some("not-a-duration".to_owned()),
                 _ => None,
             })
             .unwrap();

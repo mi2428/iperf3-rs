@@ -18,6 +18,7 @@ typedef void (*iperf3rs_metrics_callback)(
     double udp_lost_packets,
     double udp_jitter_seconds,
     double udp_out_of_order_packets,
+    double interval_duration_seconds,
     double omitted);
 
 void iperf3rs_enable_interval_metrics(struct iperf_test *test, iperf3rs_metrics_callback callback);
