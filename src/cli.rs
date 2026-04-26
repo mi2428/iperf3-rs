@@ -29,7 +29,7 @@ pub fn main() -> ExitCode {
 
 fn run() -> Result<()> {
     let raw_args: Vec<String> = env::args().collect();
-    // Split wrapper-only push options before handing argv to libiperf's own
+    // Split wrapper-only metrics options before handing argv to libiperf's own
     // parser, preserving upstream iperf3 option compatibility.
     let (app, iperf_args) = extract_app_options(raw_args).map_err(|err| {
         eprintln!("{err:#}");

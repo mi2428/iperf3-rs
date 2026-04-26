@@ -108,7 +108,8 @@ and printing a note if the fallback is not in `$fpath`.
 
 `iperf3-rs` has two public surfaces:
 
-- a CLI that behaves like upstream iperf3 plus `--push.*` metrics options;
+- a CLI that behaves like upstream iperf3 plus `--push.*` and `--metrics.*`
+  wrapper metrics options;
 - a Rust library API centered on `IperfCommand`, `MetricsMode`, and
   `PushGateway`.
 
@@ -128,8 +129,10 @@ to a system iperf3 package.
 |   |-- iperf.rs         # Rust wrapper around libiperf FFI
 |   |-- lib.rs           # public crate entry point and re-exports
 |   |-- main.rs          # CLI entry point
+|   |-- metrics_file.rs  # JSONL and Prometheus textfile metrics sinks
 |   |-- metrics.rs       # interval callback, event streams, and window aggregation
-|   |-- pushgateway.rs   # Pushgateway URL construction, rendering, and HTTP writes
+|   |-- prometheus.rs    # Prometheus text exposition rendering
+|   |-- pushgateway.rs   # Pushgateway URL construction and HTTP writes
 |   `-- version.rs       # one-line version rendering
 |-- native/              # small C shim over libiperf
 |-- iperf3/              # esnet/iperf3 git submodule
@@ -182,8 +185,9 @@ requests still work from the scratch release image.
 ### Tests
 
 Unit tests cover the argument splitter, label validation, duration parsing,
-version rendering, Pushgateway URL construction, Prometheus rendering, window
-metric aggregation, and selected libiperf argument parsing behavior.
+version rendering, Pushgateway URL construction, Prometheus rendering, metrics
+file sinks, window metric aggregation, command lifecycle helpers, and selected
+libiperf argument parsing behavior.
 
 The Docker Compose integration test is ignored by default because it requires
 Docker:
@@ -200,6 +204,8 @@ It verifies:
 - upstream `iperf3` client to `iperf3-rs` server interoperability;
 - `iperf3-rs` client to upstream `iperf3` server interoperability;
 - `iperf3-rs` client to `iperf3-rs` server metrics;
+- Prometheus file output with custom metric prefix and labels;
+- Pushgateway delete-on-exit lifecycle cleanup;
 - aggregated window metrics from `--push.interval`;
 - server-mode metrics from the long-running `iperf3-rs` server;
 - interval metrics are visible while a longer client run is still active;
@@ -210,7 +216,8 @@ It verifies:
 
 The test uses environment-based Pushgateway defaults for both `client-rs` and
 `server-rs` services so the commands under test stay close to normal iperf3
-usage.
+usage. Although it is one Rust test, it prints `[integration] START/PASS/FAIL`
+markers for each sub-scenario under `--nocapture`.
 
 Example applications can carry their own Docker Compose integration tests. Run
 one from the repository root with:
@@ -237,11 +244,15 @@ Kani currently checks selected pure logic:
 - Pushgateway path segment encoding escapes reserved bytes;
 - retryable status classification matches the retry policy;
 - retry delay is bounded for configured retry counts;
-- Prometheus label-name validation matches the intended ASCII shape;
+- metrics file format parsing accepts only the documented formats;
+- Prometheus metric prefix and label-name validation match the intended ASCII
+  shape;
 - reserved label-name detection matches the configured reserved keys;
+- boolean option parsing accepts only the documented values;
 - duration arithmetic handles minute overflow;
 - command metrics-window validation rejects zero-duration windows;
 - metrics callback mode selection matches the requested stream mode;
+- callback availability flags and stream counts normalize C values as expected;
 - window aggregation keeps counter summaries nonnegative and gauge summaries
   ordered for bounded symbolic samples.
 

@@ -58,7 +58,8 @@ Docker images, tests, and release packaging.
 ### Compatibility
 
 The compatibility rule is simple: `iperf3-rs` strips only its own `--push.*`
-options, then passes the remaining argv to upstream `iperf_parse_arguments()`.
+and `--metrics.*` options, then passes the remaining argv to upstream
+`iperf_parse_arguments()`.
 
 That means upstream iperf3 options such as `-s`, `-c`, `-u`, `-R`, `--bidir`,
 `-b`, `-t`, `-i`, `-P`, `-J`, authentication options, bind options, and the rest
@@ -235,8 +236,8 @@ iperf3-rs --help
 iperf3-rs --version
 ```
 
-The help output includes the iperf3-rs push options first, then the upstream
-iperf3 option list rendered by libiperf.
+The help output includes the iperf3-rs wrapper metrics options first, then the
+upstream iperf3 option list rendered by libiperf.
 
 ## Use as a Rust Library
 
@@ -422,7 +423,7 @@ iperf3-rs \
   --push.label scenario=server
 ```
 
-Push options:
+Wrapper metrics options:
 
 ```text
 --push.url URL
@@ -593,8 +594,9 @@ Metric mapping:
 | `iperf3_udp_out_of_order_packets` | `out_of_order` | UDP out-of-order packets observed in the interval. |
 | `iperf3_omitted_intervals` | `omitted` | `1` for omitted warm-up intervals, otherwise `0`. |
 
-Not every metric is meaningful for every iperf mode. UDP-prefixed fields are
-zero for normal TCP runs, and TCP_INFO-derived fields depend on libiperf and
+Not every metric is meaningful for every iperf mode. Protocol-specific metrics
+that libiperf did not report are omitted from Prometheus output and represented
+as `null` in JSONL. TCP_INFO-derived fields depend on libiperf and
 operating-system support for TCP information.
 
 When `--push.interval` or `PUSH_INTERVAL` is set, iperf3-rs emits window
