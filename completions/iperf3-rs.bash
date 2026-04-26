@@ -74,6 +74,7 @@ _iperf3_rs()
         --push.retries
         --push.user-agent
         --push.metric-prefix
+        --push.interval
     "
 
     case "${cur}" in
@@ -87,6 +88,10 @@ _iperf3_rs()
             ;;
         --push.metric-prefix=*)
             COMPREPLY=($(compgen -P "--push.metric-prefix=" -W "iperf3" -- "${cur#*=}"))
+            return
+            ;;
+        --push.interval=*)
+            COMPREPLY=($(compgen -P "--push.interval=" -W "500ms 1s 5s 10s 30s 1m" -- "${cur#*=}"))
             return
             ;;
         --push.label=*)
@@ -124,6 +129,10 @@ _iperf3_rs()
             ;;
         --push.metric-prefix)
             COMPREPLY=($(compgen -W "iperf3" -- "${cur}"))
+            return
+            ;;
+        --push.interval)
+            COMPREPLY=($(compgen -W "500ms 1s 5s 10s 30s 1m" -- "${cur}"))
             return
             ;;
         --push.label)

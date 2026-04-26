@@ -74,4 +74,5 @@ _arguments -s -S \
   '--push.retries[retry failed Pushgateway requests]:retries:(0 1 2 3 5 10)' \
   '--push.user-agent[HTTP User-Agent for Pushgateway requests]:value:' \
   '--push.metric-prefix[Prometheus metric name prefix]:prefix:(iperf3)' \
+  '--push.interval[aggregate interval samples before pushing window metrics]:duration:(500ms 1s 5s 10s 30s 1m)' \
   '*:argument:_default'
