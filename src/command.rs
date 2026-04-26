@@ -11,6 +11,10 @@ use crate::metrics::{
 
 static RUN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+/// Builder for running an iperf test through libiperf.
+///
+/// Arguments are the normal iperf arguments without `argv[0]`; `IperfCommand`
+/// inserts a program name before passing them to `iperf_parse_arguments`.
 #[derive(Debug, Clone)]
 pub struct IperfCommand {
     program: String,
@@ -19,6 +23,7 @@ pub struct IperfCommand {
 }
 
 impl IperfCommand {
+    /// Create a command with no iperf mode selected yet.
     pub fn new() -> Self {
         Self {
             program: "iperf3-rs".to_owned(),
@@ -27,16 +32,19 @@ impl IperfCommand {
         }
     }
 
+    /// Override the program name passed as `argv[0]` to libiperf.
     pub fn program(&mut self, program: impl Into<String>) -> &mut Self {
         self.program = program.into();
         self
     }
 
+    /// Append one iperf argument.
     pub fn arg(&mut self, arg: impl Into<String>) -> &mut Self {
         self.args.push(arg.into());
         self
     }
 
+    /// Append several iperf arguments.
     pub fn args<I, S>(&mut self, args: I) -> &mut Self
     where
         I: IntoIterator<Item = S>,
@@ -46,15 +54,18 @@ impl IperfCommand {
         self
     }
 
+    /// Enable or disable callback metrics for this run.
     pub fn metrics(&mut self, mode: MetricsMode) -> &mut Self {
         self.metrics_mode = mode;
         self
     }
 
+    /// Run the iperf test to completion and collect metric events in memory.
     pub fn run(&mut self) -> Result<IperfResult> {
         run_command(self.clone(), None)
     }
 
+    /// Run iperf on a worker thread and optionally stream metric events live.
     pub fn spawn(&mut self) -> Result<RunningIperf> {
         let command = self.clone();
         let (ready_tx, ready_rx) = bounded::<ReadyMessage>(1);
@@ -87,6 +98,7 @@ impl Default for IperfCommand {
     }
 }
 
+/// Completed result from a blocking or spawned iperf run.
 #[derive(Debug)]
 pub struct IperfResult {
     role: Role,
@@ -95,19 +107,26 @@ pub struct IperfResult {
 }
 
 impl IperfResult {
+    /// Role selected by libiperf after parsing the supplied arguments.
     pub fn role(&self) -> Role {
         self.role
     }
 
+    /// Upstream JSON result if JSON output was requested and libiperf retained it.
     pub fn json_output(&self) -> Option<&str> {
         self.json_output.as_deref()
     }
 
+    /// Metric events collected by `IperfCommand::run`.
+    ///
+    /// Spawned commands deliver live metrics through `RunningIperf` instead, so
+    /// their completed result does not duplicate the stream contents.
     pub fn metrics(&self) -> &[MetricEvent] {
         &self.metrics
     }
 }
 
+/// Handle for an iperf run executing on a worker thread.
 #[derive(Debug)]
 pub struct RunningIperf {
     handle: JoinHandle<Result<IperfResult>>,
@@ -115,14 +134,17 @@ pub struct RunningIperf {
 }
 
 impl RunningIperf {
+    /// Borrow the live metric stream, if metrics were enabled.
     pub fn metrics(&self) -> Option<&MetricsStream> {
         self.metrics.as_ref()
     }
 
+    /// Take ownership of the live metric stream.
     pub fn take_metrics(&mut self) -> Option<MetricsStream> {
         self.metrics.take()
     }
 
+    /// Wait until the iperf worker exits.
     pub fn wait(self) -> Result<IperfResult> {
         self.handle
             .join()
@@ -211,8 +233,9 @@ fn notify_ready(ready: Option<Sender<ReadyMessage>>, message: ReadyMessage) {
 
 fn run_lock() -> &'static Mutex<()> {
     // libiperf still has process-global state, including its current error and
-    // signal/output hooks. Serialize high-level command runs until a broader
-    // concurrency contract is deliberately designed and tested.
+    // signal/output hooks. The first public API keeps high-level runs
+    // serialized until a broader concurrency contract is deliberately designed
+    // and tested.
     RUN_LOCK.get_or_init(|| Mutex::new(()))
 }
 

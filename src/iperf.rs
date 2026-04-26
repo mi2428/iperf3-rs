@@ -128,6 +128,7 @@ impl IperfTest {
         }
     }
 
+    /// Return libiperf's retained JSON result, when JSON output was requested.
     pub fn json_output(&self) -> Option<String> {
         let ptr = unsafe { ffi::iperf_get_test_json_output_string(self.as_ptr()) };
         if ptr.is_null() {

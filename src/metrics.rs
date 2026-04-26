@@ -58,8 +58,11 @@ pub struct WindowMetrics {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MetricsMode {
+    /// Do not register the libiperf interval callback.
     Disabled,
+    /// Emit one event for every libiperf interval sample.
     Interval,
+    /// Aggregate interval samples into fixed-duration summary windows.
     Window(Duration),
 }
 
@@ -87,10 +90,13 @@ impl MetricsMode {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum MetricEvent {
+    /// A raw libiperf interval sample.
     Interval(Metrics),
+    /// A summary produced from one or more interval samples.
     Window(WindowMetrics),
 }
 
+/// Receiver for metric events emitted by a running iperf test.
 #[derive(Debug)]
 pub struct MetricsStream {
     rx: Receiver<MetricEvent>,
@@ -101,14 +107,17 @@ impl MetricsStream {
         Self { rx }
     }
 
+    /// Block until the next metric event arrives or the run ends.
     pub fn recv(&self) -> Option<MetricEvent> {
         self.rx.recv().ok()
     }
 
+    /// Wait for the next metric event up to `timeout`.
     pub fn recv_timeout(&self, timeout: Duration) -> Option<MetricEvent> {
         self.rx.recv_timeout(timeout).ok()
     }
 
+    /// Return the next metric event if one is already queued.
     pub fn try_recv(&self) -> Option<MetricEvent> {
         self.rx.try_recv().ok()
     }
