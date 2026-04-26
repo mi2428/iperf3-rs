@@ -292,27 +292,25 @@ impl IperfCommand {
     /// Run the iperf test to completion while pushing metrics to Pushgateway.
     #[cfg(feature = "pushgateway")]
     pub fn run_with_pushgateway(
-        &mut self,
+        &self,
         config: PushGatewayConfig,
         mode: MetricsMode,
     ) -> Result<IperfResult> {
-        let previous = self.pushgateway.replace(PushGatewayRun { config, mode });
-        let result = self.run();
-        self.pushgateway = previous;
-        result
+        let mut command = self.clone();
+        command.pushgateway = Some(PushGatewayRun { config, mode });
+        command.run()
     }
 
     /// Run iperf on a worker thread while pushing metrics to Pushgateway.
     #[cfg(feature = "pushgateway")]
     pub fn spawn_with_pushgateway(
-        &mut self,
+        &self,
         config: PushGatewayConfig,
         mode: MetricsMode,
     ) -> Result<RunningIperf> {
-        let previous = self.pushgateway.replace(PushGatewayRun { config, mode });
-        let result = self.spawn();
-        self.pushgateway = previous;
-        result
+        let mut command = self.clone();
+        command.pushgateway = Some(PushGatewayRun { config, mode });
+        command.spawn()
     }
 
     /// Allow `-s` server runs that do not include iperf's one-off option.
@@ -330,7 +328,7 @@ impl IperfCommand {
     }
 
     /// Run the iperf test to completion and collect metric events in memory.
-    pub fn run(&mut self) -> Result<IperfResult> {
+    pub fn run(&self) -> Result<IperfResult> {
         run_command(self.clone(), None)
     }
 
@@ -340,7 +338,7 @@ impl IperfCommand {
     /// [`RunningIperf::wait`] to consume live events. Dropping the returned
     /// handle detaches the worker and does not cancel the underlying libiperf
     /// run.
-    pub fn spawn(&mut self) -> Result<RunningIperf> {
+    pub fn spawn(&self) -> Result<RunningIperf> {
         let command = self.clone();
         let (ready_tx, ready_rx) = bounded::<ReadyMessage>(1);
         let handle = thread::spawn(move || run_command(command, Some(ready_tx)));
@@ -368,12 +366,10 @@ impl IperfCommand {
     /// This is a convenience wrapper around [`IperfCommand::metrics`],
     /// [`IperfCommand::spawn`], and [`RunningIperf::take_metrics`] for callers
     /// that know they want metrics for this run.
-    pub fn spawn_with_metrics(
-        &mut self,
-        mode: MetricsMode,
-    ) -> Result<(RunningIperf, MetricsStream)> {
-        self.metrics(mode);
-        let mut running = self.spawn()?;
+    pub fn spawn_with_metrics(&self, mode: MetricsMode) -> Result<(RunningIperf, MetricsStream)> {
+        let mut command = self.clone();
+        command.metrics(mode);
+        let mut running = command.spawn()?;
         let metrics = running
             .take_metrics()
             .ok_or_else(|| Error::internal("metrics stream was not created"))?;
@@ -996,6 +992,18 @@ mod tests {
     }
 
     #[test]
+    fn spawn_with_metrics_does_not_persist_metrics_mode() {
+        let command = IperfCommand::new();
+
+        let err = command
+            .spawn_with_metrics(MetricsMode::Window(Duration::ZERO))
+            .unwrap_err();
+
+        assert!(err.to_string().contains("greater than zero"), "{err:#}");
+        assert_eq!(command.metrics_mode, MetricsMode::Disabled);
+    }
+
+    #[test]
     fn duration_helpers_preserve_nonzero_subsecond_intent() {
         assert_eq!(whole_seconds_arg(Duration::ZERO), "0");
         assert_eq!(whole_seconds_arg(Duration::from_millis(1)), "1");
@@ -1145,7 +1153,7 @@ mod tests {
 
     #[test]
     fn run_without_client_or_server_role_fails_fast() {
-        let mut command = IperfCommand::new();
+        let command = IperfCommand::new();
 
         let err = command.run().unwrap_err();
         assert_eq!(err.kind(), ErrorKind::Libiperf);
