@@ -1,0 +1,20 @@
+name: iperf3-rs-bwcheck-test
+
+services:
+  server-a:
+    image: iperf3-rs-bwcheck:test
+    command: ["iperf3", "-s", "-i", "1", "-p", "5201"]
+
+  server-b:
+    image: iperf3-rs-bwcheck:test
+    command: ["iperf3", "-s", "-i", "1", "-p", "5201"]
+
+  checker:
+    build:
+      context: ../..
+      dockerfile: examples/bwcheck/Dockerfile
+    image: iperf3-rs-bwcheck:test
+    command: ["sleep", "infinity"]
+    depends_on:
+      - server-a
+      - server-b
