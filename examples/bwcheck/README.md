@@ -7,7 +7,7 @@ endpoint reaches the configured minimum bandwidth and stays below the configured
 loss threshold.
 
 ```sh
-cargo run --manifest-path examples/bwcheck/Cargo.toml -- \
+cargo run -- \
   --min-bandwidth-bps 100000 \
   --max-loss-percent 10 \
   127.0.0.1:5201
@@ -23,8 +23,8 @@ The Docker Compose integration test in this directory is intended to protect the
 library API usage path from regressions independently of the main CLI
 integration test.
 
-Run it from the repository root with:
+Run it from this directory with:
 
 ```sh
-make integration EXAMPLES=bwcheck
+cargo test --test integration_test -- --ignored --nocapture --test-threads=1
 ```
