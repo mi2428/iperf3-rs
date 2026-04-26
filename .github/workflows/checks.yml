@@ -46,7 +46,7 @@ jobs:
             zsh
 
       - name: Install Rust toolchain
-        run: rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt
+        run: rustup toolchain install 1.93.0 --profile minimal --component clippy --component rustfmt
 
       - name: Cache Cargo registry
         uses: actions/cache@v5
@@ -97,7 +97,7 @@ jobs:
             pkg-config
 
       - name: Install Rust toolchain
-        run: rustup toolchain install 1.95.0 --profile minimal
+        run: rustup toolchain install 1.93.0 --profile minimal
 
       - name: Cache Cargo registry
         uses: actions/cache@v5
@@ -139,7 +139,7 @@ jobs:
             pkg-config
 
       - name: Install Rust toolchain
-        run: rustup toolchain install 1.95.0 --profile minimal
+        run: rustup toolchain install 1.93.0 --profile minimal
 
       - name: Cache Cargo registry
         uses: actions/cache@v5
@@ -186,7 +186,7 @@ jobs:
             pkg-config
 
       - name: Install Rust toolchain
-        run: rustup toolchain install 1.95.0 --profile minimal
+        run: rustup toolchain install 1.93.0 --profile minimal
 
       - name: Cache Cargo registry
         uses: actions/cache@v5
@@ -259,8 +259,8 @@ jobs:
             runner: ubuntu-24.04-arm
             suffix: linux-arm64
     env:
-      LINUX_BUILD_IMAGE: rust:1.95-bullseye
-      LINUX_CACHE_KEY: rust-1.95-bullseye
+      LINUX_BUILD_IMAGE: rust:1.93-bullseye
+      LINUX_CACHE_KEY: rust-1.93-bullseye
       LINUX_SMOKE_IMAGE: debian:bullseye-slim
     steps:
       - name: Checkout

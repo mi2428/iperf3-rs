@@ -18,9 +18,6 @@ If the checkout already exists:
 git submodule update --init --recursive
 ```
 
-The project uses Rust 1.95.0 for Makefile-driven development. The crate
-metadata currently requires Rust 1.93 or newer.
-
 ## Useful commands
 
 ```sh

@@ -3,11 +3,12 @@ SHELL         := /bin/bash
 .DEFAULT_GOAL := help
 
 RUSTUP           ?= rustup
-RUSTUP_TOOLCHAIN ?= 1.95.0
+RUSTUP_TOOLCHAIN ?= 1.93.0
 CARGO            ?= $(shell if command -v $(RUSTUP) >/dev/null 2>&1 && $(RUSTUP) which cargo --toolchain $(RUSTUP_TOOLCHAIN) >/dev/null 2>&1; then $(RUSTUP) which cargo --toolchain $(RUSTUP_TOOLCHAIN); else command -v cargo; fi)
 RUSTC            ?= $(shell if command -v $(RUSTUP) >/dev/null 2>&1 && $(RUSTUP) which rustc --toolchain $(RUSTUP_TOOLCHAIN) >/dev/null 2>&1; then $(RUSTUP) which rustc --toolchain $(RUSTUP_TOOLCHAIN); else command -v rustc; fi)
 RUSTDOC          ?= $(shell if command -v $(RUSTUP) >/dev/null 2>&1 && $(RUSTUP) which rustdoc --toolchain $(RUSTUP_TOOLCHAIN) >/dev/null 2>&1; then $(RUSTUP) which rustdoc --toolchain $(RUSTUP_TOOLCHAIN); else command -v rustdoc; fi)
-CARGO_ENV        := RUSTC="$(RUSTC)" RUSTDOC="$(RUSTDOC)"
+RUST_BINDIR      := $(patsubst %/,%,$(dir $(CARGO)))
+CARGO_ENV        := PATH="$(RUST_BINDIR):$(PATH)" RUSTC="$(RUSTC)" RUSTDOC="$(RUSTDOC)"
 
 INSTALL ?= install
 DOCKER  ?= docker
@@ -51,7 +52,7 @@ LINUX_amd64_PLATFORM := linux/amd64
 LINUX_amd64_SUFFIX   := linux-amd64
 LINUX_arm64_PLATFORM := linux/arm64
 LINUX_arm64_SUFFIX   := linux-arm64
-LINUX_BUILD_IMAGE    ?= rust:1.95-bullseye
+LINUX_BUILD_IMAGE    ?= rust:1.93-bullseye
 LINUX_SMOKE_IMAGE    ?= debian:bullseye-slim
 LINUX_CACHE_KEY      := $(shell printf '%s' '$(LINUX_BUILD_IMAGE)' | sed 's/[^A-Za-z0-9_.-]/-/g')
 DOCKER_UID           ?= $(shell id -u)
