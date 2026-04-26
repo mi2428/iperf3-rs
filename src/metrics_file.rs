@@ -292,6 +292,11 @@ mod tests {
         let sink = MetricsFileSink::new(&path, MetricsFileFormat::Jsonl).unwrap();
 
         sink.write_event(&MetricEvent::Window(WindowMetrics {
+            timestamp_unix_seconds: 123.0,
+            role: crate::Role::Client,
+            direction: crate::MetricDirection::Sender,
+            stream_count: 2,
+            protocol: crate::TransportProtocol::Tcp,
             duration_seconds: 2.0,
             transferred_bytes: 64.0,
             ..WindowMetrics::default()
@@ -301,6 +306,11 @@ mod tests {
         let contents = fs::read_to_string(&path).unwrap();
         assert!(contents.contains(r#""schema_version":1"#));
         assert!(contents.contains(r#""event":"window""#));
+        assert!(contents.contains(r#""timestamp_unix_seconds":123.0"#));
+        assert!(contents.contains(r#""role":"Client""#));
+        assert!(contents.contains(r#""direction":"Sender""#));
+        assert!(contents.contains(r#""stream_count":2"#));
+        assert!(contents.contains(r#""protocol":"Tcp""#));
         assert!(contents.contains(r#""duration_seconds":2.0"#));
         assert!(contents.contains(r#""transferred_bytes":64.0"#));
         let _ = fs::remove_file(path);

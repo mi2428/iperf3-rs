@@ -281,6 +281,12 @@ fn render_window_prometheus_with_labels(
         metrics.transferred_bytes,
         &label_set,
     );
+    gauge(
+        &mut out,
+        &metric_name(prefix, "window_stream_count"),
+        metrics.stream_count as f64,
+        &label_set,
+    );
     gauge_stats(
         &mut out,
         prefix,
@@ -642,6 +648,7 @@ mod tests {
 
         assert!(rendered.contains("iperf3_window_duration_seconds 10\n"));
         assert!(rendered.contains("iperf3_window_transferred_bytes 1000\n"));
+        assert!(rendered.contains("iperf3_window_stream_count 0\n"));
         assert!(rendered.contains("iperf3_window_bandwidth_mean_bits_per_second 100\n"));
         assert!(rendered.contains("iperf3_window_bandwidth_min_bits_per_second 90\n"));
         assert!(rendered.contains("iperf3_window_bandwidth_max_bits_per_second 110\n"));
@@ -661,6 +668,7 @@ mod tests {
         for name in [
             "iperf3_window_duration_seconds",
             "iperf3_window_transferred_bytes",
+            "iperf3_window_stream_count",
             "iperf3_window_omitted_intervals",
         ] {
             assert!(rendered.contains(&format!("# TYPE {name} gauge\n")));

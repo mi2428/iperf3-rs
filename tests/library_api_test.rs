@@ -92,6 +92,22 @@ fn command_spawn_streams_window_metrics_against_one_off_server() {
             .iter()
             .any(|window| window.bandwidth_bits_per_second.samples > 0)
     );
+    assert!(
+        windows
+            .iter()
+            .all(|window| window.role == iperf3_rs::Role::Client)
+    );
+    assert!(
+        windows
+            .iter()
+            .all(|window| window.direction == MetricDirection::Sender)
+    );
+    assert!(
+        windows
+            .iter()
+            .all(|window| window.protocol == TransportProtocol::Tcp)
+    );
+    assert!(windows.iter().all(|window| window.stream_count > 0));
     assert!(windows.iter().all(|window| window.udp_packets.is_none()));
 }
 
@@ -131,6 +147,12 @@ fn command_run_collects_window_metrics_in_result() {
 
     assert!(!windows.is_empty(), "blocking run should retain windows");
     assert!(windows.iter().any(|window| window.transferred_bytes > 0.0));
+    assert!(
+        windows
+            .iter()
+            .all(|window| window.direction == MetricDirection::Sender)
+    );
+    assert!(windows.iter().all(|window| window.stream_count > 0));
 }
 
 #[test]

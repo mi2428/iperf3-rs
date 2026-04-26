@@ -297,8 +297,9 @@ Protocol-specific fields such as TCP RTT or UDP jitter are exposed as
 `Option<f64>`, so application code can distinguish an observed zero from a
 metric that libiperf did not report for that protocol or traffic direction.
 SCTP runs are identified as `TransportProtocol::Sctp` when libiperf reports
-that protocol. Interval samples also include `role`, `direction`,
-`stream_count`, and `timestamp_unix_seconds` context.
+that protocol. Interval samples include `role`, `direction`, `stream_count`,
+and `timestamp_unix_seconds` context; window summaries carry the same role,
+direction, protocol, stream count, and newest-sample timestamp context.
 
 Applications that want to use their own delivery path can reuse the same
 encoding and file output as the CLI. `PrometheusEncoder` renders interval and
@@ -616,6 +617,7 @@ summary gauges instead of the immediate interval metric names:
 ```text
 iperf3_window_duration_seconds
 iperf3_window_transferred_bytes
+iperf3_window_stream_count
 iperf3_window_bandwidth_mean_bits_per_second
 iperf3_window_bandwidth_min_bits_per_second
 iperf3_window_bandwidth_max_bits_per_second
@@ -651,6 +653,7 @@ Window metric semantics:
 | --- | --- |
 | `*_mean_*`, `*_min_*`, `*_max_*` | Arithmetic mean, minimum, and maximum of gauge-like interval values in the pushed window. Bandwidth mean is derived from total transferred bits divided by total interval duration. |
 | `iperf3_window_transferred_bytes` | Total transferred bytes across the pushed window. |
+| `iperf3_window_stream_count` | Number of libiperf streams represented by the window. |
 | `iperf3_window_tcp_retransmits` | TCP retransmits accumulated across the pushed window. |
 | `iperf3_window_tcp_reorder_events` | TCP reordering events accumulated across the pushed window. |
 | `iperf3_window_udp_*_packets` | UDP packet counters accumulated across the pushed window. |

@@ -163,6 +163,16 @@ impl WindowGaugeStats {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct WindowMetrics {
+    /// Unix timestamp, in seconds, of the last interval sample in this window.
+    pub timestamp_unix_seconds: f64,
+    /// Role of the iperf test that produced this window.
+    pub role: Role,
+    /// Sender/receiver direction represented by this window.
+    pub direction: MetricDirection,
+    /// Number of libiperf streams represented by this window.
+    pub stream_count: usize,
+    /// Transport protocol used by this window.
+    pub protocol: TransportProtocol,
     /// Total interval duration represented by this window.
     pub duration_seconds: f64,
     /// Total bytes transferred across this window.
@@ -503,7 +513,15 @@ fn forward_window_events(rx: Receiver<Metrics>, tx: Sender<MetricEvent>, interva
                 }
 
                 match rx.recv_timeout(flush_at - now) {
-                    Ok(metrics) => window.push(metrics),
+                    Ok(metrics) => {
+                        if window_context_changes(&window, &metrics) {
+                            if !flush_window_event(&tx, &mut window) {
+                                break;
+                            }
+                            deadline = Some(window_deadline(interval));
+                        }
+                        window.push(metrics);
+                    }
                     Err(RecvTimeoutError::Timeout) => {
                         if !flush_window_event(&tx, &mut window) {
                             break;
@@ -516,11 +534,7 @@ fn forward_window_events(rx: Receiver<Metrics>, tx: Sender<MetricEvent>, interva
             None => match rx.recv() {
                 Ok(metrics) => {
                     window.push(metrics);
-                    deadline = Some(
-                        Instant::now()
-                            .checked_add(interval)
-                            .unwrap_or_else(Instant::now),
-                    );
+                    deadline = Some(window_deadline(interval));
                 }
                 Err(_) => break,
             },
@@ -536,6 +550,26 @@ fn flush_window_event(tx: &Sender<MetricEvent>, window: &mut Vec<Metrics>) -> bo
     };
     window.clear();
     tx.send(MetricEvent::Window(metrics)).is_ok()
+}
+
+fn window_deadline(interval: Duration) -> Instant {
+    Instant::now()
+        .checked_add(interval)
+        .unwrap_or_else(Instant::now)
+}
+
+fn window_context_changes(window: &[Metrics], metrics: &Metrics) -> bool {
+    window
+        .first()
+        .map(|first| !same_window_context(first, metrics))
+        .unwrap_or(false)
+}
+
+fn same_window_context(left: &Metrics, right: &Metrics) -> bool {
+    left.role == right.role
+        && left.direction == right.direction
+        && left.stream_count == right.stream_count
+        && left.protocol == right.protocol
 }
 
 #[cfg(feature = "pushgateway")]
@@ -590,6 +624,10 @@ fn push_window_metrics(
                             result = Err(err);
                             break;
                         }
+                        if window_context_changes(&window, &metrics) {
+                            flush_window_metrics(&sinks, &mut window);
+                            deadline = Some(window_deadline(interval));
+                        }
                         window.push(metrics);
                     }
                     Err(RecvTimeoutError::Timeout) => {
@@ -606,11 +644,7 @@ fn push_window_metrics(
                         break;
                     }
                     window.push(metrics);
-                    deadline = Some(
-                        Instant::now()
-                            .checked_add(interval)
-                            .unwrap_or_else(Instant::now),
-                    );
+                    deadline = Some(window_deadline(interval));
                 }
                 Err(_) => break,
             },
@@ -810,6 +844,9 @@ fn enqueue_latest(target: &CallbackTarget, metrics: Metrics) {
 ///
 /// Counter-like fields are summed. Gauge-like fields return mean/min/max
 /// statistics. Invalid and negative counter values are treated as zero.
+/// The returned context is copied from the first sample, with the timestamp
+/// taken from the last sample. Built-in window streams flush before context
+/// changes so a window does not mix role, direction, stream count, or protocol.
 pub fn aggregate_window(samples: &[Metrics]) -> Option<WindowMetrics> {
     if samples.is_empty() {
         return None;
@@ -831,6 +868,7 @@ pub fn aggregate_window(samples: &[Metrics]) -> Option<WindowMetrics> {
     let mut udp_lost_packets = OptionalCounter::default();
     let mut udp_out_of_order_packets = OptionalCounter::default();
     let mut omitted_intervals = 0.0;
+    let context = &samples[0];
 
     for metrics in samples {
         duration_seconds += finite_nonnegative(metrics.interval_duration_seconds);
@@ -859,6 +897,14 @@ pub fn aggregate_window(samples: &[Metrics]) -> Option<WindowMetrics> {
     };
 
     Some(WindowMetrics {
+        timestamp_unix_seconds: samples
+            .last()
+            .map(|metrics| metrics.timestamp_unix_seconds)
+            .unwrap_or_default(),
+        role: context.role,
+        direction: context.direction,
+        stream_count: context.stream_count,
+        protocol: context.protocol,
         duration_seconds,
         transferred_bytes,
         bandwidth_bits_per_second: bandwidth.finish_with_mean(bandwidth_mean),
@@ -1215,6 +1261,11 @@ mod tests {
             metric_event_stream(rx, MetricsMode::Window(Duration::from_secs(60)));
 
         tx.send(Metrics {
+            timestamp_unix_seconds: 10.0,
+            role: Role::Client,
+            direction: MetricDirection::Sender,
+            stream_count: 2,
+            protocol: TransportProtocol::Tcp,
             transferred_bytes: 4.0,
             bandwidth_bits_per_second: 32.0,
             interval_duration_seconds: 1.0,
@@ -1222,6 +1273,11 @@ mod tests {
         })
         .unwrap();
         tx.send(Metrics {
+            timestamp_unix_seconds: 11.0,
+            role: Role::Client,
+            direction: MetricDirection::Sender,
+            stream_count: 2,
+            protocol: TransportProtocol::Tcp,
             transferred_bytes: 8.0,
             bandwidth_bits_per_second: 64.0,
             interval_duration_seconds: 1.0,
@@ -1236,6 +1292,54 @@ mod tests {
         assert_eq!(window.transferred_bytes, 12.0);
         assert_eq!(window.duration_seconds, 2.0);
         assert_eq!(window.bandwidth_bits_per_second.mean, 48.0);
+        assert_eq!(window.timestamp_unix_seconds, 11.0);
+        assert_eq!(window.role, Role::Client);
+        assert_eq!(window.direction, MetricDirection::Sender);
+        assert_eq!(window.stream_count, 2);
+        assert_eq!(window.protocol, TransportProtocol::Tcp);
+        worker.join().unwrap();
+        assert_eq!(stream.next(), None);
+    }
+
+    #[test]
+    fn metric_event_stream_splits_windows_when_context_changes() {
+        let (tx, rx) = unbounded::<Metrics>();
+        let (mut stream, worker) =
+            metric_event_stream(rx, MetricsMode::Window(Duration::from_secs(60)));
+
+        tx.send(Metrics {
+            role: Role::Client,
+            direction: MetricDirection::Sender,
+            stream_count: 1,
+            protocol: TransportProtocol::Tcp,
+            transferred_bytes: 4.0,
+            interval_duration_seconds: 1.0,
+            ..Metrics::default()
+        })
+        .unwrap();
+        tx.send(Metrics {
+            role: Role::Client,
+            direction: MetricDirection::Receiver,
+            stream_count: 1,
+            protocol: TransportProtocol::Tcp,
+            transferred_bytes: 8.0,
+            interval_duration_seconds: 1.0,
+            ..Metrics::default()
+        })
+        .unwrap();
+        drop(tx);
+
+        let Some(MetricEvent::Window(first)) = stream.next() else {
+            panic!("expected sender window");
+        };
+        let Some(MetricEvent::Window(second)) = stream.next() else {
+            panic!("expected receiver window");
+        };
+
+        assert_eq!(first.transferred_bytes, 4.0);
+        assert_eq!(first.direction, MetricDirection::Sender);
+        assert_eq!(second.transferred_bytes, 8.0);
+        assert_eq!(second.direction, MetricDirection::Receiver);
         worker.join().unwrap();
         assert_eq!(stream.next(), None);
     }
@@ -1286,6 +1390,11 @@ mod tests {
     fn aggregate_window_summarizes_interval_samples_by_metric_semantics() {
         let window = aggregate_window(&[
             Metrics {
+                timestamp_unix_seconds: 10.0,
+                role: Role::Client,
+                direction: MetricDirection::Sender,
+                stream_count: 2,
+                protocol: TransportProtocol::Tcp,
                 transferred_bytes: 100.0,
                 bandwidth_bits_per_second: 800.0,
                 tcp_retransmits: Some(1.0),
@@ -1296,6 +1405,11 @@ mod tests {
                 ..Metrics::default()
             },
             Metrics {
+                timestamp_unix_seconds: 11.0,
+                role: Role::Client,
+                direction: MetricDirection::Sender,
+                stream_count: 2,
+                protocol: TransportProtocol::Tcp,
                 transferred_bytes: 900.0,
                 bandwidth_bits_per_second: 2400.0,
                 tcp_retransmits: Some(2.0),
@@ -1311,6 +1425,11 @@ mod tests {
 
         assert_eq!(window.duration_seconds, 4.0);
         assert_eq!(window.transferred_bytes, 1000.0);
+        assert_eq!(window.timestamp_unix_seconds, 11.0);
+        assert_eq!(window.role, Role::Client);
+        assert_eq!(window.direction, MetricDirection::Sender);
+        assert_eq!(window.stream_count, 2);
+        assert_eq!(window.protocol, TransportProtocol::Tcp);
         assert_eq!(
             window.bandwidth_bits_per_second,
             WindowGaugeStats {
