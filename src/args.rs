@@ -26,7 +26,7 @@ pub struct AppOptions {
     pub push_timeout: Duration,
     pub push_retries: u32,
     pub push_user_agent: String,
-    pub push_metric_prefix: String,
+    pub metrics_prefix: String,
     pub push_interval: Option<Duration>,
     pub push_delete_on_exit: bool,
     pub metrics_file: Option<PathBuf>,
@@ -61,7 +61,7 @@ fn extract_app_options_with_env(
                 push_timeout: PushGatewayConfig::default_timeout(),
                 push_retries: PushGatewayConfig::DEFAULT_RETRIES,
                 push_user_agent: PushGatewayConfig::default_user_agent(),
-                push_metric_prefix: PushGatewayConfig::DEFAULT_METRIC_PREFIX.to_owned(),
+                metrics_prefix: PushGatewayConfig::DEFAULT_METRIC_PREFIX.to_owned(),
                 push_interval: None,
                 push_delete_on_exit: false,
                 metrics_file: None,
@@ -92,10 +92,13 @@ fn extract_app_options_with_env(
         .map(|raw| parse_user_agent("PUSH_USER_AGENT", &raw))
         .transpose()?
         .unwrap_or_else(PushGatewayConfig::default_user_agent);
-    let mut push_metric_prefix = get_env("PUSH_METRIC_PREFIX")
-        .map(|raw| parse_metric_prefix("PUSH_METRIC_PREFIX", &raw))
-        .transpose()?
-        .unwrap_or_else(|| PushGatewayConfig::DEFAULT_METRIC_PREFIX.to_owned());
+    let mut metrics_prefix = match get_env("METRICS_PREFIX") {
+        Some(raw) => parse_metric_prefix("METRICS_PREFIX", &raw)?,
+        None => get_env("PUSH_METRIC_PREFIX")
+            .map(|raw| parse_metric_prefix("PUSH_METRIC_PREFIX", &raw))
+            .transpose()?
+            .unwrap_or_else(|| PushGatewayConfig::DEFAULT_METRIC_PREFIX.to_owned()),
+    };
     let mut push_interval = get_env("PUSH_INTERVAL")
         .map(|raw| parse_duration_option("PUSH_INTERVAL", &raw))
         .transpose()?;
@@ -114,6 +117,7 @@ fn extract_app_options_with_env(
     let mut saw_push_label = !push_labels.is_empty();
     let mut saw_push_setting = false;
     let mut saw_metrics_setting = raw_metrics_format.is_some();
+    let mut saw_metric_prefix = false;
 
     let mut i = 0;
     while i < rest.len() {
@@ -148,8 +152,12 @@ fn extract_app_options_with_env(
                     saw_push_setting = true;
                 }
                 "--push.metric-prefix" => {
-                    push_metric_prefix = parse_metric_prefix("--push.metric-prefix", value)?;
-                    saw_push_setting = true;
+                    metrics_prefix = parse_metric_prefix("--push.metric-prefix", value)?;
+                    saw_metric_prefix = true;
+                }
+                "--metrics.prefix" => {
+                    metrics_prefix = parse_metric_prefix("--metrics.prefix", value)?;
+                    saw_metric_prefix = true;
                 }
                 "--push.interval" => {
                     push_interval = Some(parse_duration_option("--push.interval", value)?);
@@ -206,11 +214,18 @@ fn extract_app_options_with_env(
                 saw_push_setting = true;
             }
             "--push.metric-prefix" => {
-                push_metric_prefix = parse_metric_prefix(
+                metrics_prefix = parse_metric_prefix(
                     "--push.metric-prefix",
                     &take_value(&rest, &mut i, "--push.metric-prefix")?,
                 )?;
-                saw_push_setting = true;
+                saw_metric_prefix = true;
+            }
+            "--metrics.prefix" => {
+                metrics_prefix = parse_metric_prefix(
+                    "--metrics.prefix",
+                    &take_value(&rest, &mut i, "--metrics.prefix")?,
+                )?;
+                saw_metric_prefix = true;
             }
             "--push.interval" => {
                 push_interval = Some(parse_duration_option(
@@ -254,6 +269,9 @@ fn extract_app_options_with_env(
     if metrics_file.is_none() && saw_metrics_setting {
         bail!("metrics settings require --metrics.file or METRICS_FILE");
     }
+    if push_url.is_none() && metrics_file.is_none() && saw_metric_prefix {
+        bail!("metric prefix requires --metrics.file, METRICS_FILE, --push.url, or PUSH_URL");
+    }
     if push_url.is_some() && push_job.is_empty() {
         bail!("--push.job must not be empty when --push.url is set");
     }
@@ -267,7 +285,7 @@ fn extract_app_options_with_env(
             push_timeout,
             push_retries,
             push_user_agent,
-            push_metric_prefix,
+            metrics_prefix,
             push_interval,
             push_delete_on_exit,
             metrics_file,
@@ -622,7 +640,7 @@ mod tests {
             "--push.retries".to_owned(),
             "2".to_owned(),
             "--push.user-agent=iperf3-rs/custom".to_owned(),
-            "--push.metric-prefix".to_owned(),
+            "--metrics.prefix".to_owned(),
             "nettest".to_owned(),
             "--push.interval=10s".to_owned(),
             "--push.delete-on-exit".to_owned(),
@@ -647,7 +665,7 @@ mod tests {
         assert_eq!(app.push_timeout, Duration::from_secs(2));
         assert_eq!(app.push_retries, 2);
         assert_eq!(app.push_user_agent, "iperf3-rs/custom");
-        assert_eq!(app.push_metric_prefix, "nettest");
+        assert_eq!(app.metrics_prefix, "nettest");
         assert_eq!(app.push_interval, Some(Duration::from_secs(10)));
         assert!(app.push_delete_on_exit);
         assert_eq!(app.metrics_file, Some(PathBuf::from("metrics.jsonl")));
@@ -726,6 +744,7 @@ mod tests {
             "--push.interval",
             "--metrics.file",
             "--metrics.format",
+            "--metrics.prefix",
         ] {
             let args = vec!["iperf3-rs".to_owned(), option.to_owned()];
 
@@ -812,7 +831,7 @@ mod tests {
             "PUSH_TIMEOUT" => Some("500ms".to_owned()),
             "PUSH_RETRIES" => Some("3".to_owned()),
             "PUSH_USER_AGENT" => Some("iperf3-rs/env".to_owned()),
-            "PUSH_METRIC_PREFIX" => Some("nettest".to_owned()),
+            "METRICS_PREFIX" => Some("nettest".to_owned()),
             "PUSH_INTERVAL" => Some("2m".to_owned()),
             "PUSH_DELETE_ON_EXIT" => Some("yes".to_owned()),
             "METRICS_FILE" => Some("metrics.jsonl".to_owned()),
@@ -825,7 +844,7 @@ mod tests {
         assert_eq!(app.push_timeout, Duration::from_millis(500));
         assert_eq!(app.push_retries, 3);
         assert_eq!(app.push_user_agent, "iperf3-rs/env");
-        assert_eq!(app.push_metric_prefix, "nettest");
+        assert_eq!(app.metrics_prefix, "nettest");
         assert_eq!(app.push_interval, Some(Duration::from_secs(120)));
         assert!(app.push_delete_on_exit);
         assert_eq!(app.metrics_file, Some(PathBuf::from("metrics.jsonl")));
@@ -839,7 +858,6 @@ mod tests {
             "--push.timeout=5s",
             "--push.retries=1",
             "--push.user-agent=iperf3-rs/test",
-            "--push.metric-prefix=nettest",
             "--push.interval=10s",
             "--push.delete-on-exit",
         ] {
@@ -850,6 +868,34 @@ mod tests {
                 err.to_string()
                     .contains("push settings require --push.url or PUSH_URL"),
                 "{option} should require Pushgateway to be enabled"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_deprecated_push_metric_prefix_alias_for_file_metrics() {
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "--metrics.file=metrics.prom".to_owned(),
+            "--push.metric-prefix=nettest".to_owned(),
+        ];
+
+        let (app, iperf) = extract_app_options_with_env(args, |_| None).unwrap();
+        assert!(app.push_url.is_none());
+        assert_eq!(app.metrics_file, Some(PathBuf::from("metrics.prom")));
+        assert_eq!(app.metrics_prefix, "nettest");
+        assert_eq!(iperf, ["iperf3-rs"]);
+    }
+
+    #[test]
+    fn metrics_prefix_requires_an_output_sink() {
+        for option in ["--metrics.prefix=nettest", "--push.metric-prefix=nettest"] {
+            let args = vec!["iperf3-rs".to_owned(), option.to_owned()];
+
+            let err = extract_app_options_with_env(args, |_| None).unwrap_err();
+            assert!(
+                err.to_string().contains("metric prefix requires"),
+                "{option} should require a metrics output sink"
             );
         }
     }
@@ -894,6 +940,11 @@ mod tests {
                 "invalid --push.metric-prefix metric prefix",
             ),
             (
+                "--metrics.prefix",
+                "bad-prefix",
+                "invalid --metrics.prefix metric prefix",
+            ),
+            (
                 "--push.interval",
                 "0",
                 "--push.interval must be greater than zero",
@@ -906,8 +957,8 @@ mod tests {
         ] {
             let args = vec![
                 "iperf3-rs".to_owned(),
-                "--push.url".to_owned(),
-                "localhost:9091".to_owned(),
+                "--metrics.file".to_owned(),
+                "metrics.prom".to_owned(),
                 option.to_owned(),
                 value.to_owned(),
             ];

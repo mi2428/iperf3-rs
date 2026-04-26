@@ -215,15 +215,16 @@ iperf3-rs \
   --push.label scenario=tcp-file \
   --metrics.file "$metrics" \
   --metrics.format prometheus \
+  --metrics.prefix nettest \
   -c server-rs -t 3 -i 1 > "$stdout"
 test -s "$metrics"
-awk '$1 == "iperf3_bytes" && $2 > 0 { found=1 } END { exit found ? 0 : 1 }' "$metrics" || {
-  echo "missing positive iperf3_bytes in metrics file" >&2
+awk '$1 == "nettest_bytes" && $2 > 0 { found=1 } END { exit found ? 0 : 1 }' "$metrics" || {
+  echo "missing positive nettest_bytes in metrics file" >&2
   cat "$metrics" >&2
   exit 1
 }
-awk '$1 == "iperf3_bandwidth" && $2 > 0 { found=1 } END { exit found ? 0 : 1 }' "$metrics" || {
-  echo "missing positive iperf3_bandwidth in metrics file" >&2
+awk '$1 == "nettest_bandwidth" && $2 > 0 { found=1 } END { exit found ? 0 : 1 }' "$metrics" || {
+  echo "missing positive nettest_bandwidth in metrics file" >&2
   cat "$metrics" >&2
   exit 1
 }
@@ -239,7 +240,7 @@ cat "$stdout"
     wait_for_pushgateway_metrics(
         &project,
         FILE_SCENARIO,
-        &["iperf3_bytes", "iperf3_bandwidth"],
+        &["nettest_bytes", "nettest_bandwidth"],
     );
 
     // Delete-on-exit check: require retained metrics to appear while the client

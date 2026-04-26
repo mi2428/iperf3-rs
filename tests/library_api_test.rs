@@ -116,7 +116,7 @@ fn cli_writes_jsonl_metrics_file_without_replacing_stdout() {
     let _server = OneOffServer::start(port);
     let metrics_file = temp_metrics_path("jsonl");
 
-    let output = run_cli_metrics_file_client(port, &metrics_file);
+    let output = run_cli_metrics_file_client(port, &metrics_file, &[]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("[ ID]"));
     assert!(stdout.contains("sender"));
@@ -128,6 +128,33 @@ fn cli_writes_jsonl_metrics_file_without_replacing_stdout() {
             .any(|line| line.contains(r#""event":"interval""#))
     );
     assert!(metrics.contains(r#""bandwidth_bits_per_second":"#));
+    let _ = fs::remove_file(metrics_file);
+}
+
+#[test]
+fn cli_writes_prometheus_metrics_file_with_custom_prefix() {
+    let port = free_loopback_port();
+    let _server = OneOffServer::start(port);
+    let metrics_file = temp_metrics_path("prom");
+
+    let output = run_cli_metrics_file_client(
+        port,
+        &metrics_file,
+        &[
+            "--metrics.format",
+            "prometheus",
+            "--metrics.prefix",
+            "nettest",
+        ],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[ ID]"));
+    assert!(stdout.contains("sender"));
+
+    let metrics = fs::read_to_string(&metrics_file).unwrap();
+    assert!(metrics.contains("nettest_bytes "));
+    assert!(metrics.contains("nettest_bandwidth "));
+    assert!(!metrics.contains("iperf3_bytes "));
     let _ = fs::remove_file(metrics_file);
 }
 
@@ -181,22 +208,27 @@ fn try_run_library_direct_push_client(
     Ok(())
 }
 
-fn run_cli_metrics_file_client(port: u16, metrics_file: &Path) -> Output {
+fn run_cli_metrics_file_client(port: u16, metrics_file: &Path, extra_args: &[&str]) -> Output {
     let mut last_output = None;
     for _ in 0..20 {
+        let port = port.to_string();
+        let metrics_file = metrics_file.to_string_lossy();
+        let mut args = vec![
+            "-c",
+            "127.0.0.1",
+            "-p",
+            port.as_str(),
+            "-t",
+            "1",
+            "-i",
+            "1",
+            "--metrics.file",
+            metrics_file.as_ref(),
+        ];
+        args.extend_from_slice(extra_args);
+
         let output = Command::new(env!("CARGO_BIN_EXE_iperf3-rs"))
-            .args([
-                "-c",
-                "127.0.0.1",
-                "-p",
-                &port.to_string(),
-                "-t",
-                "1",
-                "-i",
-                "1",
-                "--metrics.file",
-                metrics_file.to_string_lossy().as_ref(),
-            ])
+            .args(args)
             .output()
             .expect("run iperf3-rs client with metrics file");
         if output.status.success() {

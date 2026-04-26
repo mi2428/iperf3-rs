@@ -400,8 +400,12 @@ Push options:
 --push.user-agent VALUE
     HTTP User-Agent for Pushgateway requests. Defaults to iperf3-rs/<version>.
 
+--metrics.prefix PREFIX
+    Prometheus metric name prefix for Pushgateway and Prometheus file output.
+    Defaults to iperf3.
+
 --push.metric-prefix PREFIX
-    Prometheus metric name prefix. Defaults to iperf3.
+    Deprecated alias for --metrics.prefix.
 
 --push.interval DURATION
     Aggregate libiperf interval samples for this duration before pushing window
@@ -427,6 +431,7 @@ PUSH_LABELS=KEY=VALUE,...
 PUSH_TIMEOUT=DURATION
 PUSH_RETRIES=N
 PUSH_USER_AGENT=VALUE
+METRICS_PREFIX=PREFIX
 PUSH_METRIC_PREFIX=PREFIX
 PUSH_INTERVAL=DURATION
 PUSH_DELETE_ON_EXIT=BOOL
@@ -436,6 +441,8 @@ METRICS_FORMAT=FORMAT
 
 CLI values override environment defaults. `PUSH_LABELS` are applied before
 `--push.label` values. Duplicate label names are rejected.
+`PUSH_METRIC_PREFIX` is kept as a deprecated alias; `METRICS_PREFIX` is the
+primary environment name and wins when both are set.
 Boolean environment values accept `true`, `false`, `1`, `0`, `yes`, `no`, `on`,
 and `off`.
 
@@ -479,7 +486,8 @@ iperf3-rs \
   -t 10 \
   -i 1 \
   --metrics.file iperf3.prom \
-  --metrics.format prometheus
+  --metrics.format prometheus \
+  --metrics.prefix nettest
 ```
 
 File output can be used by itself or together with Pushgateway export. It never
@@ -488,7 +496,7 @@ upstream libiperf.
 
 ### Metric names
 
-With the default `--push.metric-prefix iperf3`, iperf3-rs emits immediate
+With the default `--metrics.prefix iperf3`, iperf3-rs emits immediate
 interval gauges when `--push.interval` is not set:
 
 ```text
@@ -590,7 +598,8 @@ iperf3-rs \
   --push.interval 10s
 ```
 
-Use a custom prefix when multiple tools share a Pushgateway:
+Use a custom prefix when multiple tools share a Pushgateway or textfile
+collector directory:
 
 ```sh
 iperf3-rs \
@@ -598,7 +607,7 @@ iperf3-rs \
   -t 10 \
   -i 1 \
   --push.url http://127.0.0.1:9091 \
-  --push.metric-prefix nettest
+  --metrics.prefix nettest
 ```
 
 This emits `nettest_bytes`, `nettest_bandwidth`, and so on.

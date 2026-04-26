@@ -57,7 +57,7 @@ fn run() -> Result<()> {
             timeout: app.push_timeout,
             retries: app.push_retries,
             user_agent: app.push_user_agent,
-            metric_prefix: app.push_metric_prefix,
+            metric_prefix: app.metrics_prefix.clone(),
             delete_on_finish: app.push_delete_on_exit,
         })?;
         sinks.pushgateway(sink, app.push_interval);
@@ -66,7 +66,7 @@ fn run() -> Result<()> {
         sinks.file(MetricsFileSink::new(
             metrics_file,
             app.metrics_format,
-            PushGatewayConfig::DEFAULT_METRIC_PREFIX,
+            app.metrics_prefix,
         )?);
     }
 

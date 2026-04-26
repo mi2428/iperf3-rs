@@ -49,8 +49,13 @@ pub fn render_wrapper_help() -> String {
                 continuation: &[],
             },
             HelpRow {
-                value: "--push.metric-prefix P",
+                value: "--metrics.prefix P",
                 description: "Prometheus metric name prefix (default: iperf3)",
+                continuation: &[],
+            },
+            HelpRow {
+                value: "--push.metric-prefix P",
+                description: "deprecated alias for --metrics.prefix",
                 continuation: &[],
             },
             HelpRow {
@@ -111,8 +116,13 @@ pub fn render_wrapper_help() -> String {
                 continuation: &[],
             },
             HelpRow {
+                value: "METRICS_PREFIX=P",
+                description: "default value for --metrics.prefix",
+                continuation: &[],
+            },
+            HelpRow {
                 value: "PUSH_METRIC_PREFIX=P",
-                description: "default value for --push.metric-prefix",
+                description: "deprecated alias for METRICS_PREFIX",
                 continuation: &[],
             },
             HelpRow {
@@ -189,12 +199,14 @@ mod tests {
         assert!(help.contains("--push.timeout DURATION"));
         assert!(help.contains("--push.retries N"));
         assert!(help.contains("--push.user-agent VALUE"));
+        assert!(help.contains("--metrics.prefix P"));
         assert!(help.contains("--push.metric-prefix P"));
         assert!(help.contains("--push.interval DURATION"));
         assert!(help.contains("--push.delete-on-exit"));
         assert!(help.contains("--metrics.file PATH"));
         assert!(help.contains("--metrics.format FORMAT"));
         assert!(help.contains("PUSH_LABELS=KEY=VALUE,..."));
+        assert!(help.contains("METRICS_PREFIX=P"));
         assert!(help.contains("PUSH_METRIC_PREFIX=P"));
         assert!(help.contains("PUSH_INTERVAL=DURATION"));
         assert!(help.contains("PUSH_DELETE_ON_EXIT=BOOL"));
