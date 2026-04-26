@@ -42,6 +42,7 @@ pub struct IperfCommand {
     program: String,
     args: Vec<String>,
     metrics_mode: MetricsMode,
+    allow_unbounded_server: bool,
 }
 
 impl IperfCommand {
@@ -51,6 +52,7 @@ impl IperfCommand {
             program: "iperf3-rs".to_owned(),
             args: Vec::new(),
             metrics_mode: MetricsMode::Disabled,
+            allow_unbounded_server: false,
         }
     }
 
@@ -79,6 +81,18 @@ impl IperfCommand {
     /// Enable or disable callback metrics for this run.
     pub fn metrics(&mut self, mode: MetricsMode) -> &mut Self {
         self.metrics_mode = mode;
+        self
+    }
+
+    /// Allow `-s` server runs that do not include iperf's one-off option.
+    ///
+    /// Long-lived servers keep libiperf running on the worker thread and keep
+    /// this crate's process-wide libiperf lock held. The default is therefore
+    /// conservative: server mode must use `-1`/`--one-off` unless this opt-in is
+    /// set. The CLI does not use this high-level API, so normal `iperf3-rs -s`
+    /// behavior is unchanged.
+    pub fn allow_unbounded_server(&mut self, allow: bool) -> &mut Self {
+        self.allow_unbounded_server = allow;
         self
     }
 
@@ -155,6 +169,7 @@ impl IperfResult {
 
 /// Handle for an iperf run executing on a worker thread.
 #[derive(Debug)]
+#[must_use = "dropping RunningIperf detaches the worker; call wait to observe the iperf result"]
 pub struct RunningIperf {
     handle: JoinHandle<Result<IperfResult>>,
     metrics: Option<MetricsStream>,
@@ -233,6 +248,7 @@ fn setup_run(command: IperfCommand) -> Result<RunSetup> {
     let mut test = IperfTest::new()?;
     test.parse_arguments(&command.argv())?;
     let role = test.role();
+    validate_server_lifecycle(&command, &test, role)?;
 
     let (callback, stream, worker) = match command.metrics_mode.callback_queue() {
         Some(queue) => {
@@ -286,6 +302,15 @@ fn metrics_mode_is_valid(mode: MetricsMode) -> bool {
     !matches!(mode, MetricsMode::Window(interval) if interval.is_zero())
 }
 
+fn validate_server_lifecycle(command: &IperfCommand, test: &IperfTest, role: Role) -> Result<()> {
+    if role == Role::Server && !test.one_off() && !command.allow_unbounded_server {
+        return Err(Error::invalid_argument(
+            "IperfCommand server mode must use -1/--one-off or opt in with allow_unbounded_server(true)",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(kani)]
 mod verification {
     use std::time::Duration;
@@ -332,6 +357,46 @@ mod tests {
         command.program("iperf3").arg("-v");
 
         assert_eq!(command.argv(), vec!["iperf3".to_owned(), "-v".to_owned()]);
+    }
+
+    #[test]
+    fn unbounded_server_mode_is_rejected_by_default() {
+        let command = {
+            let mut command = IperfCommand::new();
+            command.arg("-s");
+            command
+        };
+
+        let err = match setup_run(command) {
+            Ok(_) => panic!("unbounded server should be rejected"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), ErrorKind::InvalidArgument);
+        assert!(err.to_string().contains("allow_unbounded_server"));
+    }
+
+    #[test]
+    fn one_off_server_mode_is_allowed() {
+        let command = {
+            let mut command = IperfCommand::new();
+            command.args(["-s", "-1"]);
+            command
+        };
+
+        let setup = setup_run(command).unwrap();
+        assert_eq!(setup.role, Role::Server);
+    }
+
+    #[test]
+    fn unbounded_server_mode_can_be_explicitly_allowed() {
+        let command = {
+            let mut command = IperfCommand::new();
+            command.arg("-s").allow_unbounded_server(true);
+            command
+        };
+
+        let setup = setup_run(command).unwrap();
+        assert_eq!(setup.role, Role::Server);
     }
 
     #[test]

@@ -143,6 +143,10 @@ impl IperfTest {
         }
     }
 
+    pub(crate) fn one_off(&self) -> bool {
+        (unsafe { ffi::iperf_get_test_one_off(self.as_ptr()) }) != 0
+    }
+
     /// Return libiperf's retained JSON result, when JSON output was requested.
     pub fn json_output(&self) -> Option<String> {
         let ptr = unsafe { ffi::iperf_get_test_json_output_string(self.as_ptr()) };
@@ -195,9 +199,8 @@ impl IperfTest {
 
             unsafe { ffi::iperf_reset_test(self.as_ptr()) };
 
-            let one_off = unsafe { ffi::iperf_get_test_one_off(self.as_ptr()) } != 0;
             let auth_error = unsafe { ffi::iperf3rs_is_auth_test_error() } != 0;
-            if one_off && rc != 2 {
+            if self.one_off() && rc != 2 {
                 // Keep upstream's special-case behavior: authentication failures
                 // in one-off mode should not terminate the server loop.
                 if rc < 0 && auth_error {

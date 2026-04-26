@@ -49,7 +49,10 @@
 //! High-level [`IperfCommand`] runs are serialized inside the process. libiperf
 //! has process-global state for errors, signal handling, and output hooks, so
 //! this crate avoids promising in-process parallelism that upstream does not
-//! clearly guarantee. Use separate processes for parallel independent tests.
+//! clearly guarantee. Server runs must use iperf's one-off mode (`-s -1`) by
+//! default; opt in with [`IperfCommand::allow_unbounded_server`] only when the
+//! process is dedicated to that long-lived server. Use separate processes for
+//! parallel independent tests.
 
 mod args;
 #[doc(hidden)]

@@ -281,8 +281,11 @@ or loss thresholds are not met.
 
 The first public API keeps high-level `IperfCommand` runs serialized inside one
 process because libiperf still has process-global error, signal, and output
-state. For local client/server interop tests, run the peer as a separate
-process, container, or VM.
+state. Server mode must use iperf's one-off option (`-s -1`) by default, so a
+library call cannot accidentally hold the process-wide libiperf lock forever.
+Use `IperfCommand::allow_unbounded_server(true)` only when the Rust process is
+dedicated to that long-lived server. For local client/server interop tests, run
+the peer as a separate process, container, or VM.
 
 ## Export Metrics
 
