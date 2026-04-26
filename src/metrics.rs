@@ -382,6 +382,106 @@ fn finite_nonnegative(value: f64) -> f64 {
     }
 }
 
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    // Keep symbolic domains small and concrete enough that Kani explores the
+    // aggregation logic itself instead of spending the budget on floating-point
+    // arithmetic edge cases already handled by `finite_nonnegative`.
+    #[kani::proof]
+    fn empty_window_has_no_summary() {
+        assert!(aggregate_window(&[]).is_none());
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn window_counters_are_nonnegative_for_bounded_inputs() {
+        let sample = Metrics {
+            bytes: f64::from(kani::any::<i16>()),
+            tcp_retransmits: f64::from(kani::any::<i16>()),
+            tcp_reorder_events: f64::from(kani::any::<i16>()),
+            udp_packets: f64::from(kani::any::<i16>()),
+            udp_lost_packets: f64::from(kani::any::<i16>()),
+            udp_out_of_order_packets: f64::from(kani::any::<i16>()),
+            interval_duration_seconds: f64::from(kani::any::<i16>()),
+            omitted: f64::from(kani::any::<i16>()),
+            ..Metrics::default()
+        };
+
+        let window = aggregate_window(&[sample]).expect("nonempty windows summarize");
+
+        assert!(window.duration_seconds >= 0.0);
+        assert!(window.transferred_bytes >= 0.0);
+        assert!(window.tcp_retransmits >= 0.0);
+        assert!(window.tcp_reorder_events >= 0.0);
+        assert!(window.udp_packets >= 0.0);
+        assert!(window.udp_lost_packets >= 0.0);
+        assert!(window.udp_out_of_order_packets >= 0.0);
+        assert!(window.omitted_intervals >= 0.0);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn window_bandwidth_mean_uses_total_bytes_over_duration_for_unit_intervals() {
+        let bytes_a: u8 = kani::any();
+        let bytes_b: u8 = kani::any();
+
+        let samples = [
+            metrics_with_unit_duration(bytes_a),
+            metrics_with_unit_duration(bytes_b),
+        ];
+        let window = aggregate_window(&samples).expect("nonempty windows summarize");
+
+        let expected = (f64::from(bytes_a) + f64::from(bytes_b)) / 2.0;
+        assert_eq!(window.bandwidth_bytes_per_second.mean, expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn window_gauge_statistics_remain_ordered_for_consistent_samples() {
+        let bytes_a: u8 = kani::any();
+        let bytes_b: u8 = kani::any();
+        let rtt_a: u8 = kani::any();
+        let rtt_b: u8 = kani::any();
+
+        let samples = [
+            Metrics {
+                bytes: f64::from(bytes_a),
+                bandwidth_bits_per_second: f64::from(bytes_a) * 8.0,
+                tcp_rtt_seconds: f64::from(rtt_a),
+                interval_duration_seconds: 1.0,
+                ..Metrics::default()
+            },
+            Metrics {
+                bytes: f64::from(bytes_b),
+                bandwidth_bits_per_second: f64::from(bytes_b) * 8.0,
+                tcp_rtt_seconds: f64::from(rtt_b),
+                interval_duration_seconds: 1.0,
+                ..Metrics::default()
+            },
+        ];
+        let window = aggregate_window(&samples).expect("nonempty windows summarize");
+
+        assert_ordered(window.bandwidth_bytes_per_second);
+        assert_ordered(window.tcp_rtt_seconds);
+    }
+
+    fn metrics_with_unit_duration(bytes: u8) -> Metrics {
+        Metrics {
+            bytes: f64::from(bytes),
+            bandwidth_bits_per_second: f64::from(bytes) * 8.0,
+            interval_duration_seconds: 1.0,
+            ..Metrics::default()
+        }
+    }
+
+    fn assert_ordered(stats: WindowGaugeStats) {
+        assert!(stats.min <= stats.mean);
+        assert!(stats.mean <= stats.max);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -474,6 +574,33 @@ mod tests {
         assert_eq!(window.tcp_retransmits, 3.0);
         assert_eq!(window.udp_packets, 5.0);
         assert_eq!(window.omitted_intervals, 1.0);
+    }
+
+    #[test]
+    fn aggregate_window_falls_back_to_observed_bandwidth_when_duration_is_zero() {
+        let window = aggregate_window(&[
+            Metrics {
+                bytes: 100.0,
+                bandwidth_bits_per_second: 800.0,
+                ..Metrics::default()
+            },
+            Metrics {
+                bytes: 900.0,
+                bandwidth_bits_per_second: 2400.0,
+                ..Metrics::default()
+            },
+        ])
+        .unwrap();
+
+        assert_eq!(window.duration_seconds, 0.0);
+        assert_eq!(
+            window.bandwidth_bytes_per_second,
+            WindowGaugeStats {
+                mean: 200.0,
+                min: 100.0,
+                max: 300.0
+            }
+        );
     }
 
     #[test]
