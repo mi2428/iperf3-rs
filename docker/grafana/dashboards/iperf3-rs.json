@@ -363,8 +363,8 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "iperf3_packets{job=~\"$job\", test=~\"$test\", scenario=~\"$scenario\", iperf_mode=~\"$mode\"}",
-          "legendFormat": "packets {{scenario}} / {{iperf_mode}}",
+          "expr": "iperf3_udp_packets{job=~\"$job\", test=~\"$test\", scenario=~\"$scenario\", iperf_mode=~\"$mode\"}",
+          "legendFormat": "udp packets {{scenario}} / {{iperf_mode}}",
           "range": true,
           "refId": "A"
         },
@@ -374,13 +374,13 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "iperf3_error_packets{job=~\"$job\", test=~\"$test\", scenario=~\"$scenario\", iperf_mode=~\"$mode\"}",
-          "legendFormat": "errors {{scenario}} / {{iperf_mode}}",
+          "expr": "iperf3_udp_lost_packets{job=~\"$job\", test=~\"$test\", scenario=~\"$scenario\", iperf_mode=~\"$mode\"}",
+          "legendFormat": "udp lost {{scenario}} / {{iperf_mode}}",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "Packets",
+      "title": "UDP Packets",
       "type": "timeseries"
     },
     {
@@ -466,7 +466,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "iperf3_jitter{job=~\"$job\", test=~\"$test\", scenario=~\"$scenario\", iperf_mode=~\"$mode\"} * 1000",
+          "expr": "iperf3_udp_jitter_seconds{job=~\"$job\", test=~\"$test\", scenario=~\"$scenario\", iperf_mode=~\"$mode\"} * 1000",
           "legendFormat": "{{scenario}} / {{iperf_mode}}",
           "range": true,
           "refId": "A"
