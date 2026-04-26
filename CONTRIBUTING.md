@@ -1,361 +1,216 @@
 # Contributing
 
-This document collects development, verification, and release details for
-`iperf3-rs`. The README is intentionally focused on user-facing behavior.
+This document is the maintainer and developer reference for `iperf3-rs`.
 
-> [!TIP]
-> Most local changes should pass `make check`. Changes that affect libiperf,
-> Docker, metrics export, release packaging, or examples should also run
-> `make integration`, `make integration EXAMPLES=bwcheck`, and `make kani` as
-> appropriate.
+### Table of Contents
 
-## Table of Contents
-
-- [Setup](#setup)
-- [Developer Commands](#developer-commands)
-  - [Shell completions](#shell-completions)
-- [Architecture](#architecture)
-  - [Project layout](#project-layout)
-  - [Native build flow](#native-build-flow)
-- [Quality Gates](#quality-gates)
-  - [Tests](#tests)
+- [Common Commands](#common-commands)
+- [Rustdoc](#rustdoc)
+- [Design Contracts](#design-contracts)
+  - [CLI Compatibility](#cli-compatibility)
+  - [Metrics Delivery](#metrics-delivery)
+  - [libiperf Process State](#libiperf-process-state)
+  - [Native Build](#native-build)
+- [Verification](#verification)
+  - [When to Run What](#when-to-run-what)
+  - [Integration Tests](#integration-tests)
   - [Kani](#kani)
 - [Release Operations](#release-operations)
-  - [Release workflow](#release-workflow)
-  - [Container publishing](#container-publishing)
-  - [Homebrew tap](#homebrew-tap)
+  - [cargo-dist](#cargo-dist)
 - [GitHub Actions](#github-actions)
 - [Maintainer Checklist](#maintainer-checklist)
 
-## Setup
+## Common Commands
 
-Clone the repository with the upstream iperf3 submodule:
+The Makefile help is the source of truth for local commands:
 
-```sh
-git clone --recursive https://github.com/mi2428/iperf3-rs.git
-cd iperf3-rs
+```console
+$ make
+
+Development
+  build              Build the host binary into bin/
+  install            Build and install the host binary into INSTALL_BINDIR
+  fmt                Format Rust sources. Use CHECK_ONLY=1 to check without writing
+  lint               Run clippy with warnings treated as errors
+  doc                Build rustdoc with warnings treated as errors
+  test               Run unit tests
+  test-no-default    Run tests with default features disabled
+  kani               Run Kani model checking harnesses
+  integration        Run Docker Compose integration tests. Use EXAMPLES=name,all for example tests
+  check              Run formatting, lint, tests, and completion checks
+  multipass          Launch a Multipass VM and copy the source tree for manual Linux testing
+  clean              Remove local build artifacts
+
+Distribution
+  dist               Build release binaries into dist/. Use OS=darwin,linux and ARCH=amd64,arm64
+  dist-smoke         Smoke-test Linux dist binaries in an old-glibc Debian container
+  checksums          Write SHA-256 checksums for dist artifacts
+
+Help
+  help               Show this help message
+
+Variables:
+  OS                     Release OS list: darwin,linux
+  ARCH                   Release arch list: amd64,arm64
+  EXAMPLES               Example integration tests: bwcheck,all
+  INSTALL_BINDIR         Install directory, defaults to /Users/teo/.local/bin
+  BASH_COMPLETION_DIR    Bash completion install dir, defaults to /Users/teo/.local/share/bash-completion/completions
+  ZSH_COMPLETION_DIR     Zsh completion install dir, defaults to /opt/homebrew/share/zsh/site-functions
+  FISH_COMPLETION_DIR    Fish completion install dir, defaults to /Users/teo/.local/share/fish/vendor_completions.d
+  MULTIPASS_NAME         Multipass VM name, defaults to iperf3-rs-dev
+
+Examples:
+  make fmt CHECK_ONLY=1                        # to check formatting without writing
+  make install COMPLETION=1                    # to build and install the host binary and completions
+  make integration EXAMPLES=bwcheck            # to run a specific example integration test
+  make check integration kani                  # to run all release-blocking quality gates
+  make dist OS=darwin,linux ARCH=amd64,arm64   # to build release binaries and checksums
+  make multipass                               # to prepare a Linux VM for manual testing
 ```
 
-If the checkout already exists:
+## Rustdoc
 
-```sh
-git submodule update --init --recursive
+Build API documentation with:
+
+```console
+$ make doc
+$ cargo doc --no-deps --open
 ```
 
-The repository uses the Rust toolchain specified in `rust-toolchain.toml`.
-Docker is required for integration tests and Linux release-style builds. Kani is
-required only for `make kani`.
+Start at the crate root, then follow the public types relevant to the change: `IperfCommand`, `MetricsMode`, `MetricEvent`, `Metrics`, `WindowMetrics`, `PrometheusEncoder`, `MetricsFileSink`, `PushGateway`, and `PushGatewayConfig`.
+When changing public API behavior, update rustdoc and examples instead of expanding this file with API walkthroughs.
 
-## Developer Commands
+## Design Contracts
 
-```sh
-make help
-make build
-make install COMPLETION=1
-make fmt CHECK_ONLY=1
-make lint
-make doc
-make test
-make check
-make integration
-make integration EXAMPLES=bwcheck
-make kani
-make check integration kani
-make dist OS=darwin,linux ARCH=amd64,arm64
-make multipass
+### CLI Compatibility
+
+`iperf3-rs` strips only its wrapper options (`--push.*` and `--metrics.*`) and passes the remaining argv to upstream `iperf_parse_arguments()`.
+
+Keep this boundary intact:
+
+- do not clone upstream iperf3 option parsing in Rust;
+- do not change upstream stdout or `-J` JSON behavior when metrics are enabled;
+- keep wire behavior delegated to the vendored `esnet/iperf3` `libiperf`.
+
+Authentication support depends on building the vendored libiperf with OpenSSL. The default build uses `--without-openssl` for deterministic native builds.
+
+### Metrics Delivery
+
+Metrics are emitted from libiperf's reporting path. The callback must stay nonblocking.
+
+Important contracts:
+
+- Pushgateway delivery is best-effort. Push/delete failures are reported on stderr and do not fail a successful iperf run.
+- `--metrics.file` is required output. File creation or write failures make the CLI fail.
+- Immediate Pushgateway mode keeps the newest queued interval when HTTP writes fall behind. Fresh gauges are preferred over replaying stale samples.
+- `--push.interval` aggregates libiperf intervals locally and emits `*_window_*` metric families instead of immediate interval names.
+- Metric names, label validation, and Pushgateway path encoding are public compatibility surfaces. Update tests when changing them.
+
+Use bounded-cardinality Pushgateway labels. The grouping key always includes `job`; extra labels are user supplied.
+
+### libiperf Process State
+
+libiperf still has process-global error, signal, and output state. High-level `IperfCommand` runs are serialized inside one process.
+
+Keep these library constraints visible in rustdoc:
+
+- long-lived server mode requires explicit opt-in;
+- `RunningIperf` observes completion but is not a cancellation handle;
+- `wait_timeout()` stops waiting, not the underlying iperf run;
+- `MetricsStream` preserves every emitted sample in library modes, so long runs must drain or drop the stream.
+
+### Native Build
+
+The repository vendors upstream iperf3 as the `iperf3/` git submodule. `build.rs` builds a static `libiperf` from that submodule instead of linking to a system iperf3 package.
+
+At a high level the native build:
+
+1. verifies the submodule;
+2. configures iperf3 in Cargo's `OUT_DIR`;
+3. builds `src/libiperf.la`;
+4. compiles the small C shim in `native/`;
+5. links Rust against the static `libiperf.a`;
+6. exports build/version metadata.
+
+The C shim should stay small. It exists for operations that are awkward through public libiperf headers alone: interval callback attachment, upstream help rendering, server-loop preservation, current error access, and `SIGPIPE` handling.
+
+Pushgateway HTTPS uses Rustls with webpki roots, so HTTPS Pushgateway requests do not depend on OpenSSL.
+
+## Verification
+
+### When to Run What
+
+| Change area | Minimum local check |
+| --- | --- |
+| Rust implementation | `make check` |
+| CLI args, help, env vars, labels, durations | `make check integration kani` |
+| Prometheus, Pushgateway, metrics files, window aggregation | `make check integration kani` |
+| Public Rust API or examples | `make check integration EXAMPLES=bwcheck` and `make doc` |
+| libiperf, native shim, build script, Dockerfile | `make check integration` plus a relevant `make dist ...` |
+| Release metadata, cargo-dist, workflows | `make check` and review generated/CI behavior carefully |
+
+### Integration Tests
+
+`make integration` runs the main Docker Compose test. It covers the cases most likely to regress across the Rust/libiperf boundary:
+
+- upstream `iperf3` to `iperf3-rs` interoperability in both directions;
+- `iperf3-rs` to `iperf3-rs` metrics export;
+- Pushgateway readiness, delete-on-exit, and window metrics;
+- Prometheus file output with custom prefix and labels;
+- server-side metrics and repeated accepted tests;
+- UDP, reverse TCP, and bidirectional TCP;
+- live interval visibility before a long-running client exits.
+
+Example integration tests are separate:
+
+```console
+$ make integration EXAMPLES=bwcheck
+$ make integration EXAMPLES=all
 ```
-
-Common command groups:
-
-- `make check` runs formatting, clippy, rustdoc, unit tests, and shell
-  completion syntax checks.
-- `make integration` runs the main Docker Compose interop and Pushgateway test.
-- `make integration EXAMPLES=bwcheck` runs the library-example integration test.
-- `make check integration kani` is the broad local release-blocking quality
-  gate. It requires Kani and a running Docker daemon.
-- `make dist OS=linux ARCH=arm64` builds a Raspberry Pi-style Linux arm64
-  artifact and smoke-tests startup in an old-glibc Debian container.
-- `make multipass` creates a Linux VM helper for manual investigation. It is not
-  part of the normal quality gate.
-
-### Shell completions
-
-Completion scripts are checked in under `completions/`:
-
-- `completions/iperf3-rs.bash`
-- `completions/_iperf3-rs`
-- `completions/iperf3-rs.fish`
-
-Syntax checks run as part of `make check`.
-
-Install locally:
-
-```sh
-make install COMPLETION=1
-```
-
-The install directories are configurable:
-
-- `BASH_COMPLETION_DIR`
-- `ZSH_COMPLETION_DIR`
-- `FISH_COMPLETION_DIR`
-
-For zsh, the Makefile prefers a writable `site-functions` directory that is
-already in `$fpath`, falling back to `$(INSTALL_PREFIX)/share/zsh/site-functions`
-and printing a note if the fallback is not in `$fpath`.
-
-## Architecture
-
-`iperf3-rs` has two public surfaces:
-
-- a CLI that behaves like upstream iperf3 plus `--push.*` and `--metrics.*`
-  wrapper metrics options;
-- a Rust library API centered on `IperfCommand`, `MetricsMode`, and
-  `PushGateway`.
-
-The upstream `esnet/iperf3` source is vendored as the `./iperf3` git submodule.
-The Rust build script compiles `libiperf` from that submodule instead of linking
-to a system iperf3 package.
-
-### Project layout
-
-```text
-.
-|-- src/
-|   |-- args.rs          # iperf3-rs option extraction and validation
-|   |-- cli.rs           # CLI orchestration over the library modules
-|   |-- command.rs       # public Rust command API over libiperf
-|   |-- help.rs          # wrapper help inserted into upstream help text
-|   |-- iperf.rs         # Rust wrapper around libiperf FFI
-|   |-- lib.rs           # public crate entry point and re-exports
-|   |-- main.rs          # CLI entry point
-|   |-- metrics_file.rs  # JSONL and Prometheus textfile metrics sinks
-|   |-- metrics.rs       # interval callback, event streams, and window aggregation
-|   |-- prometheus.rs    # Prometheus text exposition rendering
-|   |-- pushgateway.rs   # Pushgateway URL construction and HTTP writes
-|   `-- version.rs       # one-line version rendering
-|-- native/              # small C shim over libiperf
-|-- iperf3/              # esnet/iperf3 git submodule
-|-- completions/         # bash, zsh, and fish completions
-|-- docker/              # Prometheus and Grafana provisioning
-|-- examples/            # library-crate usage examples with their own tests
-|-- tests/               # Docker Compose integration tests
-|-- Dockerfile           # build, integration-test, and release image stages
-|-- docker-compose.yml   # local observability stack
-`-- docker-compose.test.yml
-```
-
-### Native build flow
-
-At build time, `build.rs`:
-
-1. checks that the submodule exists;
-2. cleans stale in-source Autotools configuration artifacts when needed;
-3. configures iperf3 in Cargo's `OUT_DIR`;
-4. requests a static `libiperf` and disables the shared library;
-5. builds only `src/libiperf.la`;
-6. compiles a small C shim from `native/`;
-7. links the Rust binary against the static `libiperf.a`;
-8. mirrors linker flags discovered by upstream configure;
-9. exports version metadata such as git describe, commit, commit date, build
-   date, host, target, and profile.
-
-The shim is intentionally small. It exposes the few C operations that Rust needs
-but that are not ergonomic through the public libiperf headers alone, such as:
-
-- attaching interval metrics to libiperf's reporter path without changing
-  stdout mode;
-- rendering upstream help text;
-- preserving upstream server-loop behavior;
-- reading the current iperf error;
-- ignoring `SIGPIPE`.
-
-The vendored libiperf build uses this configure option by default:
-
-```text
-IPERF3_CONFIGURE_ARGS=--without-openssl
-```
-
-This avoids a runtime OpenSSL dependency in the bundled libiperf build. Override
-`IPERF3_CONFIGURE_ARGS` or enable the `openssl` Cargo feature when testing
-upstream authentication support. The Pushgateway HTTP client uses Rustls with
-webpki roots, so HTTPS Pushgateway requests still work from the scratch release
-image.
-
-## Quality Gates
-
-### Tests
-
-Unit tests cover the argument splitter, label validation, duration parsing,
-version rendering, Pushgateway URL construction, Prometheus rendering, metrics
-file sinks, window metric aggregation, command lifecycle helpers, and selected
-libiperf argument parsing behavior.
-
-The Docker Compose integration test is ignored by default because it requires
-Docker:
-
-```sh
-make integration
-```
-
-It verifies:
-
-- the shared integration image builds;
-- an iperf3-rs server, upstream iperf3 reference server, and Pushgateway start;
-- Pushgateway readiness;
-- upstream `iperf3` client to `iperf3-rs` server interoperability;
-- `iperf3-rs` client to upstream `iperf3` server interoperability;
-- `iperf3-rs` client to `iperf3-rs` server metrics;
-- Prometheus file output with custom metric prefix and labels;
-- Pushgateway delete-on-exit lifecycle cleanup;
-- aggregated window metrics from `--push.interval`;
-- server-mode metrics from the long-running `iperf3-rs` server;
-- interval metrics are visible while a longer client run is still active;
-- server callbacks continue to work across multiple accepted tests;
-- UDP metrics, including packet counts;
-- reverse TCP metrics;
-- bidirectional TCP metrics.
-
-The test uses environment-based Pushgateway defaults for both `client-rs` and
-`server-rs` services so the commands under test stay close to normal iperf3
-usage. Although it is one Rust test, it prints `[integration] START/PASS/FAIL`
-markers for each sub-scenario under `--nocapture`.
-
-Example applications can carry their own Docker Compose integration tests. Run
-one from the repository root with:
-
-```sh
-make integration EXAMPLES=bwcheck
-```
-
-Use `EXAMPLES=all` to run every example directory that has both a `Cargo.toml`
-and `integration_test.rs`. The bwcheck example protects library-crate usage by
-importing `iperf3-rs`, running UDP clients through `IperfCommand`, consuming
-live interval metrics, and checking bandwidth/loss threshold behavior.
 
 ### Kani
 
-Run:
+`make kani` protects pure logic that is easy to get subtly wrong:
 
-```sh
-make kani
-```
+- Pushgateway path encoding;
+- retryable status classification and retry delay bounds;
+- metrics file format parsing;
+- Prometheus metric prefix and label validation;
+- reserved label detection;
+- boolean and duration parsing;
+- zero-duration window rejection;
+- callback mode selection;
+- C value normalization;
+- window aggregation invariants.
 
-Kani currently checks selected pure logic:
-
-- Pushgateway path segment encoding escapes reserved bytes;
-- retryable status classification matches the retry policy;
-- retry delay is bounded for configured retry counts;
-- metrics file format parsing accepts only the documented formats;
-- Prometheus metric prefix and label-name validation match the intended ASCII
-  shape;
-- reserved label-name detection matches the configured reserved keys;
-- boolean option parsing accepts only the documented values;
-- duration arithmetic handles minute overflow;
-- command metrics-window validation rejects zero-duration windows;
-- metrics callback mode selection matches the requested stream mode;
-- callback availability flags and stream counts normalize C values as expected;
-- window aggregation keeps counter summaries nonnegative and gauge summaries
-  ordered for bounded symbolic samples.
-
-Kani is not a replacement for integration tests here; it is used to lock down
-small, security-sensitive or correctness-sensitive parsing and encoding rules.
+Kani is not a replacement for integration tests. Use it to lock down parsing, encoding, and aggregation rules.
 
 ## Release Operations
 
-### Release workflow
+### cargo-dist
 
-Releases are driven by cargo-dist.
+Releases are driven by cargo-dist. Publishing a tag such as `v1.0.0` runs `.github/workflows/release.yml`.
 
-Publishing a tag such as `v0.1.0` runs `.github/workflows/release.yml`, which:
-
-1. plans the release with cargo-dist;
-2. builds archives for the configured targets;
-3. generates checksums;
-4. creates the GitHub Release;
-5. uploads release artifacts;
-6. generates a Homebrew formula;
-7. pushes the formula to `mi2428/homebrew-iperf3-rs`.
-
-Release archives are built for:
+Configured release targets live in `dist-workspace.toml`:
 
 - `x86_64-apple-darwin`
 - `aarch64-apple-darwin`
 - `x86_64-unknown-linux-gnu`
 - `aarch64-unknown-linux-gnu`
 
-The manual `make dist` target is still available for local release-style
-binaries under `dist/`.
+Linux artifacts are built in a Debian bullseye-based Rust image and smoke-tested in `debian:bullseye-slim` with `-h` and `--version`. This keeps the glibc baseline suitable for older Debian/Raspberry Pi OS systems.
 
-Linux dist binaries are built in a Debian bullseye-based Rust image and then
-smoke-tested in `debian:bullseye-slim` with `-h` and `--version`. This keeps the
-glibc baseline low enough for older Raspberry Pi OS / Debian bullseye systems
-and catches binaries that build successfully but cannot start.
-
-### Container publishing
-
-GHCR publishing is handled by `.github/workflows/ghcr.yml` when a GitHub Release
-is published.
-
-The workflow:
-
-1. builds `linux/amd64` on an x86 runner;
-2. builds `linux/arm64` on an arm runner;
-3. pushes each image by digest;
-4. creates and pushes a multi-arch manifest list;
-5. tags prereleases with their version tag;
-6. tags non-prereleases with both the version tag and `latest`.
-
-It uses the automatically provided `GITHUB_TOKEN` with `packages: write`. No
-separate GHCR token is required.
-
-### Homebrew tap
-
-The tap repository is:
-
-```text
-mi2428/homebrew-iperf3-rs
-```
-
-The user-facing commands are:
-
-```sh
-brew tap mi2428/iperf3-rs
-brew install iperf3-rs
-```
-
-The release workflow pushes generated formula updates to the tap. The Homebrew
-publishing step requires this repository secret on `mi2428/iperf3-rs`:
-
-```text
-HOMEBREW_TAP_TOKEN
-```
-
-Use a fine-grained personal access token when possible:
-
-- Repository access: `mi2428/homebrew-iperf3-rs` only
-- Permissions:
-  - `Contents: Read and write`
-  - `Metadata: Read-only`
-
-A classic PAT also works, but it needs broader scope: `public_repo` for a public
-tap or `repo` for a private tap.
+Use `make dist OS=... ARCH=...` for local release-style builds under `dist/`.
 
 ## GitHub Actions
 
 Workflows:
 
-- `.github/workflows/checks.yml`: pull-request checks for workflow linting,
-  Rust linting, unit tests, Kani, integration tests, and Linux dist startup
-  smoke tests.
-- `.github/workflows/release.yml`: cargo-dist release workflow for archives,
-  GitHub Releases, and Homebrew formula publishing.
-- `.github/workflows/ghcr.yml`: multi-arch GHCR image publishing after a
-  GitHub Release is published.
+- `.github/workflows/checks.yml`: pull-request checks for workflow linting, Rust linting, unit tests, Kani, integration tests, and Linux dist startup smoke tests.
+- `.github/workflows/release.yml`: cargo-dist archives, GitHub Releases, and Homebrew formula publishing.
+- `.github/workflows/ghcr.yml`: multi-arch GHCR image publishing after a GitHub Release is published.
 
-`checks.yml` intentionally spells out cargo, Docker, and Kani commands instead
-of invoking Makefile targets so CI behavior does not silently change when the
-Makefile is refactored.
+`checks.yml` intentionally spells out cargo, Docker, and Kani commands instead of invoking Makefile targets so CI behavior does not silently change when the Makefile is refactored.
 
 ## Maintainer Checklist
 
@@ -364,10 +219,9 @@ Before publishing a release:
 1. Confirm `Cargo.toml` has the intended version.
 2. Confirm `dist-workspace.toml` targets and cargo-dist version are correct.
 3. Run `make check integration kani`.
-4. Run `make dist OS=linux ARCH=arm64` if you want a local Raspberry Pi-style
-   glibc compatibility check before tagging.
-5. Confirm `HOMEBREW_TAP_TOKEN` exists and can push to the tap repository.
-6. Push a version tag such as `v0.1.0`.
+4. Run `make dist OS=linux ARCH=arm64` if you want a local Linux arm64/glibc compatibility check before tagging.
+5. Confirm `HOMEBREW_TAP_TOKEN` can push to the tap repository.
+6. Push a version tag such as `v1.0.0`.
 7. Confirm the GitHub Release contains the expected archives and checksums.
 8. Confirm GHCR has the version tag and, for stable releases, `latest`.
 9. Confirm the Homebrew formula was updated in `mi2428/homebrew-iperf3-rs`.
