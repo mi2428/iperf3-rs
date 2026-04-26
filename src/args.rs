@@ -95,13 +95,10 @@ fn extract_app_options_with_env(
         .map(|raw| parse_user_agent("IPERF3_RS_PUSH_USER_AGENT", &raw))
         .transpose()?
         .unwrap_or_else(PushGatewayConfig::default_user_agent);
-    let mut metrics_prefix = match get_env("IPERF3_RS_METRICS_PREFIX") {
-        Some(raw) => parse_metric_prefix("IPERF3_RS_METRICS_PREFIX", &raw)?,
-        None => get_env("IPERF3_RS_PUSH_METRIC_PREFIX")
-            .map(|raw| parse_metric_prefix("IPERF3_RS_PUSH_METRIC_PREFIX", &raw))
-            .transpose()?
-            .unwrap_or_else(|| PushGatewayConfig::DEFAULT_METRIC_PREFIX.to_owned()),
-    };
+    let mut metrics_prefix = get_env("IPERF3_RS_METRICS_PREFIX")
+        .map(|raw| parse_metric_prefix("IPERF3_RS_METRICS_PREFIX", &raw))
+        .transpose()?
+        .unwrap_or_else(|| PushGatewayConfig::DEFAULT_METRIC_PREFIX.to_owned());
     let mut push_interval = get_env("IPERF3_RS_PUSH_INTERVAL")
         .map(|raw| parse_duration_option("IPERF3_RS_PUSH_INTERVAL", &raw))
         .transpose()?;
@@ -162,10 +159,6 @@ fn extract_app_options_with_env(
                 "--push.user-agent" => {
                     push_user_agent = parse_user_agent("--push.user-agent", value)?;
                     saw_push_setting = true;
-                }
-                "--push.metric-prefix" => {
-                    metrics_prefix = parse_metric_prefix("--push.metric-prefix", value)?;
-                    saw_metric_prefix = true;
                 }
                 "--metrics.prefix" => {
                     metrics_prefix = parse_metric_prefix("--metrics.prefix", value)?;
@@ -236,13 +229,6 @@ fn extract_app_options_with_env(
                     &take_value(&rest, &mut i, "--push.user-agent")?,
                 )?;
                 saw_push_setting = true;
-            }
-            "--push.metric-prefix" => {
-                metrics_prefix = parse_metric_prefix(
-                    "--push.metric-prefix",
-                    &take_value(&rest, &mut i, "--push.metric-prefix")?,
-                )?;
-                saw_metric_prefix = true;
             }
             "--metrics.prefix" => {
                 metrics_prefix = parse_metric_prefix(
@@ -802,7 +788,6 @@ mod tests {
             "--push.timeout",
             "--push.retries",
             "--push.user-agent",
-            "--push.metric-prefix",
             "--push.interval",
             "--metrics.file",
             "--metrics.format",
@@ -982,50 +967,31 @@ mod tests {
     }
 
     #[test]
-    fn parses_deprecated_push_metric_prefix_alias_for_file_metrics() {
+    fn parses_metrics_prefix_for_pushgateway_without_file_metrics() {
         let args = vec![
             "iperf3-rs".to_owned(),
-            "--metrics.file=metrics.prom".to_owned(),
-            "--push.metric-prefix=nettest".to_owned(),
+            "--push.url=localhost:9091".to_owned(),
+            "--metrics.prefix=nettest".to_owned(),
+            "-c".to_owned(),
+            "127.0.0.1".to_owned(),
         ];
 
         let (app, iperf) = extract_app_options_with_env(args, |_| None).unwrap();
-        assert!(app.push_url.is_none());
-        assert_eq!(app.metrics_file, Some(PathBuf::from("metrics.prom")));
+        assert_eq!(app.push_url.unwrap().as_str(), "http://localhost:9091/");
+        assert!(app.metrics_file.is_none());
         assert_eq!(app.metrics_prefix, "nettest");
-        assert_eq!(iperf, ["iperf3-rs"]);
-    }
-
-    #[test]
-    fn parses_metrics_prefix_for_pushgateway_without_file_metrics() {
-        for option in ["--metrics.prefix=nettest", "--push.metric-prefix=nettest"] {
-            let args = vec![
-                "iperf3-rs".to_owned(),
-                "--push.url=localhost:9091".to_owned(),
-                option.to_owned(),
-                "-c".to_owned(),
-                "127.0.0.1".to_owned(),
-            ];
-
-            let (app, iperf) = extract_app_options_with_env(args, |_| None).unwrap();
-            assert_eq!(app.push_url.unwrap().as_str(), "http://localhost:9091/");
-            assert!(app.metrics_file.is_none());
-            assert_eq!(app.metrics_prefix, "nettest");
-            assert_eq!(iperf, ["iperf3-rs", "-c", "127.0.0.1"]);
-        }
+        assert_eq!(iperf, ["iperf3-rs", "-c", "127.0.0.1"]);
     }
 
     #[test]
     fn metrics_prefix_requires_an_output_sink() {
-        for option in ["--metrics.prefix=nettest", "--push.metric-prefix=nettest"] {
-            let args = vec!["iperf3-rs".to_owned(), option.to_owned()];
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "--metrics.prefix=nettest".to_owned(),
+        ];
 
-            let err = extract_app_options_with_env(args, |_| None).unwrap_err();
-            assert!(
-                err.to_string().contains("metric prefix requires"),
-                "{option} should require a metrics output sink"
-            );
-        }
+        let err = extract_app_options_with_env(args, |_| None).unwrap_err();
+        assert!(err.to_string().contains("metric prefix requires"));
     }
 
     #[test]
@@ -1082,11 +1048,6 @@ mod tests {
                 "--push.user-agent",
                 "",
                 "--push.user-agent must not be empty",
-            ),
-            (
-                "--push.metric-prefix",
-                "bad-prefix",
-                "invalid --push.metric-prefix metric prefix",
             ),
             (
                 "--metrics.prefix",
@@ -1267,7 +1228,6 @@ mod tests {
                 "IPERF3_RS_PUSH_LABELS" => Some("not-a-label".to_owned()),
                 "IPERF3_RS_PUSH_TIMEOUT" => Some("not-a-duration".to_owned()),
                 "IPERF3_RS_PUSH_RETRIES" => Some("not-a-number".to_owned()),
-                "IPERF3_RS_PUSH_METRIC_PREFIX" => Some("bad-prefix".to_owned()),
                 "IPERF3_RS_PUSH_INTERVAL" => Some("not-a-duration".to_owned()),
                 "IPERF3_RS_PUSH_DELETE_ON_EXIT" => Some("not-a-bool".to_owned()),
                 "IPERF3_RS_METRICS_FORMAT" => Some("not-a-format".to_owned()),

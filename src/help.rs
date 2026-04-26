@@ -54,11 +54,6 @@ pub fn render_wrapper_help() -> String {
                 continuation: &[],
             },
             HelpRow {
-                value: "--push.metric-prefix P",
-                description: "deprecated alias for --metrics.prefix",
-                continuation: &[],
-            },
-            HelpRow {
                 value: "--push.interval DURATION",
                 description: "aggregate interval samples before pushing window metrics",
                 continuation: &[],
@@ -123,11 +118,6 @@ pub fn render_wrapper_help() -> String {
             HelpRow {
                 value: "IPERF3_RS_METRICS_PREFIX=P",
                 description: "default value for --metrics.prefix",
-                continuation: &[],
-            },
-            HelpRow {
-                value: "IPERF3_RS_PUSH_METRIC_PREFIX=P",
-                description: "deprecated alias for IPERF3_RS_METRICS_PREFIX",
                 continuation: &[],
             },
             HelpRow {
@@ -210,7 +200,6 @@ mod tests {
         assert!(help.contains("--push.retries N"));
         assert!(help.contains("--push.user-agent VALUE"));
         assert!(help.contains("--metrics.prefix P"));
-        assert!(help.contains("--push.metric-prefix P"));
         assert!(help.contains("--push.interval DURATION"));
         assert!(help.contains("--push.delete-on-exit"));
         assert!(help.contains("--metrics.file PATH"));
@@ -218,7 +207,6 @@ mod tests {
         assert!(help.contains("--metrics.label KEY=VALUE"));
         assert!(help.contains("IPERF3_RS_PUSH_LABELS=KEY=VALUE,..."));
         assert!(help.contains("IPERF3_RS_METRICS_PREFIX=P"));
-        assert!(help.contains("IPERF3_RS_PUSH_METRIC_PREFIX=P"));
         assert!(help.contains("IPERF3_RS_PUSH_INTERVAL=DURATION"));
         assert!(help.contains("IPERF3_RS_PUSH_DELETE_ON_EXIT=BOOL"));
         assert!(help.contains("IPERF3_RS_METRICS_FILE=PATH"));

@@ -473,9 +473,6 @@ Use `--metrics.file` for required artifacts that must affect the exit status.
     Prometheus metric name prefix for Pushgateway and Prometheus file output.
     Defaults to iperf3.
 
---push.metric-prefix PREFIX
-    Deprecated alias for --metrics.prefix.
-
 --push.interval DURATION
     Aggregate libiperf interval samples for this duration before pushing window
     metrics. Accepts values like 500ms, 10s, 1m, or bare seconds. When omitted,
@@ -506,7 +503,6 @@ IPERF3_RS_PUSH_TIMEOUT=DURATION
 IPERF3_RS_PUSH_RETRIES=N
 IPERF3_RS_PUSH_USER_AGENT=VALUE
 IPERF3_RS_METRICS_PREFIX=PREFIX
-IPERF3_RS_PUSH_METRIC_PREFIX=PREFIX
 IPERF3_RS_PUSH_INTERVAL=DURATION
 IPERF3_RS_PUSH_DELETE_ON_EXIT=BOOL
 IPERF3_RS_METRICS_FILE=PATH
@@ -517,8 +513,6 @@ IPERF3_RS_METRICS_LABELS=KEY=VALUE,...
 CLI values override environment defaults. `IPERF3_RS_PUSH_LABELS` and `IPERF3_RS_METRICS_LABELS`
 are applied before their matching CLI label values. Duplicate label names are
 rejected within each label set.
-`IPERF3_RS_PUSH_METRIC_PREFIX` is kept as a deprecated alias; `IPERF3_RS_METRICS_PREFIX` is the
-primary environment name and wins when both are set.
 Unprefixed names such as `PUSH_URL` or `METRICS_FILE` are intentionally not
 read, so generic CI or shell variables cannot enable outputs accidentally.
 Boolean environment values accept `true`, `false`, `1`, `0`, `yes`, `no`, `on`,

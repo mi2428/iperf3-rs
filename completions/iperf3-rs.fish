@@ -70,7 +70,6 @@ complete -c iperf3-rs -l push.timeout -r -a '500ms 1s 5s 10s 30s 1m' -d 'Per-req
 complete -c iperf3-rs -l push.retries -r -a '0 1 2 3 5 10' -d 'Retry failed Pushgateway requests'
 complete -c iperf3-rs -l push.user-agent -r -d 'HTTP User-Agent for Pushgateway requests'
 complete -c iperf3-rs -l metrics.prefix -r -a 'iperf3' -d 'Prometheus metric name prefix'
-complete -c iperf3-rs -l push.metric-prefix -r -a 'iperf3' -d 'Deprecated alias for --metrics.prefix'
 complete -c iperf3-rs -l push.interval -r -a '500ms 1s 5s 10s 30s 1m' -d 'Aggregate interval samples before pushing window metrics'
 complete -c iperf3-rs -l push.delete-on-exit -d 'Best-effort delete of this Pushgateway grouping key after the run exits'
 complete -c iperf3-rs -l metrics.file -r -d 'Write live interval metrics to a file'
