@@ -7,7 +7,7 @@
 
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Sender, bounded};
 
@@ -259,7 +259,10 @@ impl IperfCommand {
         let handle = thread::spawn(move || run_command(command, Some(ready_tx)));
 
         match ready_rx.recv() {
-            Ok(Ok(metrics)) => Ok(RunningIperf { handle, metrics }),
+            Ok(Ok(metrics)) => Ok(RunningIperf {
+                handle: Some(handle),
+                metrics,
+            }),
             Ok(Err(err)) => {
                 let _ = handle.join();
                 Err(Error::worker(err))
@@ -336,7 +339,7 @@ impl IperfResult {
 #[derive(Debug)]
 #[must_use = "dropping RunningIperf detaches the worker; call wait to observe the iperf result"]
 pub struct RunningIperf {
-    handle: JoinHandle<Result<IperfResult>>,
+    handle: Option<JoinHandle<Result<IperfResult>>>,
     metrics: Option<MetricsStream>,
 }
 
@@ -351,11 +354,64 @@ impl RunningIperf {
         self.metrics.take()
     }
 
-    /// Wait until the iperf worker exits.
-    pub fn wait(self) -> Result<IperfResult> {
+    /// Return `true` if the worker thread has finished.
+    pub fn is_finished(&self) -> bool {
         self.handle
+            .as_ref()
+            .map(JoinHandle::is_finished)
+            .unwrap_or(true)
+    }
+
+    /// Return the result if the worker has finished, without blocking.
+    ///
+    /// After this returns `Ok(Some(_))`, the worker result has been consumed and
+    /// later calls to `try_wait`, `wait_timeout`, or `wait` will report that the
+    /// run was already observed.
+    pub fn try_wait(&mut self) -> Result<Option<IperfResult>> {
+        if !self.is_finished() {
+            return Ok(None);
+        }
+        self.take_finished_result().map(Some)
+    }
+
+    /// Wait up to `timeout` for the worker to finish.
+    ///
+    /// Returns `Ok(None)` when the timeout expires before the iperf run exits.
+    /// A zero timeout performs a single nonblocking poll.
+    pub fn wait_timeout(&mut self, timeout: Duration) -> Result<Option<IperfResult>> {
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .unwrap_or_else(Instant::now);
+        loop {
+            if self.is_finished() {
+                return self.take_finished_result().map(Some);
+            }
+            if timeout.is_zero() || Instant::now() >= deadline {
+                return Ok(None);
+            }
+            thread::sleep(
+                Duration::from_millis(10).min(deadline.saturating_duration_since(Instant::now())),
+            );
+        }
+    }
+
+    /// Wait until the iperf worker exits.
+    pub fn wait(mut self) -> Result<IperfResult> {
+        self.take_handle()?
             .join()
             .map_err(|_| Error::worker("iperf worker thread panicked"))?
+    }
+
+    fn take_finished_result(&mut self) -> Result<IperfResult> {
+        self.take_handle()?
+            .join()
+            .map_err(|_| Error::worker("iperf worker thread panicked"))?
+    }
+
+    fn take_handle(&mut self) -> Result<JoinHandle<Result<IperfResult>>> {
+        self.handle
+            .take()
+            .ok_or_else(|| Error::worker("iperf worker result was already observed"))
     }
 }
 
@@ -824,6 +880,45 @@ mod tests {
     }
 
     #[test]
+    fn running_iperf_try_wait_observes_finished_worker_once() {
+        let mut running = RunningIperf {
+            handle: Some(thread::spawn(|| Ok(test_result()))),
+            metrics: None,
+        };
+
+        let result = running
+            .wait_timeout(Duration::from_secs(1))
+            .unwrap()
+            .expect("worker should finish");
+        assert_eq!(result.role(), Role::Client);
+        assert_eq!(running.try_wait().unwrap_err().kind(), ErrorKind::Worker);
+    }
+
+    #[test]
+    fn running_iperf_try_wait_returns_none_while_worker_is_running() {
+        let (release_tx, release_rx) = bounded::<()>(1);
+        let mut running = RunningIperf {
+            handle: Some(thread::spawn(move || {
+                release_rx.recv().unwrap();
+                Ok(test_result())
+            })),
+            metrics: None,
+        };
+
+        assert!(!running.is_finished());
+        assert!(running.try_wait().unwrap().is_none());
+        assert!(running.wait_timeout(Duration::ZERO).unwrap().is_none());
+
+        release_tx.send(()).unwrap();
+        assert!(
+            running
+                .wait_timeout(Duration::from_secs(1))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
     fn run_without_client_or_server_role_fails_fast() {
         let mut command = IperfCommand::new();
 
@@ -833,5 +928,13 @@ mod tests {
             err.to_string().contains("client (-c) or server (-s)"),
             "{err:#}"
         );
+    }
+
+    fn test_result() -> IperfResult {
+        IperfResult {
+            role: Role::Client,
+            json_output: None,
+            metrics: Vec::new(),
+        }
     }
 }
