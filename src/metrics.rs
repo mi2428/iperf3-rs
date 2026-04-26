@@ -95,7 +95,7 @@ pub struct Metrics {
     /// Transport protocol used by this interval.
     pub protocol: TransportProtocol,
     /// Bytes transferred during the interval.
-    pub bytes: f64,
+    pub transferred_bytes: f64,
     /// Interval throughput in bits per second.
     pub bandwidth_bits_per_second: f64,
     /// TCP retransmits reported for the interval.
@@ -706,7 +706,7 @@ fn callbacks() -> &'static Mutex<HashMap<usize, CallbackTarget>> {
 
 unsafe extern "C" fn metrics_callback(
     test: *mut RawIperfTest,
-    bytes: c_double,
+    transferred_bytes: c_double,
     bandwidth_bits_per_second: c_double,
     tcp_retransmits: c_double,
     tcp_rtt_seconds: c_double,
@@ -755,7 +755,7 @@ unsafe extern "C" fn metrics_callback(
             direction: MetricDirection::from_callback_value(direction),
             stream_count: nonnegative_usize(stream_count),
             protocol: TransportProtocol::from_callback_value(protocol),
-            bytes,
+            transferred_bytes,
             bandwidth_bits_per_second,
             tcp_retransmits: available(tcp_retransmits_available, tcp_retransmits),
             tcp_rtt_seconds: available(tcp_rtt_seconds_available, tcp_rtt_seconds),
@@ -834,7 +834,7 @@ pub fn aggregate_window(samples: &[Metrics]) -> Option<WindowMetrics> {
 
     for metrics in samples {
         duration_seconds += finite_nonnegative(metrics.interval_duration_seconds);
-        transferred_bytes += finite_nonnegative(metrics.bytes);
+        transferred_bytes += finite_nonnegative(metrics.transferred_bytes);
         bandwidth.observe(metrics.bandwidth_bits_per_second);
         tcp_rtt.observe_option(metrics.tcp_rtt_seconds);
         tcp_rttvar.observe_option(metrics.tcp_rttvar_seconds);
@@ -1030,7 +1030,7 @@ mod verification {
     #[kani::unwind(3)]
     fn window_counters_are_nonnegative_for_bounded_inputs() {
         let sample = Metrics {
-            bytes: f64::from(kani::any::<i16>()),
+            transferred_bytes: f64::from(kani::any::<i16>()),
             tcp_retransmits: Some(f64::from(kani::any::<i16>())),
             tcp_reorder_events: Some(f64::from(kani::any::<i16>())),
             udp_packets: Some(f64::from(kani::any::<i16>())),
@@ -1079,14 +1079,14 @@ mod verification {
 
         let samples = [
             Metrics {
-                bytes: f64::from(bytes_a),
+                transferred_bytes: f64::from(bytes_a),
                 bandwidth_bits_per_second: f64::from(bytes_a) * 8.0,
                 tcp_rtt_seconds: Some(f64::from(rtt_a)),
                 interval_duration_seconds: 1.0,
                 ..Metrics::default()
             },
             Metrics {
-                bytes: f64::from(bytes_b),
+                transferred_bytes: f64::from(bytes_b),
                 bandwidth_bits_per_second: f64::from(bytes_b) * 8.0,
                 tcp_rtt_seconds: Some(f64::from(rtt_b)),
                 interval_duration_seconds: 1.0,
@@ -1101,7 +1101,7 @@ mod verification {
 
     fn metrics_with_unit_duration(bytes: u8) -> Metrics {
         Metrics {
-            bytes: f64::from(bytes),
+            transferred_bytes: f64::from(bytes),
             bandwidth_bits_per_second: f64::from(bytes) * 8.0,
             interval_duration_seconds: 1.0,
             ..Metrics::default()
@@ -1175,19 +1175,19 @@ mod tests {
         enqueue_latest(
             &target,
             Metrics {
-                bytes: 1.0,
+                transferred_bytes: 1.0,
                 ..Metrics::default()
             },
         );
         enqueue_latest(
             &target,
             Metrics {
-                bytes: 2.0,
+                transferred_bytes: 2.0,
                 ..Metrics::default()
             },
         );
 
-        assert_eq!(rx.try_recv().unwrap().bytes, 2.0);
+        assert_eq!(rx.try_recv().unwrap().transferred_bytes, 2.0);
         assert!(rx.try_recv().is_err());
     }
 
@@ -1195,7 +1195,7 @@ mod tests {
     fn metric_event_stream_forwards_interval_samples() {
         let (tx, rx) = unbounded::<Metrics>();
         let sample = Metrics {
-            bytes: 42.0,
+            transferred_bytes: 42.0,
             ..Metrics::default()
         };
         let (mut stream, worker) = metric_event_stream(rx, MetricsMode::Interval);
@@ -1215,14 +1215,14 @@ mod tests {
             metric_event_stream(rx, MetricsMode::Window(Duration::from_secs(60)));
 
         tx.send(Metrics {
-            bytes: 4.0,
+            transferred_bytes: 4.0,
             bandwidth_bits_per_second: 32.0,
             interval_duration_seconds: 1.0,
             ..Metrics::default()
         })
         .unwrap();
         tx.send(Metrics {
-            bytes: 8.0,
+            transferred_bytes: 8.0,
             bandwidth_bits_per_second: 64.0,
             interval_duration_seconds: 1.0,
             ..Metrics::default()
@@ -1264,7 +1264,7 @@ mod tests {
         sinks.file(sink);
         let (tx, rx) = unbounded();
         tx.send(Metrics {
-            bytes: 1.0,
+            transferred_bytes: 1.0,
             interval_duration_seconds: 1.0,
             ..Metrics::default()
         })
@@ -1286,7 +1286,7 @@ mod tests {
     fn aggregate_window_summarizes_interval_samples_by_metric_semantics() {
         let window = aggregate_window(&[
             Metrics {
-                bytes: 100.0,
+                transferred_bytes: 100.0,
                 bandwidth_bits_per_second: 800.0,
                 tcp_retransmits: Some(1.0),
                 tcp_rtt_seconds: Some(0.010),
@@ -1296,7 +1296,7 @@ mod tests {
                 ..Metrics::default()
             },
             Metrics {
-                bytes: 900.0,
+                transferred_bytes: 900.0,
                 bandwidth_bits_per_second: 2400.0,
                 tcp_retransmits: Some(2.0),
                 tcp_rtt_seconds: Some(0.030),
@@ -1347,12 +1347,12 @@ mod tests {
     fn aggregate_window_falls_back_to_observed_bandwidth_when_duration_is_zero() {
         let window = aggregate_window(&[
             Metrics {
-                bytes: 100.0,
+                transferred_bytes: 100.0,
                 bandwidth_bits_per_second: 800.0,
                 ..Metrics::default()
             },
             Metrics {
-                bytes: 900.0,
+                transferred_bytes: 900.0,
                 bandwidth_bits_per_second: 2400.0,
                 ..Metrics::default()
             },
@@ -1375,14 +1375,14 @@ mod tests {
     fn aggregate_window_ignores_invalid_counter_values() {
         let window = aggregate_window(&[
             Metrics {
-                bytes: f64::NAN,
+                transferred_bytes: f64::NAN,
                 bandwidth_bits_per_second: f64::INFINITY,
                 tcp_retransmits: Some(-1.0),
                 interval_duration_seconds: -1.0,
                 ..Metrics::default()
             },
             Metrics {
-                bytes: 8.0,
+                transferred_bytes: 8.0,
                 bandwidth_bits_per_second: 64.0,
                 tcp_retransmits: Some(2.0),
                 interval_duration_seconds: 1.0,

@@ -167,7 +167,7 @@ fn render_interval_prometheus_with_labels(
     gauge(
         &mut out,
         &metric_name(prefix, "transferred_bytes"),
-        metrics.bytes,
+        metrics.transferred_bytes,
         &label_set,
     );
     gauge(
@@ -512,7 +512,7 @@ mod tests {
     #[test]
     fn default_encoder_renders_prometheus_gauges() {
         let rendered = PrometheusEncoder::default().encode_interval(&Metrics {
-            bytes: 1.0,
+            transferred_bytes: 1.0,
             bandwidth_bits_per_second: 8.0,
             tcp_retransmits: Some(5.0),
             tcp_rtt_seconds: Some(0.006),

@@ -51,7 +51,7 @@ fn command_spawn_streams_interval_metrics_against_one_off_server() {
         .collect::<Vec<_>>();
 
     assert!(!samples.is_empty(), "client should emit interval samples");
-    assert!(samples.iter().any(|sample| sample.bytes > 0.0));
+    assert!(samples.iter().any(|sample| sample.transferred_bytes > 0.0));
     assert!(
         samples
             .iter()
@@ -111,7 +111,7 @@ fn command_run_collects_interval_metrics_in_result() {
         .collect::<Vec<_>>();
 
     assert!(!samples.is_empty(), "blocking run should retain samples");
-    assert!(samples.iter().any(|sample| sample.bytes > 0.0));
+    assert!(samples.iter().any(|sample| sample.transferred_bytes > 0.0));
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn public_prometheus_encoder_renders_metrics_without_pushgateway() {
     let encoder = PrometheusEncoder::new("nettest").unwrap();
 
     let mut sample = Metrics::new();
-    sample.bytes = 32.0;
+    sample.transferred_bytes = 32.0;
     sample.bandwidth_bits_per_second = 256.0;
     sample.interval_duration_seconds = 1.0;
 
@@ -189,7 +189,7 @@ fn public_metrics_file_sink_writes_jsonl_events() {
     let sink = MetricsFileSink::new(&metrics_file, MetricsFileFormat::Jsonl).unwrap();
 
     let mut sample = Metrics::new();
-    sample.bytes = 32.0;
+    sample.transferred_bytes = 32.0;
     sample.bandwidth_bits_per_second = 256.0;
     sample.interval_duration_seconds = 1.0;
 
@@ -198,7 +198,7 @@ fn public_metrics_file_sink_writes_jsonl_events() {
     let metrics = fs::read_to_string(&metrics_file).unwrap();
     assert!(metrics.contains(r#""schema_version":1"#));
     assert!(metrics.contains(r#""event":"interval""#));
-    assert!(metrics.contains(r#""bytes":32.0"#));
+    assert!(metrics.contains(r#""transferred_bytes":32.0"#));
     let _ = fs::remove_file(metrics_file);
 }
 

@@ -260,8 +260,8 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains(r#""schema_version":1"#));
         assert!(lines[0].contains(r#""event":"interval""#));
-        assert!(lines[0].contains(r#""bytes":1.0"#));
-        assert!(lines[1].contains(r#""bytes":2.0"#));
+        assert!(lines[0].contains(r#""transferred_bytes":1.0"#));
+        assert!(lines[1].contains(r#""transferred_bytes":2.0"#));
         let _ = fs::remove_file(path);
     }
 
@@ -323,10 +323,10 @@ mod tests {
         let _ = fs::remove_dir(path);
     }
 
-    fn sample_metrics(bytes: f64) -> Metrics {
+    fn sample_metrics(transferred_bytes: f64) -> Metrics {
         Metrics {
-            bytes,
-            bandwidth_bits_per_second: bytes * 8.0,
+            transferred_bytes,
+            bandwidth_bits_per_second: transferred_bytes * 8.0,
             interval_duration_seconds: 1.0,
             ..Metrics::default()
         }
