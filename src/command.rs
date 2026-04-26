@@ -13,8 +13,10 @@ use crossbeam_channel::{Sender, bounded};
 
 use crate::iperf::{IperfTest, Role};
 use crate::metrics::{
-    CallbackMetricsReporter, MetricEvent, MetricsMode, MetricsStream, metric_event_stream,
+    CallbackMetricsReporter, IntervalMetricsReporter, MetricEvent, MetricsMode, MetricsStream,
+    metric_event_stream,
 };
+use crate::pushgateway::{PushGateway, PushGatewayConfig};
 use crate::{Error, Result};
 
 static RUN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -47,7 +49,14 @@ pub struct IperfCommand {
     program: String,
     args: Vec<String>,
     metrics_mode: MetricsMode,
+    pushgateway: Option<PushGatewayRun>,
     allow_unbounded_server: bool,
+}
+
+#[derive(Debug, Clone)]
+struct PushGatewayRun {
+    config: PushGatewayConfig,
+    mode: MetricsMode,
 }
 
 impl IperfCommand {
@@ -57,6 +66,7 @@ impl IperfCommand {
             program: "iperf3-rs".to_owned(),
             args: Vec::new(),
             metrics_mode: MetricsMode::Disabled,
+            pushgateway: None,
             allow_unbounded_server: false,
         }
     }
@@ -164,6 +174,53 @@ impl IperfCommand {
     pub fn metrics(&mut self, mode: MetricsMode) -> &mut Self {
         self.metrics_mode = mode;
         self
+    }
+
+    /// Push live metrics for this run directly to a Pushgateway.
+    ///
+    /// `MetricsMode::Interval` uses the same freshness-oriented queue as the
+    /// CLI's immediate push mode. `MetricsMode::Window(duration)` uses the same
+    /// aggregation behavior as `--push.interval`. `MetricsMode::Disabled` is
+    /// rejected when the command is started.
+    ///
+    /// Direct Pushgateway delivery and [`IperfCommand::spawn_with_metrics`] are
+    /// currently mutually exclusive for one run because libiperf exposes a
+    /// single reporter callback. Use [`IperfCommand::spawn_with_metrics`] plus
+    /// [`PushGateway::push`] or [`PushGateway::push_window`] when application
+    /// code needs both live inspection and custom push behavior.
+    pub fn pushgateway(&mut self, config: PushGatewayConfig, mode: MetricsMode) -> &mut Self {
+        self.pushgateway = Some(PushGatewayRun { config, mode });
+        self
+    }
+
+    /// Disable direct Pushgateway delivery for this command.
+    pub fn clear_pushgateway(&mut self) -> &mut Self {
+        self.pushgateway = None;
+        self
+    }
+
+    /// Run the iperf test to completion while pushing metrics to Pushgateway.
+    pub fn run_with_pushgateway(
+        &mut self,
+        config: PushGatewayConfig,
+        mode: MetricsMode,
+    ) -> Result<IperfResult> {
+        let previous = self.pushgateway.replace(PushGatewayRun { config, mode });
+        let result = self.run();
+        self.pushgateway = previous;
+        result
+    }
+
+    /// Run iperf on a worker thread while pushing metrics to Pushgateway.
+    pub fn spawn_with_pushgateway(
+        &mut self,
+        config: PushGatewayConfig,
+        mode: MetricsMode,
+    ) -> Result<RunningIperf> {
+        let previous = self.pushgateway.replace(PushGatewayRun { config, mode });
+        let result = self.spawn();
+        self.pushgateway = previous;
+        result
     }
 
     /// Allow `-s` server runs that do not include iperf's one-off option.
@@ -301,6 +358,7 @@ struct RunSetup {
     callback: Option<CallbackMetricsReporter>,
     stream: Option<MetricsStream>,
     worker: Option<JoinHandle<()>>,
+    push_reporter: Option<IntervalMetricsReporter>,
 }
 
 fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Result<IperfResult> {
@@ -327,6 +385,7 @@ fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Re
     if let Some(worker) = setup.worker.take() {
         let _ = worker.join();
     }
+    drop(setup.push_reporter.take());
 
     let metrics = setup
         .stream
@@ -343,19 +402,26 @@ fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Re
 
 fn setup_run(command: IperfCommand) -> Result<RunSetup> {
     validate_metrics_mode(command.metrics_mode)?;
+    validate_pushgateway_request(&command)?;
 
     let mut test = IperfTest::new()?;
     test.parse_arguments(&command.argv())?;
     let role = test.role();
     validate_server_lifecycle(&command, &test, role)?;
 
-    let (callback, stream, worker) = match command.metrics_mode.callback_queue() {
+    let (callback, stream, worker, push_reporter) = match command.metrics_mode.callback_queue() {
         Some(queue) => {
             let (callback, rx) = CallbackMetricsReporter::attach(&mut test, queue)?;
             let (stream, worker) = metric_event_stream(rx, command.metrics_mode);
-            (Some(callback), Some(stream), Some(worker))
+            (Some(callback), Some(stream), Some(worker), None)
         }
-        None => (None, None, None),
+        None if let Some(pushgateway) = command.pushgateway => {
+            let sink = PushGateway::new(pushgateway.config)?;
+            let reporter =
+                IntervalMetricsReporter::attach(&mut test, sink, pushgateway.mode.push_interval())?;
+            (None, None, None, Some(reporter))
+        }
+        None => (None, None, None, None),
     };
 
     Ok(RunSetup {
@@ -364,6 +430,7 @@ fn setup_run(command: IperfCommand) -> Result<RunSetup> {
         callback,
         stream,
         worker,
+        push_reporter,
     })
 }
 
@@ -394,6 +461,40 @@ fn validate_metrics_mode(mode: MetricsMode) -> Result<()> {
         Err(Error::invalid_metrics_mode(
             "metrics window interval must be greater than zero",
         ))
+    }
+}
+
+fn validate_pushgateway_request(command: &IperfCommand) -> Result<()> {
+    let Some(pushgateway) = &command.pushgateway else {
+        return Ok(());
+    };
+    if command.metrics_mode.is_enabled() {
+        return Err(Error::invalid_argument(
+            "direct Pushgateway delivery cannot be combined with a MetricsStream in the same IperfCommand run",
+        ));
+    }
+    validate_pushgateway_mode(pushgateway.mode)
+}
+
+fn validate_pushgateway_mode(mode: MetricsMode) -> Result<()> {
+    match mode {
+        MetricsMode::Disabled => Err(Error::invalid_metrics_mode(
+            "Pushgateway metrics mode must be Interval or Window",
+        )),
+        MetricsMode::Interval => Ok(()),
+        MetricsMode::Window(interval) if interval.is_zero() => Err(Error::invalid_metrics_mode(
+            "metrics window interval must be greater than zero",
+        )),
+        MetricsMode::Window(_) => Ok(()),
+    }
+}
+
+impl MetricsMode {
+    fn push_interval(self) -> Option<Duration> {
+        match self {
+            MetricsMode::Disabled | MetricsMode::Interval => None,
+            MetricsMode::Window(interval) => Some(interval),
+        }
     }
 }
 
@@ -455,6 +556,7 @@ mod tests {
     use std::time::Duration;
 
     use crate::ErrorKind;
+    use url::Url;
 
     use super::*;
 
@@ -553,6 +655,41 @@ mod tests {
     }
 
     #[test]
+    fn pushgateway_helper_records_delivery_config() {
+        let config = PushGatewayConfig::new(Url::parse("http://localhost:9091").unwrap())
+            .label("scenario", "library");
+        let mut command = IperfCommand::client("192.0.2.10");
+        command.pushgateway(config, MetricsMode::Window(Duration::from_secs(5)));
+
+        let pushgateway = command.pushgateway.as_ref().unwrap();
+        assert_eq!(
+            pushgateway.mode,
+            MetricsMode::Window(Duration::from_secs(5))
+        );
+        assert_eq!(
+            pushgateway.config.labels,
+            [("scenario".to_owned(), "library".to_owned())]
+        );
+
+        command.clear_pushgateway();
+        assert!(command.pushgateway.is_none());
+    }
+
+    #[test]
+    fn pushgateway_convenience_helpers_do_not_persist_config() {
+        let mut command = IperfCommand::new();
+        command.metrics(MetricsMode::Window(Duration::ZERO));
+
+        let result = command.run_with_pushgateway(
+            PushGatewayConfig::new(Url::parse("http://localhost:9091").unwrap()),
+            MetricsMode::Interval,
+        );
+
+        assert!(result.is_err());
+        assert!(command.pushgateway.is_none());
+    }
+
+    #[test]
     fn duration_helpers_preserve_nonzero_subsecond_intent() {
         assert_eq!(whole_seconds_arg(Duration::ZERO), "0");
         assert_eq!(whole_seconds_arg(Duration::from_millis(1)), "1");
@@ -610,6 +747,49 @@ mod tests {
         let err = command.run().unwrap_err();
         assert_eq!(err.kind(), ErrorKind::InvalidMetricsMode);
         assert!(err.to_string().contains("greater than zero"));
+    }
+
+    #[test]
+    fn direct_pushgateway_rejects_disabled_or_zero_window_mode() {
+        for mode in [MetricsMode::Disabled, MetricsMode::Window(Duration::ZERO)] {
+            let command = {
+                let mut command = IperfCommand::new();
+                command.arg("-s").arg("-1").pushgateway(
+                    PushGatewayConfig::new(Url::parse("http://localhost:9091").unwrap()),
+                    mode,
+                );
+                command
+            };
+
+            let err = match setup_run(command) {
+                Ok(_) => panic!("invalid Pushgateway mode should be rejected"),
+                Err(err) => err,
+            };
+            assert_eq!(err.kind(), ErrorKind::InvalidMetricsMode);
+        }
+    }
+
+    #[test]
+    fn direct_pushgateway_is_rejected_when_metrics_stream_is_enabled() {
+        let command = {
+            let mut command = IperfCommand::new();
+            command
+                .arg("-s")
+                .arg("-1")
+                .metrics(MetricsMode::Interval)
+                .pushgateway(
+                    PushGatewayConfig::new(Url::parse("http://localhost:9091").unwrap()),
+                    MetricsMode::Interval,
+                );
+            command
+        };
+
+        let err = match setup_run(command) {
+            Ok(_) => panic!("direct Pushgateway and MetricsStream should be rejected together"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), ErrorKind::InvalidArgument);
+        assert!(err.to_string().contains("cannot be combined"));
     }
 
     #[test]

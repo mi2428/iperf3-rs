@@ -283,6 +283,33 @@ Protocol-specific fields such as TCP RTT or UDP jitter are exposed as
 `Option<f64>`, so application code can distinguish an observed zero from a
 metric that libiperf did not report for that protocol or traffic direction.
 
+Library code can also enable the same direct Pushgateway delivery used by the
+CLI without manually draining a metrics stream:
+
+```rust
+use std::time::Duration;
+
+use iperf3_rs::{IperfCommand, MetricsMode, PushGatewayConfig, Result};
+
+fn main() -> Result<()> {
+    let endpoint = PushGatewayConfig::parse_endpoint("127.0.0.1:9091")?;
+    let config = PushGatewayConfig::new(endpoint).label("scenario", "library");
+
+    let mut command = IperfCommand::client("127.0.0.1");
+    command
+        .duration(Duration::from_secs(10))
+        .report_interval(Duration::from_secs(1))
+        .run_with_pushgateway(config, MetricsMode::Interval)?;
+
+    Ok(())
+}
+```
+
+Direct Pushgateway delivery and `spawn_with_metrics()` are intentionally
+separate run shapes. If an application needs to both inspect live events and
+customize delivery, use `spawn_with_metrics()` and call `PushGateway::push()` or
+`PushGateway::push_window()` from application code.
+
 See
 [examples/bwcheck](https://github.com/mi2428/iperf3-rs/tree/main/examples/bwcheck)
 for a complete example application. It accepts `HOST:PORT` endpoints, runs
