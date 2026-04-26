@@ -15,6 +15,9 @@ pub fn render_wrapper_help() -> String {
     let mut help = String::new();
     help.push('\n');
     help.push_str("iperf3-rs options:\n");
+    // Keep this order stable across help, README, and completions:
+    // required enablers first, then optional flags alphabetically inside each
+    // namespace. Put all `--push.*` options before `--metrics.*` options.
     write_rows(
         &mut help,
         &[
@@ -82,6 +85,8 @@ pub fn render_wrapper_help() -> String {
     );
     help.push('\n');
     help.push_str("iperf3-rs environment:\n");
+    // Mirror the option order above so users can map each environment default
+    // back to the CLI flag without scanning two differently sorted lists.
     write_rows(
         &mut help,
         &[
@@ -152,6 +157,9 @@ pub fn render_wrapper_help() -> String {
 
 pub fn render_full_help(upstream_help: &str) -> String {
     let wrapper_help = render_wrapper_help();
+    // Insert wrapper-only options before upstream's first semantic section. If
+    // the upstream help layout changes, fall back to appending instead of
+    // dropping the wrapper help entirely.
     if let Some(index) = upstream_help.find(UPSTREAM_FIRST_SECTION) {
         let (usage, upstream_sections) = upstream_help.split_at(index);
         let mut help = String::with_capacity(upstream_help.len() + wrapper_help.len() + 1);
@@ -171,6 +179,9 @@ pub fn render_full_help(upstream_help: &str) -> String {
 }
 
 fn write_rows(help: &mut String, rows: &[HelpRow<'_>]) {
+    // Options fit the historical iperf-style width, but environment variables
+    // are longer. Compute per section so option help stays compact while env
+    // help remains aligned.
     let value_width = rows
         .iter()
         .map(|row| row.value.len())
