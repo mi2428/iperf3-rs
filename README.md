@@ -458,5 +458,10 @@ integration tests, Kani checks, release workflow details, and maintainer setup.
 
 ## License
 
-`iperf3-rs` is licensed under the MIT License. The vendored `esnet/iperf3`
-submodule keeps its upstream license.
+`iperf3-rs` is dual-licensed:
+
+- General use is licensed under the MIT License. See [LICENSE](LICENSE).
+- SORACOM, Inc. is additionally granted a separate permissive license with
+  Unlicense-style terms. See [LICENSE-SORACOM](LICENSE-SORACOM).
+
+The vendored `esnet/iperf3` submodule keeps its upstream license.
