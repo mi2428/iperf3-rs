@@ -496,29 +496,31 @@ Use `--metrics.file` for required artifacts that must affect the exit status.
     Requires --metrics.format prometheus.
 ```
 
-Every push option has an environment default:
+Every wrapper environment default uses the `IPERF3_RS_` namespace:
 
 ```text
-PUSH_URL=URL
-PUSH_JOB=JOB
-PUSH_LABELS=KEY=VALUE,...
-PUSH_TIMEOUT=DURATION
-PUSH_RETRIES=N
-PUSH_USER_AGENT=VALUE
-METRICS_PREFIX=PREFIX
-PUSH_METRIC_PREFIX=PREFIX
-PUSH_INTERVAL=DURATION
-PUSH_DELETE_ON_EXIT=BOOL
-METRICS_FILE=PATH
-METRICS_FORMAT=FORMAT
-METRICS_LABELS=KEY=VALUE,...
+IPERF3_RS_PUSH_URL=URL
+IPERF3_RS_PUSH_JOB=JOB
+IPERF3_RS_PUSH_LABELS=KEY=VALUE,...
+IPERF3_RS_PUSH_TIMEOUT=DURATION
+IPERF3_RS_PUSH_RETRIES=N
+IPERF3_RS_PUSH_USER_AGENT=VALUE
+IPERF3_RS_METRICS_PREFIX=PREFIX
+IPERF3_RS_PUSH_METRIC_PREFIX=PREFIX
+IPERF3_RS_PUSH_INTERVAL=DURATION
+IPERF3_RS_PUSH_DELETE_ON_EXIT=BOOL
+IPERF3_RS_METRICS_FILE=PATH
+IPERF3_RS_METRICS_FORMAT=FORMAT
+IPERF3_RS_METRICS_LABELS=KEY=VALUE,...
 ```
 
-CLI values override environment defaults. `PUSH_LABELS` and `METRICS_LABELS`
+CLI values override environment defaults. `IPERF3_RS_PUSH_LABELS` and `IPERF3_RS_METRICS_LABELS`
 are applied before their matching CLI label values. Duplicate label names are
 rejected within each label set.
-`PUSH_METRIC_PREFIX` is kept as a deprecated alias; `METRICS_PREFIX` is the
+`IPERF3_RS_PUSH_METRIC_PREFIX` is kept as a deprecated alias; `IPERF3_RS_METRICS_PREFIX` is the
 primary environment name and wins when both are set.
+Unprefixed names such as `PUSH_URL` or `METRICS_FILE` are intentionally not
+read, so generic CI or shell variables cannot enable outputs accidentally.
 Boolean environment values accept `true`, `false`, `1`, `0`, `yes`, `no`, `on`,
 and `off`.
 
@@ -623,7 +625,7 @@ that libiperf did not report are omitted from Prometheus output and represented
 as `null` in JSONL. TCP_INFO-derived fields depend on libiperf and
 operating-system support for TCP information.
 
-When `--push.interval` or `PUSH_INTERVAL` is set, iperf3-rs emits window
+When `--push.interval` or `IPERF3_RS_PUSH_INTERVAL` is set, iperf3-rs emits window
 summary gauges instead of the immediate interval metric names:
 
 ```text
