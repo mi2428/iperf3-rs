@@ -1,5 +1,5 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    iperf3_rs::cli::main()
+    iperf3_rs::__private_cli_main()
 }

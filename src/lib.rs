@@ -56,9 +56,10 @@
 //! process is dedicated to that long-lived server. Use separate processes for
 //! parallel independent tests.
 
+use std::process::ExitCode;
+
 mod args;
-#[doc(hidden)]
-pub mod cli;
+mod cli;
 mod command;
 mod error;
 mod help;
@@ -76,3 +77,8 @@ pub use metrics::{
     WindowMetrics, aggregate_window,
 };
 pub use pushgateway::{PushGateway, PushGatewayConfig};
+
+#[doc(hidden)]
+pub fn __private_cli_main() -> ExitCode {
+    cli::main()
+}
