@@ -188,36 +188,25 @@ impl PushGateway {
     pub fn new(config: PushGatewayConfig) -> Result<Self> {
         config.validate()?;
 
-        let mut url = config.endpoint;
-        let mut path = url.path().trim_end_matches('/').to_owned();
-        // Pushgateway represents grouping labels as path segments:
-        // /metrics/job/<job>/<label>/<value>/...
-        path.push_str("/metrics/job/");
-        path.push_str(&encode_path_segment(&config.job));
-        for (name, value) in config.labels {
-            path.push('/');
-            path.push_str(&encode_path_segment(&name));
-            path.push('/');
-            path.push_str(&encode_path_segment(&value));
-        }
-        url.set_path(&path);
-
-        let client = Client::builder()
-            // Metrics are best-effort; a stuck gateway should not hold the iperf
-            // process indefinitely.
-            .timeout(config.timeout)
-            .user_agent(config.user_agent)
-            .build()
-            .map_err(|err| {
-                Error::with_source(ErrorKind::PushGateway, "failed to build HTTP client", err)
-            })?;
+        let PushGatewayConfig {
+            endpoint,
+            job,
+            labels,
+            timeout,
+            retries,
+            user_agent,
+            metric_prefix,
+            delete_on_finish,
+        } = config;
+        let url = grouping_url(endpoint, &job, &labels);
+        let client = build_http_client(timeout, user_agent)?;
 
         Ok(Self {
             client,
             url,
-            retries: config.retries,
-            metric_prefix: config.metric_prefix,
-            delete_on_finish: config.delete_on_finish,
+            retries,
+            metric_prefix,
+            delete_on_finish,
         })
     }
 
@@ -250,6 +239,11 @@ impl PushGateway {
 
     pub(crate) fn delete_on_finish(&self) -> bool {
         self.delete_on_finish
+    }
+
+    #[cfg(test)]
+    fn url(&self) -> &Url {
+        &self.url
     }
 
     fn push_body(&self, body: &str) -> Result<()> {
@@ -317,6 +311,39 @@ impl PushGateway {
 
         Ok(())
     }
+}
+
+fn grouping_url(mut endpoint: Url, job: &str, labels: &[(String, String)]) -> Url {
+    let path = grouping_path(endpoint.path(), job, labels);
+    endpoint.set_path(&path);
+    endpoint
+}
+
+fn grouping_path(base_path: &str, job: &str, labels: &[(String, String)]) -> String {
+    let mut path = base_path.trim_end_matches('/').to_owned();
+    // Pushgateway represents grouping labels as path segments:
+    // /metrics/job/<job>/<label>/<value>/...
+    path.push_str("/metrics/job/");
+    path.push_str(&encode_path_segment(job));
+    for (name, value) in labels {
+        path.push('/');
+        path.push_str(&encode_path_segment(name));
+        path.push('/');
+        path.push_str(&encode_path_segment(value));
+    }
+    path
+}
+
+fn build_http_client(timeout: Duration, user_agent: String) -> Result<Client> {
+    Client::builder()
+        // Metrics are best-effort; a stuck gateway should not hold the iperf
+        // process indefinitely.
+        .timeout(timeout)
+        .user_agent(user_agent)
+        .build()
+        .map_err(|err| {
+            Error::with_source(ErrorKind::PushGateway, "failed to build HTTP client", err)
+        })
 }
 
 fn validate_endpoint(endpoint: &Url) -> Result<()> {
@@ -615,7 +642,7 @@ mod tests {
         let gateway = PushGateway::new(config).unwrap();
 
         assert_eq!(
-            gateway.url.as_str(),
+            gateway.url().as_str(),
             "http://127.0.0.1:9091/base/metrics/job/iperf%20job/test/test%2Fone/scenario/sample%231/mode/client"
         );
     }
