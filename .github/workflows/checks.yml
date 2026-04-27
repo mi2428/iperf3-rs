@@ -22,8 +22,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+        run: |
+          mkdir -p "${RUNNER_TEMP}/actionlint"
+          curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash" \
+            | bash -s -- "${ACTIONLINT_VERSION}" "${RUNNER_TEMP}/actionlint"
+
       - name: Run actionlint
-        uses: rhysd/actionlint@v1
+        run: |
+          "${RUNNER_TEMP}/actionlint/actionlint"
 
   lint:
     name: Lint
