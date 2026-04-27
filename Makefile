@@ -154,39 +154,43 @@ test-no-default: ## Run tests with default features disabled
 kani: ## Run Kani model checking harnesses
 	@$(CARGO_ENV) $(CARGO) kani
 
-.PHONY: integration
-integration: ## Run Docker Compose integration tests. Use EXAMPLES=name,all for example tests
-	@if [ -z "$(EXAMPLES)" ]; then \
-		COMPOSE="$(COMPOSE)" DOCKER="$(DOCKER)" $(CARGO_ENV) $(CARGO) test --test integration_test -- --ignored --nocapture --test-threads=1; \
+.PHONY: e2e
+e2e: ## Run Docker E2E tests
+	@COMPOSE="$(COMPOSE)" DOCKER="$(DOCKER)" $(CARGO_ENV) $(CARGO) test --test e2e_test -- --ignored --nocapture --test-threads=1
+
+.PHONY: example-integration
+example-integration: ## Run example integration tests. Use EXAMPLES=name,all
+	@examples="$(EXAMPLES)"; \
+	if [ -z "$$examples" ]; then \
+		echo "EXAMPLES is required, for example: make example-integration EXAMPLES=bwcheck" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$examples" = "all" ]; then \
+		examples="$$(for compose in examples/*/docker-compose.test.yml; do \
+			[ -f "$$compose" ] || continue; \
+			basename "$$(dirname "$$compose")"; \
+		done | sort | tr '\n' ' ')"; \
 	else \
-		examples="$(EXAMPLES)"; \
-		if [ "$$examples" = "all" ]; then \
-			examples="$$(for compose in examples/*/docker-compose.test.yml; do \
-				[ -f "$$compose" ] || continue; \
-				basename "$$(dirname "$$compose")"; \
-			done | sort | tr '\n' ' ')"; \
-		else \
-			examples="$$(printf '%s' "$$examples" | tr ',' ' ')"; \
-		fi; \
-		if [ -z "$$examples" ]; then \
-			echo "No example integration tests found" >&2; \
+		examples="$$(printf '%s' "$$examples" | tr ',' ' ')"; \
+	fi; \
+	if [ -z "$$examples" ]; then \
+		echo "No example integration tests found" >&2; \
+		exit 1; \
+	fi; \
+	for example in $$examples; do \
+		manifest="examples/$$example/Cargo.toml"; \
+		test_file="examples/$$example/integration_test.rs"; \
+		if [ ! -f "$$manifest" ]; then \
+			echo "Example '$$example' has no Cargo.toml" >&2; \
 			exit 1; \
 		fi; \
-		for example in $$examples; do \
-			manifest="examples/$$example/Cargo.toml"; \
-			test_file="examples/$$example/integration_test.rs"; \
-			if [ ! -f "$$manifest" ]; then \
-				echo "Example '$$example' has no Cargo.toml" >&2; \
-				exit 1; \
-			fi; \
-			if [ ! -f "$$test_file" ]; then \
-				echo "Example '$$example' has no integration_test.rs" >&2; \
-				exit 1; \
-			fi; \
-			printf 'Running example integration %s\n' "$$example"; \
-			COMPOSE="$(COMPOSE)" DOCKER="$(DOCKER)" CARGO_TARGET_DIR="$(CURDIR)/target/examples/$$example" $(CARGO_ENV) $(CARGO) test --manifest-path "$$manifest" --test integration_test -- --ignored --nocapture --test-threads=1; \
-		done; \
-	fi
+		if [ ! -f "$$test_file" ]; then \
+			echo "Example '$$example' has no integration_test.rs" >&2; \
+			exit 1; \
+		fi; \
+		printf 'Running example integration %s\n' "$$example"; \
+		COMPOSE="$(COMPOSE)" DOCKER="$(DOCKER)" CARGO_TARGET_DIR="$(CURDIR)/target/examples/$$example" $(CARGO_ENV) $(CARGO) test --manifest-path "$$manifest" --test integration_test -- --ignored --nocapture --test-threads=1; \
+	done
 
 .PHONY: check
 check: ## Run formatting, lint, tests, and completion checks
@@ -420,7 +424,7 @@ help: ## Show this help message
 	@printf "  \033[36mGIT_REMOTE\033[0m             Release git remote, defaults to \033[36m%s\033[0m\n" "$(GIT_REMOTE)"
 	@printf "  \033[36mOS\033[0m                     Release OS list: \033[36mdarwin,linux\033[0m\n"
 	@printf "  \033[36mARCH\033[0m                   Release arch list: \033[36mamd64,arm64\033[0m\n"
-	@printf "  \033[36mEXAMPLES\033[0m               Example integration tests: \033[36mbwcheck,all\033[0m\n"
+	@printf "  \033[36mEXAMPLES\033[0m               Example integration tests for \033[36mmake example-integration\033[0m: \033[36mbwcheck,all\033[0m\n"
 	@printf "  \033[36mINSTALL_BINDIR\033[0m         Install directory, defaults to \033[36m%s\033[0m\n" "$(INSTALL_BINDIR)"
 	@printf "  \033[36mBASH_COMPLETION_DIR\033[0m    Bash completion install dir, defaults to \033[36m%s\033[0m\n" "$(BASH_COMPLETION_DIR)"
 	@printf "  \033[36mZSH_COMPLETION_DIR\033[0m     Zsh completion install dir, defaults to \033[36m%s\033[0m\n" "$(ZSH_COMPLETION_DIR)"
@@ -429,8 +433,9 @@ help: ## Show this help message
 	@printf "\n\033[1mExamples:\033[0m\n"
 	@printf "  \033[36m%-44s\033[0m # to check formatting without writing\n" "make fmt CHECK_ONLY=1"
 	@printf "  \033[36m%-44s\033[0m # to build and install the host binary and completions\n" "make install COMPLETION=1"
-	@printf "  \033[36m%-44s\033[0m # to run a specific example integration test\n" "make integration EXAMPLES=bwcheck"
-	@printf "  \033[36m%-44s\033[0m # to run all release-blocking quality gates\n" "make check integration kani"
+	@printf "  \033[36m%-44s\033[0m # to run Docker E2E tests\n" "make e2e"
+	@printf "  \033[36m%-44s\033[0m # to run a specific example integration test\n" "make example-integration EXAMPLES=bwcheck"
+	@printf "  \033[36m%-44s\033[0m # to run all release-blocking quality gates\n" "make check e2e kani"
 	@printf "  \033[36m%-44s\033[0m # to publish crates.io and push the release tag\n" "make release TAG=v1.0.0"
 	@printf "  \033[36m%-44s\033[0m # to build release binaries and checksums\n" "make dist OS=darwin,linux ARCH=amd64,arm64"
 	@printf "  \033[36m%-44s\033[0m # to prepare a Linux VM for manual testing\n" "make multipass"
