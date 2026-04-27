@@ -158,11 +158,11 @@ kani: ## Run Kani model checking harnesses
 e2e: ## Run Docker E2E tests
 	@COMPOSE="$(COMPOSE)" DOCKER="$(DOCKER)" $(CARGO_ENV) $(CARGO) test --test e2e_test -- --ignored --nocapture --test-threads=1
 
-.PHONY: example-integration
-example-integration: ## Run example integration tests. Use EXAMPLES=name,all
+.PHONY: integration
+integration: ## Run example integration tests. Use EXAMPLES=name,all
 	@examples="$(EXAMPLES)"; \
 	if [ -z "$$examples" ]; then \
-		echo "EXAMPLES is required, for example: make example-integration EXAMPLES=bwcheck" >&2; \
+		echo "EXAMPLES is required, for example: make integration EXAMPLES=bwcheck" >&2; \
 		exit 1; \
 	fi; \
 	if [ "$$examples" = "all" ]; then \
@@ -424,7 +424,7 @@ help: ## Show this help message
 	@printf "  \033[36mGIT_REMOTE\033[0m             Release git remote, defaults to \033[36m%s\033[0m\n" "$(GIT_REMOTE)"
 	@printf "  \033[36mOS\033[0m                     Release OS list: \033[36mdarwin,linux\033[0m\n"
 	@printf "  \033[36mARCH\033[0m                   Release arch list: \033[36mamd64,arm64\033[0m\n"
-	@printf "  \033[36mEXAMPLES\033[0m               Example integration tests for \033[36mmake example-integration\033[0m: \033[36mbwcheck,all\033[0m\n"
+	@printf "  \033[36mEXAMPLES\033[0m               Example integration tests for \033[36mmake integration\033[0m: \033[36mbwcheck,all\033[0m\n"
 	@printf "  \033[36mINSTALL_BINDIR\033[0m         Install directory, defaults to \033[36m%s\033[0m\n" "$(INSTALL_BINDIR)"
 	@printf "  \033[36mBASH_COMPLETION_DIR\033[0m    Bash completion install dir, defaults to \033[36m%s\033[0m\n" "$(BASH_COMPLETION_DIR)"
 	@printf "  \033[36mZSH_COMPLETION_DIR\033[0m     Zsh completion install dir, defaults to \033[36m%s\033[0m\n" "$(ZSH_COMPLETION_DIR)"
@@ -434,7 +434,7 @@ help: ## Show this help message
 	@printf "  \033[36m%-44s\033[0m # to check formatting without writing\n" "make fmt CHECK_ONLY=1"
 	@printf "  \033[36m%-44s\033[0m # to build and install the host binary and completions\n" "make install COMPLETION=1"
 	@printf "  \033[36m%-44s\033[0m # to run Docker E2E tests\n" "make e2e"
-	@printf "  \033[36m%-44s\033[0m # to run a specific example integration test\n" "make example-integration EXAMPLES=bwcheck"
+	@printf "  \033[36m%-44s\033[0m # to run a specific example integration test\n" "make integration EXAMPLES=bwcheck"
 	@printf "  \033[36m%-44s\033[0m # to run all release-blocking quality gates\n" "make check e2e kani"
 	@printf "  \033[36m%-44s\033[0m # to publish crates.io and push the release tag\n" "make release TAG=v1.0.0"
 	@printf "  \033[36m%-44s\033[0m # to build release binaries and checksums\n" "make dist OS=darwin,linux ARCH=amd64,arm64"
