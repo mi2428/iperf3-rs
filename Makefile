@@ -157,11 +157,11 @@ e2e: ## Run Docker E2E tests
 	@COMPOSE="$(COMPOSE)" DOCKER="$(DOCKER)" $(CARGO_ENV) $(CARGO) test --test e2e_test -- --ignored --nocapture --test-threads=1
 
 .PHONY: integration
-integration: ## Run example integration tests. Use EXAMPLES=name,all
+integration: ## Run local integration tests. Use EXAMPLES=name,all for examples
 	@examples="$(EXAMPLES)"; \
 	if [ -z "$$examples" ]; then \
-		echo "EXAMPLES is required, for example: make integration EXAMPLES=bwcheck" >&2; \
-		exit 1; \
+		$(CARGO_ENV) $(CARGO) test --test integration_test; \
+		exit 0; \
 	fi; \
 	if [ "$$examples" = "all" ]; then \
 		examples="$$(for compose in examples/*/docker-compose.test.yml; do \
@@ -434,6 +434,7 @@ help: ## Show this help message
 	@printf "  \033[36m%-44s\033[0m # to run tests without default features\n" "make test NO_DEFAULT=1"
 	@printf "  \033[36m%-44s\033[0m # to build and install the host binary and completions\n" "make install COMPLETION=1"
 	@printf "  \033[36m%-44s\033[0m # to run Docker E2E tests\n" "make e2e"
+	@printf "  \033[36m%-44s\033[0m # to run local integration tests\n" "make integration"
 	@printf "  \033[36m%-44s\033[0m # to run a specific example integration test\n" "make integration EXAMPLES=bwcheck"
 	@printf "  \033[36m%-44s\033[0m # to run all release-blocking quality gates\n" "make check e2e kani"
 	@printf "  \033[36m%-44s\033[0m # to publish crates.io and push the release tag\n" "make release TAG=v1.0.0"
