@@ -1,12 +1,10 @@
-mod support;
-
 use std::process::Command;
 
-use support::*;
+use super::helpers::*;
 
 // This smoke test protects the Docker image shape used by release publishing.
 //
-// The Compose integration test above runs in the `integration` target,
+// The Compose E2E test above runs in the `e2e` target,
 // which intentionally includes test tools such as curl and upstream iperf3.
 // The image published to GHCR is the `release` target instead: a scratch image
 // that contains only the iperf3-rs binary and the minimal writable filesystem
