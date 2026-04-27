@@ -26,7 +26,7 @@ Install the CLI from crates.io with Cargo:
 
 ```console
 $ cargo install iperf3-rs
-$ cargo install iperf3-rs --version 1.0.0  # install a specific version
+$ cargo install iperf3-rs --version 1.0.1  # install a specific version
 ```
 
 >[!NOTE]

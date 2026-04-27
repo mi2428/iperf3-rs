@@ -51,7 +51,7 @@ Help
   help           Show this help message
 
 Variables:
-  TAG                    Release tag for make release, for example v1.0.0
+  TAG                    Release tag for make release, for example v1.0.1
   GIT_REMOTE             Release git remote, defaults to origin
   OS                     Release OS list: darwin,linux
   ARCH                   Release arch list: amd64,arm64
@@ -71,7 +71,7 @@ Examples:
   make integration                             # to run local integration tests
   make integration EXAMPLES=bwcheck            # to run a specific example integration test
   make check e2e kani                          # to run all release-blocking quality gates
-  make release TAG=v1.0.0                      # to publish crates.io and push the release tag
+  make release TAG=v1.0.1                      # to publish crates.io and push the release tag
   make dist OS=darwin,linux ARCH=amd64,arm64   # to build release binaries and checksums
   make multipass                               # to prepare a Linux VM for manual testing
 ```
@@ -212,10 +212,10 @@ Kani is not a replacement for integration tests. Use it to lock down parsing, en
 
 ### cargo-dist
 
-Run `make release TAG=v1.0.0` to publish the crate to crates.io and push the release tag that drives cargo-dist.
+Run `make release TAG=v1.0.1` to publish the crate to crates.io and push the release tag that drives cargo-dist.
 The target requires a clean worktree and `cargo login` or `CARGO_REGISTRY_TOKEN` when the crates.io version does not already exist; it creates the tag when missing, uses an existing matching tag when present, and publishes from a temporary worktree checked out at that tag.
 
-Publishing a tag such as `v1.0.0` runs `.github/workflows/release.yml`.
+Publishing a tag such as `v1.0.1` runs `.github/workflows/release.yml`.
 `release.yml` is intentionally hand-edited for the Linux release container and smoke test, so `dist-workspace.toml` sets `allow-dirty = ["ci"]`.
 
 Linux artifacts are built in a Debian bullseye-based Rust image and smoke-tested in `debian:bullseye-slim` with `-h` and `--version`.
@@ -242,7 +242,7 @@ Before publishing a release:
 4. Run `make integration EXAMPLES=all`.
 5. Run `make dist OS=linux ARCH=arm64` if you want a local Linux arm64/glibc compatibility check before tagging.
 6. Confirm `HOMEBREW_TAP_TOKEN` can push to the tap repository.
-7. Run `make release TAG=v1.0.0`.
+7. Run `make release TAG=v1.0.1`.
 8. Confirm the crates.io version exists.
 9. Confirm the GitHub Release contains the expected archives and checksums.
 10. Confirm GHCR has the version tag and, for stable releases, `latest`.
