@@ -26,36 +26,55 @@ The Makefile help is the source of truth for local commands:
 
 ```console
 $ make help
+
+Development
+  build          Build the host binary into bin/
+  install        Build and install the host binary into INSTALL_BINDIR
+  fmt            Format Rust sources. Use CHECK_ONLY=1 to check without writing
+  lint           Run clippy with warnings treated as errors
+  doc            Build rustdoc with warnings treated as errors
+  test           Run unit tests. Use NO_DEFAULT=1 to disable default features
+  kani           Run Kani model checking harnesses
+  e2e            Run Docker E2E tests
+  integration    Run local integration tests. Use EXAMPLES=name,all for examples
+  check          Run formatting, lint, tests, and completion checks
+  multipass      Launch a Multipass VM and copy the source tree for manual Linux testing
+  clean          Remove local build artifacts
+
+Distribution
+  release        Tag, push, and publish the crate to crates.io. Requires TAG=vX.Y.Z
+  dist           Build release binaries into dist/. Use OS=darwin,linux and ARCH=amd64,arm64
+  dist-smoke     Smoke-test Linux dist binaries in an old-glibc Debian container
+  checksums      Write SHA-256 checksums for dist artifacts
+
+Help
+  help           Show this help message
+
+Variables:
+  TAG                    Release tag for make release, for example v1.0.0
+  GIT_REMOTE             Release git remote, defaults to origin
+  OS                     Release OS list: darwin,linux
+  ARCH                   Release arch list: amd64,arm64
+  EXAMPLES               Example integration tests for make integration: bwcheck,all
+  NO_DEFAULT             Disable default Cargo features for make test when set, for example 1
+  INSTALL_BINDIR         Install directory, defaults to /Users/teo/.local/bin
+  BASH_COMPLETION_DIR    Bash completion install dir, defaults to /Users/teo/.local/share/bash-completion/completions
+  ZSH_COMPLETION_DIR     Zsh completion install dir, defaults to /opt/homebrew/share/zsh/site-functions
+  FISH_COMPLETION_DIR    Fish completion install dir, defaults to /Users/teo/.local/share/fish/vendor_completions.d
+  MULTIPASS_NAME         Multipass VM name, defaults to iperf3-rs-dev
+
+Examples:
+  make fmt CHECK_ONLY=1                        # to check formatting without writing
+  make test NO_DEFAULT=1                       # to run tests without default features
+  make install COMPLETION=1                    # to build and install the host binary and completions
+  make e2e                                     # to run Docker E2E tests
+  make integration                             # to run local integration tests
+  make integration EXAMPLES=bwcheck            # to run a specific example integration test
+  make check e2e kani                          # to run all release-blocking quality gates
+  make release TAG=v1.0.0                      # to publish crates.io and push the release tag
+  make dist OS=darwin,linux ARCH=amd64,arm64   # to build release binaries and checksums
+  make multipass                               # to prepare a Linux VM for manual testing
 ```
-
-Common development targets:
-
-| Target | Purpose |
-| --- | --- |
-| `make build` | Build the host binary into `bin/`. |
-| `make install` | Build and install the host binary into `INSTALL_BINDIR`. Use `COMPLETION=1` to install shell completions too. |
-| `make fmt CHECK_ONLY=1` | Check Rust formatting without writing changes. |
-| `make lint` | Run clippy with warnings treated as errors. |
-| `make doc` | Build rustdoc with warnings treated as errors. |
-| `make test` | Run the default Cargo test suite; ignored Docker E2E tests stay ignored. |
-| `make test NO_DEFAULT=1` | Run the same Cargo test target with default features disabled. |
-| `make integration` | Run the local integration suite in `tests/integration`. |
-| `make integration EXAMPLES=bwcheck` | Run a specific example integration test. |
-| `make integration EXAMPLES=all` | Run every example integration test with `integration_test.rs`. |
-| `make e2e` | Run ignored Docker E2E tests in `tests/e2e`. |
-| `make kani` | Run Kani model checking harnesses. |
-| `make check` | Run formatting, clippy, rustdoc, default tests, no-default tests, and completion checks. |
-| `make multipass` | Launch a Multipass VM and copy the source tree for manual Linux testing. |
-| `make clean` | Remove local build artifacts. |
-
-Distribution targets:
-
-| Target | Purpose |
-| --- | --- |
-| `make release TAG=v1.0.0` | Tag, push, and publish the crate to crates.io. |
-| `make dist OS=darwin,linux ARCH=amd64,arm64` | Build release binaries into `dist/` and write checksums. |
-| `make dist-smoke` | Smoke-test Linux dist binaries in an old-glibc Debian container. |
-| `make checksums` | Write SHA-256 checksums for dist artifacts. |
 
 ## Rustdoc
 
