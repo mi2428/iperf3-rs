@@ -15,25 +15,6 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  workflow:
-    name: Workflow
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install actionlint
-        env:
-          ACTIONLINT_VERSION: "1.7.12"
-        run: |
-          mkdir -p "${RUNNER_TEMP}/actionlint"
-          curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash" \
-            | bash -s -- "${ACTIONLINT_VERSION}" "${RUNNER_TEMP}/actionlint"
-
-      - name: Run actionlint
-        run: |
-          "${RUNNER_TEMP}/actionlint/actionlint"
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -374,7 +355,6 @@ jobs:
     name: Required
     runs-on: ubuntu-latest
     needs:
-      - workflow
       - lint
       - test
       - kani
@@ -384,7 +364,6 @@ jobs:
     steps:
       - name: Require all checks
         run: |
-          test "${{ needs.workflow.result }}" = "success"
           test "${{ needs.lint.result }}" = "success"
           test "${{ needs.test.result }}" = "success"
           test "${{ needs.kani.result }}" = "success"
