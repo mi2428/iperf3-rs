@@ -22,6 +22,8 @@ COMPLETION_DIR := completions
 DISTDIR        := dist
 TEST_COMPOSE   := docker-compose.test.yml
 EXAMPLES       ?=
+NO_DEFAULT     ?=
+TEST_FEATURE_FLAGS := $(if $(NO_DEFAULT),--no-default-features)
 
 INSTALL_PREFIX      ?= $(HOME)/.local
 INSTALL_BINDIR      ?= $(INSTALL_PREFIX)/bin
@@ -143,12 +145,8 @@ doc: ## Build rustdoc with warnings treated as errors
 	@RUSTDOCFLAGS="-D warnings" $(CARGO_ENV) $(CARGO) doc --no-deps
 
 .PHONY: test
-test: ## Run unit tests
-	@$(CARGO_ENV) $(CARGO) test
-
-.PHONY: test-no-default
-test-no-default: ## Run tests with default features disabled
-	@$(CARGO_ENV) $(CARGO) test --no-default-features
+test: ## Run unit tests. Use NO_DEFAULT=1 to disable default features
+	@$(CARGO_ENV) $(CARGO) test $(TEST_FEATURE_FLAGS)
 
 .PHONY: kani
 kani: ## Run Kani model checking harnesses
@@ -198,7 +196,7 @@ check: ## Run formatting, lint, tests, and completion checks
 	@$(MAKE) --no-print-directory lint
 	@$(MAKE) --no-print-directory doc
 	@$(MAKE) --no-print-directory test
-	@$(MAKE) --no-print-directory test-no-default
+	@$(MAKE) --no-print-directory test NO_DEFAULT=1
 	@$(MAKE) --no-print-directory _completions CHECK_ONLY=1
 
 .PHONY: multipass
@@ -425,6 +423,7 @@ help: ## Show this help message
 	@printf "  \033[36mOS\033[0m                     Release OS list: \033[36mdarwin,linux\033[0m\n"
 	@printf "  \033[36mARCH\033[0m                   Release arch list: \033[36mamd64,arm64\033[0m\n"
 	@printf "  \033[36mEXAMPLES\033[0m               Example integration tests for \033[36mmake integration\033[0m: \033[36mbwcheck,all\033[0m\n"
+	@printf "  \033[36mNO_DEFAULT\033[0m             Disable default Cargo features for \033[36mmake test\033[0m when set, for example \033[36m1\033[0m\n"
 	@printf "  \033[36mINSTALL_BINDIR\033[0m         Install directory, defaults to \033[36m%s\033[0m\n" "$(INSTALL_BINDIR)"
 	@printf "  \033[36mBASH_COMPLETION_DIR\033[0m    Bash completion install dir, defaults to \033[36m%s\033[0m\n" "$(BASH_COMPLETION_DIR)"
 	@printf "  \033[36mZSH_COMPLETION_DIR\033[0m     Zsh completion install dir, defaults to \033[36m%s\033[0m\n" "$(ZSH_COMPLETION_DIR)"
@@ -432,6 +431,7 @@ help: ## Show this help message
 	@printf "  \033[36mMULTIPASS_NAME\033[0m         Multipass VM name, defaults to \033[36m%s\033[0m\n" "$(MULTIPASS_NAME)"
 	@printf "\n\033[1mExamples:\033[0m\n"
 	@printf "  \033[36m%-44s\033[0m # to check formatting without writing\n" "make fmt CHECK_ONLY=1"
+	@printf "  \033[36m%-44s\033[0m # to run tests without default features\n" "make test NO_DEFAULT=1"
 	@printf "  \033[36m%-44s\033[0m # to build and install the host binary and completions\n" "make install COMPLETION=1"
 	@printf "  \033[36m%-44s\033[0m # to run Docker E2E tests\n" "make e2e"
 	@printf "  \033[36m%-44s\033[0m # to run a specific example integration test\n" "make integration EXAMPLES=bwcheck"
