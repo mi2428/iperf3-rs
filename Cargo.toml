@@ -1,6 +1,6 @@
 [package]
 name = "iperf3-rs"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 rust-version = "1.93.0"
 links = "iperf"
@@ -36,7 +36,8 @@ include = [
   "/native/**",
   "/rust-toolchain.toml",
   "/src/**",
-  "/tests/library_api_test.rs",
+  "/tests/integration_test.rs",
+  "/tests/integration/**",
 ]
 
 [dependencies]

@@ -251,7 +251,7 @@ impl Drop for DockerContainer {
 fn compose_command() -> Vec<OsString> {
     // Allow Makefile-driven tests to pass either `docker compose` or a
     // `docker-compose` binary path through COMPOSE. Falling back to Docker
-    // Compose v2 keeps direct `cargo test --test integration_test -- --ignored`
+    // Compose v2 keeps direct `cargo test --test e2e_test -- --ignored`
     // usable on a normal Docker installation.
     env::var_os("COMPOSE")
         .and_then(|raw| {
@@ -273,6 +273,10 @@ pub(crate) fn truthy_env(key: &str) -> bool {
     nonempty_env(key)
         .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
         .unwrap_or_default()
+}
+
+pub(crate) fn skip_e2e_image_build() -> bool {
+    truthy_env("SKIP_E2E_IMAGE_BUILD") || truthy_env("SKIP_INTEGRATION_IMAGE_BUILD")
 }
 
 fn nonempty_env(key: &str) -> Option<String> {
@@ -299,23 +303,23 @@ pub(crate) fn retry_json_client(label: &str, run: impl FnMut() -> Output) -> Val
     parse_iperf_summary(&output).expect("iperf JSON should be valid after successful retry")
 }
 
-// The Docker integration remains one Rust test for setup cost, so explicit
+// The Docker E2E remains one Rust test for setup cost, so explicit
 // markers make the inner scenario progress visible under `--nocapture`.
 pub(crate) fn scenario<T>(name: &str, run: impl FnOnce() -> T) -> T {
     let started = Instant::now();
-    eprintln!("\n[integration] START {name}");
+    eprintln!("\n[e2e] START {name}");
 
     match panic::catch_unwind(AssertUnwindSafe(run)) {
         Ok(value) => {
             eprintln!(
-                "[integration] PASS  {name} ({:.1}s)",
+                "[e2e] PASS  {name} ({:.1}s)",
                 started.elapsed().as_secs_f64()
             );
             value
         }
         Err(payload) => {
             eprintln!(
-                "[integration] FAIL  {name} ({:.1}s)",
+                "[e2e] FAIL  {name} ({:.1}s)",
                 started.elapsed().as_secs_f64()
             );
             panic::resume_unwind(payload);
@@ -589,7 +593,7 @@ fn metric_value(metrics: &str, name: &str, scenario: &str) -> Option<f64> {
     // Pushgateway exposes all retained groups on /metrics, so the labels are
     // part of the success condition. `job` is the Pushgateway path root, while
     // `test` and `scenario` are the user-provided grouping labels used by this
-    // integration run.
+    // E2E run.
     let prefix = format!("{name}{{");
     let job_label = format!(r#"job="{PUSH_JOB}""#);
     let test_label = format!(r#"test="{PUSH_TEST}""#);
@@ -606,7 +610,7 @@ fn metric_value(metrics: &str, name: &str, scenario: &str) -> Option<f64> {
 }
 
 pub(crate) fn assert_success(args: &[&str], output: &Output) {
-    assert_command_success(&format!("integration command {args:?}"), output);
+    assert_command_success(&format!("E2E command {args:?}"), output);
 }
 
 pub(crate) fn assert_command_success(label: &str, output: &Output) {
@@ -621,6 +625,6 @@ pub(crate) fn assert_command_success(label: &str, output: &Output) {
 pub(crate) fn assert_child_success(args: &[&str], child: Child) {
     let output = child
         .wait_with_output()
-        .expect("failed to wait for integration command");
+        .expect("failed to wait for E2E command");
     assert_success(args, &output);
 }

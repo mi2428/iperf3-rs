@@ -50,16 +50,15 @@ fn run() -> Result<()> {
 
     let mut sinks = MetricsSinks::new();
     if let Some(push_url) = app.push_url {
-        let sink = PushGateway::new(PushGatewayConfig {
-            endpoint: push_url,
-            job: app.push_job,
-            labels: app.push_labels,
-            timeout: app.push_timeout,
-            retries: app.push_retries,
-            user_agent: app.push_user_agent,
-            metric_prefix: app.metrics_prefix.clone(),
-            delete_on_finish: app.push_delete_on_exit,
-        })?;
+        let config = PushGatewayConfig::new(push_url)
+            .job(app.push_job)
+            .labels(app.push_labels)
+            .timeout(app.push_timeout)
+            .retries(app.push_retries)
+            .user_agent(app.push_user_agent)
+            .metric_prefix(app.metrics_prefix.clone())
+            .delete_on_finish(app.push_delete_on_exit);
+        let sink = PushGateway::new(config)?;
         sinks.pushgateway(sink, app.push_interval);
     }
     if let Some(metrics_file) = app.metrics_file {

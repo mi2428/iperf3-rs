@@ -13,7 +13,7 @@ This document is the maintainer and developer reference for `iperf3-rs`.
   - [Native Build](#native-build)
 - [Verification](#verification)
   - [When to Run What](#when-to-run-what)
-  - [Integration Tests](#integration-tests)
+  - [Integration and E2E Tests](#integration-and-e2e-tests)
   - [Kani](#kani)
 - [Release Operations](#release-operations)
   - [cargo-dist](#cargo-dist)
@@ -25,37 +25,38 @@ This document is the maintainer and developer reference for `iperf3-rs`.
 The Makefile help is the source of truth for local commands:
 
 ```console
-$ make
+$ make help
 
 Development
-  build              Build the host binary into bin/
-  install            Build and install the host binary into INSTALL_BINDIR
-  fmt                Format Rust sources. Use CHECK_ONLY=1 to check without writing
-  lint               Run clippy with warnings treated as errors
-  doc                Build rustdoc with warnings treated as errors
-  test               Run unit tests
-  test-no-default    Run tests with default features disabled
-  kani               Run Kani model checking harnesses
-  integration        Run Docker Compose integration tests. Use EXAMPLES=name,all for example tests
-  check              Run formatting, lint, tests, and completion checks
-  multipass          Launch a Multipass VM and copy the source tree for manual Linux testing
-  clean              Remove local build artifacts
+  build          Build the host binary into bin/
+  install        Build and install the host binary into INSTALL_BINDIR
+  fmt            Format Rust sources. Use CHECK_ONLY=1 to check without writing
+  lint           Run clippy with warnings treated as errors
+  doc            Build rustdoc with warnings treated as errors
+  test           Run unit tests. Use NO_DEFAULT=1 to disable default features
+  kani           Run Kani model checking harnesses
+  e2e            Run Docker E2E tests
+  integration    Run local integration tests. Use EXAMPLES=name,all for examples
+  check          Run formatting, lint, tests, and completion checks
+  multipass      Launch a Multipass VM and copy the source tree for manual Linux testing
+  clean          Remove local build artifacts
 
 Distribution
-  release            Tag, push, and publish the crate to crates.io. Requires TAG=vX.Y.Z
-  dist               Build release binaries into dist/. Use OS=darwin,linux and ARCH=amd64,arm64
-  dist-smoke         Smoke-test Linux dist binaries in an old-glibc Debian container
-  checksums          Write SHA-256 checksums for dist artifacts
+  release        Tag, push, and publish the crate to crates.io. Requires TAG=vX.Y.Z
+  dist           Build release binaries into dist/. Use OS=darwin,linux and ARCH=amd64,arm64
+  dist-smoke     Smoke-test Linux dist binaries in an old-glibc Debian container
+  checksums      Write SHA-256 checksums for dist artifacts
 
 Help
-  help               Show this help message
+  help           Show this help message
 
 Variables:
-  TAG                    Release tag for make release, for example v1.0.0
+  TAG                    Release tag for make release, for example v1.0.1
   GIT_REMOTE             Release git remote, defaults to origin
   OS                     Release OS list: darwin,linux
   ARCH                   Release arch list: amd64,arm64
-  EXAMPLES               Example integration tests: bwcheck,all
+  EXAMPLES               Example integration tests for make integration: bwcheck,all
+  NO_DEFAULT             Disable default Cargo features for make test when set, for example 1
   INSTALL_BINDIR         Install directory, defaults to /Users/teo/.local/bin
   BASH_COMPLETION_DIR    Bash completion install dir, defaults to /Users/teo/.local/share/bash-completion/completions
   ZSH_COMPLETION_DIR     Zsh completion install dir, defaults to /opt/homebrew/share/zsh/site-functions
@@ -64,10 +65,13 @@ Variables:
 
 Examples:
   make fmt CHECK_ONLY=1                        # to check formatting without writing
+  make test NO_DEFAULT=1                       # to run tests without default features
   make install COMPLETION=1                    # to build and install the host binary and completions
+  make e2e                                     # to run Docker E2E tests
+  make integration                             # to run local integration tests
   make integration EXAMPLES=bwcheck            # to run a specific example integration test
-  make check integration kani                  # to run all release-blocking quality gates
-  make release TAG=v1.0.0                      # to publish crates.io and push the release tag
+  make check e2e kani                          # to run all release-blocking quality gates
+  make release TAG=v1.0.1                      # to publish crates.io and push the release tag
   make dist OS=darwin,linux ARCH=amd64,arm64   # to build release binaries and checksums
   make multipass                               # to prepare a Linux VM for manual testing
 ```
@@ -148,24 +152,39 @@ Pushgateway HTTPS uses Rustls with webpki roots, so HTTPS Pushgateway requests d
 | --- | --- |
 | Rust implementation | `make check` |
 | CLI args, help, env vars, labels, durations | `make check integration kani` |
-| Prometheus, Pushgateway, metrics files, window aggregation | `make check integration kani` |
-| Public Rust API or examples | `make check integration EXAMPLES=bwcheck` and `make doc` |
-| libiperf, native shim, build script, Dockerfile | `make check integration` plus a relevant `make dist ...` |
-| Release metadata, cargo-dist, workflows | `make check` and review generated/CI behavior carefully |
+| Prometheus, Pushgateway, metrics files, window aggregation | `make check integration e2e kani` |
+| Public Rust API or examples | `make check integration`, `make integration EXAMPLES=all`, and `make doc` |
+| libiperf, native shim, build script, Dockerfile | `make check integration e2e` plus a relevant `make dist ...` |
+| Release metadata, cargo-dist, workflows | `make check e2e` and review generated/CI behavior carefully |
 
-### Integration Tests
+### Integration and E2E Tests
 
-`make integration` runs the main Docker Compose test. It covers the cases most likely to regress across the Rust/libiperf boundary:
+`make integration` runs the local integration suite under `tests/integration`. It does not require Docker.
+It covers the cases that should stay fast enough for ordinary local development:
+
+- public API metadata and upstream usage exposure;
+- zero-duration metrics window rejection;
+- public Prometheus encoding and JSONL metrics file writing;
+- CLI metrics-file behavior without replacing normal iperf stdout;
+- CLI Prometheus file output with custom prefixes and labels;
+- fatal CLI handling for metrics-file creation failures;
+- library interval and window metrics through `IperfCommand::spawn()`;
+- library interval and window metrics retained by blocking `IperfCommand::run()`;
+- direct Pushgateway request path and payload construction against a local HTTP sink.
+
+`make e2e` runs the ignored Docker E2E suite under `tests/e2e` with a single test thread.
+It covers the cases most likely to regress across containers, the Rust/libiperf boundary, or published image shape:
 
 - upstream `iperf3` to `iperf3-rs` interoperability in both directions;
 - `iperf3-rs` to `iperf3-rs` metrics export;
 - Pushgateway readiness, delete-on-exit, and window metrics;
-- Prometheus file output with custom prefix and labels;
+- Prometheus file output with custom prefix and labels inside the Compose topology;
 - server-side metrics and repeated accepted tests;
 - UDP, reverse TCP, and bidirectional TCP;
-- live interval visibility before a long-running client exits.
+- live interval visibility before a long-running client exits;
+- release Docker image startup and release-image-to-release-image traffic.
 
-Example integration tests are separate:
+Example integration tests run through the `integration` target by setting `EXAMPLES`:
 
 ```console
 $ make integration EXAMPLES=bwcheck
@@ -193,10 +212,10 @@ Kani is not a replacement for integration tests. Use it to lock down parsing, en
 
 ### cargo-dist
 
-Run `make release TAG=v1.0.0` to publish the crate to crates.io and push the release tag that drives cargo-dist.
+Run `make release TAG=v1.0.1` to publish the crate to crates.io and push the release tag that drives cargo-dist.
 The target requires a clean worktree and `cargo login` or `CARGO_REGISTRY_TOKEN` when the crates.io version does not already exist; it creates the tag when missing, uses an existing matching tag when present, and publishes from a temporary worktree checked out at that tag.
 
-Publishing a tag such as `v1.0.0` runs `.github/workflows/release.yml`.
+Publishing a tag such as `v1.0.1` runs `.github/workflows/release.yml`.
 `release.yml` is intentionally hand-edited for the Linux release container and smoke test, so `dist-workspace.toml` sets `allow-dirty = ["ci"]`.
 
 Linux artifacts are built in a Debian bullseye-based Rust image and smoke-tested in `debian:bullseye-slim` with `-h` and `--version`.
@@ -207,7 +226,7 @@ Use `make dist OS=... ARCH=...` for local release-style builds under `dist/`.
 
 Workflows:
 
-- `.github/workflows/checks.yml`: pull-request checks for workflow linting, Rust linting, unit tests, Kani, integration tests, and Linux dist startup smoke tests.
+- `.github/workflows/checks.yml`: pull-request checks for workflow linting, Rust linting, default/no-default Cargo tests, Kani, Docker E2E tests, example integration tests, and Linux dist startup smoke tests.
 - `.github/workflows/release.yml`: cargo-dist archives, GitHub Releases, and Homebrew formula publishing.
 - `.github/workflows/ghcr.yml`: multi-arch GHCR image publishing after a GitHub Release is published.
 
@@ -219,11 +238,12 @@ Before publishing a release:
 
 1. Confirm `Cargo.toml` has the intended version.
 2. Confirm `dist-workspace.toml` targets and cargo-dist version are correct.
-3. Run `make check integration kani`.
-4. Run `make dist OS=linux ARCH=arm64` if you want a local Linux arm64/glibc compatibility check before tagging.
-5. Confirm `HOMEBREW_TAP_TOKEN` can push to the tap repository.
-6. Run `make release TAG=v1.0.0`.
-7. Confirm the crates.io version exists.
-8. Confirm the GitHub Release contains the expected archives and checksums.
-9. Confirm GHCR has the version tag and, for stable releases, `latest`.
-10. Confirm the Homebrew formula was updated in `mi2428/homebrew-iperf3-rs`.
+3. Run `make check integration e2e kani`.
+4. Run `make integration EXAMPLES=all`.
+5. Run `make dist OS=linux ARCH=arm64` if you want a local Linux arm64/glibc compatibility check before tagging.
+6. Confirm `HOMEBREW_TAP_TOKEN` can push to the tap repository.
+7. Run `make release TAG=v1.0.1`.
+8. Confirm the crates.io version exists.
+9. Confirm the GitHub Release contains the expected archives and checksums.
+10. Confirm GHCR has the version tag and, for stable releases, `latest`.
+11. Confirm the Homebrew formula was updated in `mi2428/homebrew-iperf3-rs`.
