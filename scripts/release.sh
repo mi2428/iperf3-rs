@@ -69,7 +69,13 @@ crates_io_version_exists() {
   local status
 
   command -v curl >/dev/null 2>&1 || return 1
-  status="$(curl -sS -o /dev/null -w '%{http_code}' "https://crates.io/api/v1/crates/${package_name}/${package_version}" || true)"
+  status="$(curl \
+    -A "iperf3-rs release script (https://github.com/mi2428/iperf3-rs)" \
+    -H 'Accept: application/json' \
+    -sS \
+    -o /dev/null \
+    -w '%{http_code}' \
+    "https://crates.io/api/v1/crates/${package_name}/${package_version}" || true)"
   case "${status}" in
     200) return 0 ;;
     404) return 1 ;;
