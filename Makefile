@@ -386,7 +386,7 @@ _dist.linux.$(1): _docker-check
 		$(LINUX_BUILD_IMAGE) \
 		bash -eu -o pipefail -c ' \
 			apt-get update >/dev/null; \
-			apt-get install -y --no-install-recommends build-essential make pkg-config ca-certificates >/dev/null; \
+			apt-get install -y --no-install-recommends --no-upgrade build-essential make pkg-config ca-certificates >/dev/null; \
 			cargo build --release; \
 			cp target/linux-$(1)-$(LINUX_CACHE_KEY)/release/$(APP) dist/$(APP)-$$(LINUX_$(1)_SUFFIX); \
 			chmod +x dist/$(APP)-$$(LINUX_$(1)_SUFFIX); \
