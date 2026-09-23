@@ -91,7 +91,7 @@ main() {
   local package_name package_version
   local version_published=0
 
-  [[ -n "${tag}" ]] || fail "TAG is required, for example: make release TAG=v1.0.2"
+  [[ -n "${tag}" ]] || fail "TAG is required, for example: make release TAG=v1.0.3"
   [[ "${tag}" =~ ${SEMVER_TAG_RE} ]] || fail "TAG must look like vMAJOR.MINOR.PATCH"
 
   repo_root="$(git rev-parse --show-toplevel)"
