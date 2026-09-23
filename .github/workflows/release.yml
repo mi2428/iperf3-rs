@@ -144,7 +144,7 @@ jobs:
             sudo_cmd=
           fi
           ${sudo_cmd} apt-get update
-          ${sudo_cmd} apt-get install -y --no-install-recommends \
+          ${sudo_cmd} apt-get install -y --no-install-recommends --no-upgrade \
             build-essential \
             ca-certificates \
             jq \

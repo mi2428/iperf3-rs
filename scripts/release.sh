@@ -91,7 +91,7 @@ main() {
   local package_name package_version
   local version_published=0
 
-  [[ -n "${tag}" ]] || fail "TAG is required, for example: make release TAG=v1.0.2"
+  [[ -n "${tag}" ]] || fail "TAG is required, for example: make release TAG=v1.0.3"
   [[ "${tag}" =~ ${SEMVER_TAG_RE} ]] || fail "TAG must look like vMAJOR.MINOR.PATCH"
 
   repo_root="$(git rev-parse --show-toplevel)"
@@ -144,15 +144,15 @@ main() {
     run "${cargo}" publish --dry-run --locked
   )
 
-  run git push "${remote}" "refs/tags/${tag}"
-  release_pushed_created_tag=1
-
   if [[ "${version_published}" == "0" ]]; then
     (
       cd "${release_worktree}"
       run "${cargo}" publish --locked
     )
   fi
+
+  run git push "${remote}" "refs/tags/${tag}"
+  release_pushed_created_tag=1
 
   if [[ "${version_published}" == "0" ]]; then
     printf 'Published %s %s and pushed tag %s to %s\n' "${package_name}" "${package_version}" "${tag}" "${remote}"

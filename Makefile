@@ -386,7 +386,7 @@ _dist.linux.$(1): _docker-check
 		$(LINUX_BUILD_IMAGE) \
 		bash -eu -o pipefail -c ' \
 			apt-get update >/dev/null; \
-			apt-get install -y --no-install-recommends build-essential make pkg-config ca-certificates >/dev/null; \
+			apt-get install -y --no-install-recommends --no-upgrade build-essential make pkg-config ca-certificates >/dev/null; \
 			cargo build --release; \
 			cp target/linux-$(1)-$(LINUX_CACHE_KEY)/release/$(APP) dist/$(APP)-$$(LINUX_$(1)_SUFFIX); \
 			chmod +x dist/$(APP)-$$(LINUX_$(1)_SUFFIX); \
@@ -418,7 +418,7 @@ help: ## Show this help message
 			} \
 		}' $(MAKEFILE_LIST)
 	@printf "\n\033[1mVariables:\033[0m\n"
-	@printf "  \033[36mTAG\033[0m                    Release tag for \033[36mmake release\033[0m, for example \033[36mv1.0.2\033[0m\n"
+	@printf "  \033[36mTAG\033[0m                    Release tag for \033[36mmake release\033[0m, for example \033[36mv1.0.3\033[0m\n"
 	@printf "  \033[36mGIT_REMOTE\033[0m             Release git remote, defaults to \033[36m%s\033[0m\n" "$(GIT_REMOTE)"
 	@printf "  \033[36mOS\033[0m                     Release OS list: \033[36mdarwin,linux\033[0m\n"
 	@printf "  \033[36mARCH\033[0m                   Release arch list: \033[36mamd64,arm64\033[0m\n"
@@ -437,6 +437,6 @@ help: ## Show this help message
 	@printf "  \033[36m%-44s\033[0m # to run local integration tests\n" "make integration"
 	@printf "  \033[36m%-44s\033[0m # to run a specific example integration test\n" "make integration EXAMPLES=bwcheck"
 	@printf "  \033[36m%-44s\033[0m # to run all release-blocking quality gates\n" "make check e2e kani"
-	@printf "  \033[36m%-44s\033[0m # to publish crates.io and push the release tag\n" "make release TAG=v1.0.2"
+	@printf "  \033[36m%-44s\033[0m # to publish crates.io and push the release tag\n" "make release TAG=v1.0.3"
 	@printf "  \033[36m%-44s\033[0m # to build release binaries and checksums\n" "make dist OS=darwin,linux ARCH=amd64,arm64"
 	@printf "  \033[36m%-44s\033[0m # to prepare a Linux VM for manual testing\n" "make multipass"
