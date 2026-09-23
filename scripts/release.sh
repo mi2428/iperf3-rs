@@ -144,15 +144,15 @@ main() {
     run "${cargo}" publish --dry-run --locked
   )
 
-  run git push "${remote}" "refs/tags/${tag}"
-  release_pushed_created_tag=1
-
   if [[ "${version_published}" == "0" ]]; then
     (
       cd "${release_worktree}"
       run "${cargo}" publish --locked
     )
   fi
+
+  run git push "${remote}" "refs/tags/${tag}"
+  release_pushed_created_tag=1
 
   if [[ "${version_published}" == "0" ]]; then
     printf 'Published %s %s and pushed tag %s to %s\n' "${package_name}" "${package_version}" "${tag}" "${remote}"
