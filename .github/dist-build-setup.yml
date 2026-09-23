@@ -19,7 +19,6 @@
     ${sudo_cmd} apt-get install -y --no-install-recommends --no-upgrade \
       build-essential \
       ca-certificates \
-      jq \
       make \
       pkg-config \
       xz-utils
