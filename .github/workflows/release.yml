@@ -385,6 +385,9 @@ jobs:
             name=$(echo "$filename" | sed "s/\.rb$//")
             version=$(echo "$release" | jq .app_version --raw-output)
 
+            sed -i '/^  version "/d; $d' "Formula/${filename}"
+            printf '\n  test do\n    assert_match version.to_s, shell_output("#{bin}/iperf3-rs --version")\n  end\nend\n' >> "Formula/${filename}"
+
             export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
             brew update
             # We avoid reformatting user-provided data such as the app description and homepage.
