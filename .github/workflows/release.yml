@@ -338,16 +338,29 @@ jobs:
         run: |
           # Remove the granular manifests
           rm -f artifacts/*-dist-manifest.json
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release
         env:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
+          RELEASE_PRERELEASE: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease }}"
           ANNOUNCEMENT_TITLE: "${{ fromJson(steps.host.outputs.manifest).announcement_title }}"
           ANNOUNCEMENT_BODY: "${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}"
         run: |
           # Write and read notes from a file to avoid quoting breaking things
           echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
 
-          gh release create "${{ needs.plan.outputs.tag }}" --target "$(git rev-parse HEAD)" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+          tag="${{ needs.plan.outputs.tag }}"
+          release_commit="$(git rev-parse HEAD)"
+          test "$(git rev-parse "${tag}^{commit}")" = "$release_commit"
+
+          if release="$(gh release view "$tag" --json isDraft,isPrerelease,targetCommitish 2>/dev/null)"; then
+            test "$(jq -r .isDraft <<< "$release")" = false
+            test "$(jq -r .isPrerelease <<< "$release")" = "$RELEASE_PRERELEASE"
+            target="$(jq -r .targetCommitish <<< "$release")"
+            test "$(git rev-parse "${target}^{commit}")" = "$release_commit"
+            gh release upload "$tag" --clobber artifacts/*
+          else
+            gh release create "$tag" --target "$release_commit" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+          fi
 
   publish-homebrew-formula:
     needs:
@@ -394,7 +407,9 @@ jobs:
             brew style --except-cops FormulaAudit/Homepage,FormulaAudit/Desc,FormulaAuditStrict --fix "Formula/${filename}" || true
 
             git add "Formula/${filename}"
-            git commit -m "${name} ${version}"
+            if ! git diff --cached --quiet; then
+              git commit -m "${name} ${version}"
+            fi
           done
           git push
 
