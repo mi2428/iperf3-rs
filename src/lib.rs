@@ -63,6 +63,9 @@
 //! mode (`-s -1`) by default; opt in with
 //! [`IperfCommand::allow_unbounded_server`] only when the process is dedicated
 //! to that long-lived server.
+//! While a run is active, SIGPIPE is ignored process-wide and the prior
+//! disposition is restored afterward. Unrelated code must coordinate signal
+//! reconfiguration with these runs; the run lock cannot isolate external code.
 //!
 //! [`RunningIperf`] observes worker completion; it is not a cancellation or kill
 //! handle. Dropping it detaches the worker, and

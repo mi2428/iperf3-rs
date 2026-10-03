@@ -79,7 +79,6 @@ impl Error {
         Self::new(ErrorKind::Internal, message)
     }
 
-    #[cfg(any(feature = "pushgateway", feature = "serde"))]
     pub(crate) fn with_source(
         kind: ErrorKind,
         message: impl Into<String>,

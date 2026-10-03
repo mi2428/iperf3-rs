@@ -2,6 +2,7 @@
 
 #include "iperf_config.h"
 
+#include <errno.h>
 #include <getopt.h>
 #include <signal.h>
 #include <stdio.h>
@@ -320,11 +321,76 @@ iperf3rs_current_error(void)
     return iperf_strerror(i_errno);
 }
 
-void
+struct iperf3rs_sigpipe_state {
+#ifdef SIGPIPE
+    struct sigaction previous;
+#else
+    char unused;
+#endif
+};
+
+void *
 iperf3rs_ignore_sigpipe(void)
 {
+    struct iperf3rs_sigpipe_state *saved = malloc(sizeof(*saved));
+    if (saved == NULL) {
+        return NULL;
+    }
 #ifdef SIGPIPE
-    signal(SIGPIPE, SIG_IGN);
+    struct sigaction ignored;
+    memset(&ignored, 0, sizeof(ignored));
+    ignored.sa_handler = SIG_IGN;
+    sigemptyset(&ignored.sa_mask);
+    if (sigaction(SIGPIPE, &ignored, &saved->previous) < 0) {
+        int error_number = errno;
+        free(saved);
+        errno = error_number;
+        return NULL;
+    }
+#endif
+    return saved;
+}
+
+int
+iperf3rs_restore_sigpipe(void *value)
+{
+    struct iperf3rs_sigpipe_state *saved = value;
+    int rc = 0;
+#ifdef SIGPIPE
+    rc = sigaction(SIGPIPE, &saved->previous, NULL);
+#endif
+    int error_number = errno;
+    free(saved);
+    errno = error_number;
+    return rc;
+}
+
+#ifdef SIGPIPE
+static void
+iperf3rs_probe_sigpipe_handler(int signal_number)
+{
+    (void)signal_number;
+}
+#endif
+
+/* The regression invokes this only in an isolated test process. */
+int
+iperf3rs_sigpipe_probe(int install)
+{
+#ifdef SIGPIPE
+    struct sigaction action;
+    if (install) {
+        memset(&action, 0, sizeof(action));
+        action.sa_handler = iperf3rs_probe_sigpipe_handler;
+        sigemptyset(&action.sa_mask);
+        return sigaction(SIGPIPE, &action, NULL);
+    }
+    if (sigaction(SIGPIPE, NULL, &action) < 0) {
+        return -1;
+    }
+    return action.sa_handler == iperf3rs_probe_sigpipe_handler;
+#else
+    return install ? 0 : 1;
 #endif
 }
 

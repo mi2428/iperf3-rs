@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Sender, bounded};
 
-use crate::iperf::{IperfTest, Role};
+use crate::iperf::{IperfTest, Role, SigpipeGuard};
 #[cfg(feature = "pushgateway")]
 use crate::metrics::IntervalMetricsReporter;
 use crate::metrics::{
@@ -599,6 +599,14 @@ fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Re
         .lock()
         .map_err(|_| Error::internal("libiperf run lock is poisoned"))?;
 
+    let mut sigpipe = match SigpipeGuard::install() {
+        Ok(guard) => guard,
+        Err(error) => {
+            notify_ready(ready, Err(format!("{error:#}")));
+            return Err(error);
+        }
+    };
+
     let mut setup = match setup_run(command) {
         Ok(setup) => setup,
         Err(err) => {
@@ -635,6 +643,7 @@ fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Re
         .map(|stream| stream.collect())
         .unwrap_or_default();
 
+    sigpipe.restore()?;
     result?;
     #[cfg(feature = "pushgateway")]
     push_result?;

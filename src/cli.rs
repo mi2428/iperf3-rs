@@ -7,7 +7,7 @@ use anyhow::{Context, Result, anyhow};
 
 use crate::args::extract_app_options;
 use crate::help;
-use crate::iperf::IperfTest;
+use crate::iperf::{IperfTest, SigpipeGuard};
 use crate::metrics::{IntervalMetricsReporter, MetricsSinks};
 use crate::metrics_file::MetricsFileSink;
 use crate::pushgateway::{PushGateway, PushGatewayConfig};
@@ -53,6 +53,7 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    let mut sigpipe = SigpipeGuard::install()?;
     let mut test = IperfTest::new().context("failed to create iperf test")?;
     test.parse_arguments(&iperf_args)?;
 
@@ -90,6 +91,7 @@ fn run() -> Result<()> {
     // thread, and surfaces required file sink errors after libiperf stops.
     let reporter_result = reporter.map(IntervalMetricsReporter::finish).transpose();
 
+    sigpipe.restore()?;
     result?;
     reporter_result?;
     Ok(())

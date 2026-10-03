@@ -3,7 +3,7 @@
 //! Most users should prefer [`crate::IperfCommand`]. This module keeps the FFI
 //! boundary localized and exposes only small value types at the crate root.
 
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_void};
 use std::os::raw::{c_char, c_double, c_int};
 use std::ptr::NonNull;
 
@@ -11,7 +11,7 @@ use crate::{Error, ErrorKind, Result};
 
 #[allow(non_camel_case_types)]
 mod ffi {
-    use super::{c_char, c_double, c_int};
+    use super::{c_char, c_double, c_int, c_void};
 
     // libiperf owns this object; Rust only passes the opaque pointer back to C.
     #[repr(C)]
@@ -78,11 +78,14 @@ mod ffi {
         pub fn iperf3rs_current_errno() -> c_int;
         pub fn iperf3rs_is_auth_test_error() -> c_int;
         pub fn iperf3rs_current_error() -> *const c_char;
-        pub fn iperf3rs_ignore_sigpipe();
+        pub fn iperf3rs_ignore_sigpipe() -> *mut c_void;
+        pub fn iperf3rs_restore_sigpipe(saved: *mut c_void) -> c_int;
         pub fn iperf3rs_usage_long() -> *mut c_char;
         pub fn iperf3rs_free_string(value: *mut c_char);
         #[cfg(test)]
         pub fn iperf3rs_diskfile_name(test: *mut iperf_test) -> *const c_char;
+        #[cfg(test)]
+        pub fn iperf3rs_sigpipe_probe(install: c_int) -> c_int;
     }
 }
 
@@ -111,6 +114,43 @@ pub struct IperfTest {
     ptr: NonNull<ffi::iperf_test>,
     // libiperf borrows and mutates argv bytes. Drop them only after native free.
     argv_storage: Vec<Vec<u8>>,
+}
+
+pub(crate) struct SigpipeGuard(Option<NonNull<c_void>>);
+
+impl SigpipeGuard {
+    pub(crate) fn install() -> Result<Self> {
+        NonNull::new(unsafe { ffi::iperf3rs_ignore_sigpipe() })
+            .map(|saved| Self(Some(saved)))
+            .ok_or_else(|| {
+                Error::with_source(
+                    ErrorKind::Libiperf,
+                    "failed to save and ignore SIGPIPE",
+                    std::io::Error::last_os_error(),
+                )
+            })
+    }
+
+    pub(crate) fn restore(&mut self) -> Result<()> {
+        if let Some(saved) = self.0.take()
+            && unsafe { ffi::iperf3rs_restore_sigpipe(saved.as_ptr()) } < 0
+        {
+            return Err(Error::with_source(
+                ErrorKind::Libiperf,
+                "failed to restore SIGPIPE",
+                std::io::Error::last_os_error(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for SigpipeGuard {
+    fn drop(&mut self) {
+        if let Err(error) = self.restore() {
+            eprintln!("{error:#}");
+        }
+    }
 }
 
 impl IperfTest {
@@ -202,14 +242,16 @@ impl IperfTest {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        unsafe { ffi::iperf3rs_ignore_sigpipe() };
-        match self.role() {
+        let mut sigpipe = SigpipeGuard::install()?;
+        let result = match self.role() {
             Role::Client => self.run_client(),
             Role::Server => self.run_server(),
             Role::Unknown(role) => Err(Error::invalid_argument(format!(
                 "iperf role was not set by arguments: {role}"
             ))),
-        }
+        };
+        sigpipe.restore()?;
+        result
     }
 
     fn run_client(&mut self) -> Result<()> {
@@ -394,6 +436,51 @@ mod tests {
             ])
             .unwrap();
             assert_eq!(next.role(), Role::Client);
+        }
+    }
+
+    #[test]
+    fn sigpipe_disposition_is_restored_on_return_and_drop() {
+        const CHILD: &str = "IPERF3_RS_SIGPIPE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let _guard = crate::command::run_lock().lock().unwrap();
+            assert_eq!(unsafe { ffi::iperf3rs_sigpipe_probe(1) }, 0);
+            {
+                let _temporary = SigpipeGuard::install().unwrap();
+                assert_eq!(unsafe { ffi::iperf3rs_sigpipe_probe(0) }, 0);
+            }
+            assert_eq!(unsafe { ffi::iperf3rs_sigpipe_probe(0) }, 1);
+            let mut test = IperfTest::new().unwrap();
+            assert!(test.run().is_err());
+            assert_eq!(unsafe { ffi::iperf3rs_sigpipe_probe(0) }, 1);
+            drop(test);
+            drop(_guard);
+            assert!(crate::IperfCommand::new().run().is_err());
+            assert_eq!(unsafe { ffi::iperf3rs_sigpipe_probe(0) }, 1);
+            return;
+        }
+
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "iperf::tests::sigpipe_disposition_is_restored_on_return_and_drop",
+            ])
+            .env(CHILD, "1")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success(), "signal policy child failed: {status}");
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("signal policy child timed out");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
 }
