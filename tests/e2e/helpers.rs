@@ -8,7 +8,7 @@ use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 pub(crate) const COMPOSE_FILE: &str = "docker-compose.test.yml";
 pub(crate) const PUSHGATEWAY_URL: &str = "http://pushgateway:9091";
@@ -367,41 +367,16 @@ pub(crate) fn parse_iperf_summary(output: &Output) -> Option<Value> {
     // A valid interop result must be a complete iperf JSON document. Requiring
     // both `start` and `end` avoids accepting partial output, and requiring
     // non-zero bytes proves that a real test stream ran.
-    let json: Value = serde_json::from_slice(&output.stdout)
-        .ok()
-        .or_else(|| parse_iperf_json_stream_summary(&output.stdout))?;
+    // Every current caller requests plain -J, not --json-stream.
+    let json: Value = serde_json::from_slice(&output.stdout).ok()?;
     complete_iperf_summary(json)
 }
 
 fn complete_iperf_summary(json: Value) -> Option<Value> {
-    let has_start = json.get("start").is_some();
-    let has_end = json.get("end").is_some();
-    (has_start && has_end && iperf_summary_bytes(&json) > 0.0).then_some(json)
-}
-
-fn parse_iperf_json_stream_summary(raw: &[u8]) -> Option<Value> {
-    // Accept JSON stream output when the caller explicitly requests upstream
-    // `--json-stream`; plain `-J` should still be a single complete JSON
-    // document even when Pushgateway metrics are enabled.
-    let text = std::str::from_utf8(raw).ok()?;
-    let mut start = None;
-    let mut end = None;
-
-    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        let Ok(event) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        match event.get("event").and_then(Value::as_str) {
-            Some("start") => start = event.get("data").cloned(),
-            Some("end") => end = event.get("data").cloned(),
-            _ => {}
-        }
-    }
-
-    Some(json!({
-        "start": start?,
-        "end": end?,
-    }))
+    let has_start = json.get("start").is_some_and(Value::is_object);
+    let has_end = json.get("end").is_some_and(Value::is_object);
+    (has_start && has_end && json.get("error").is_none() && iperf_summary_bytes(&json) > 0.0)
+        .then_some(json)
 }
 
 pub(crate) fn assert_stdout_is_json_document(output: &Output) {
@@ -627,4 +602,47 @@ pub(crate) fn assert_child_success(args: &[&str], child: Child) {
         .wait_with_output()
         .expect("failed to wait for E2E command");
     assert_success(args, &output);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn output(stdout: &str) -> Output {
+        Output {
+            status: Default::default(),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn plain_json_accepts_complete_tcp_and_udp_summaries() {
+        for family in ["sum_received", "sum_sent", "sum"] {
+            let summary = serde_json::json!({"start": {}, "end": {(family): {"bytes": 1}}});
+            let output = output(&format!(" \n{summary}\n"));
+            assert!(parse_iperf_summary(&output).is_some(), "{family}");
+            assert_stdout_is_json_document(&output);
+        }
+    }
+
+    #[test]
+    fn plain_json_rejects_errors_null_structure_streams_noise_and_zero_traffic() {
+        for stdout in [
+            r#"{"start":null,"end":{"sum":{"bytes":1}}}"#,
+            r#"{"start":[],"end":{"sum":{"bytes":1}}}"#,
+            r#"{"end":{"sum":{"bytes":1}}}"#,
+            r#"{"start":{},"end":null}"#,
+            r#"{"start":{},"end":{},"error":"failed"}"#,
+            r#"{"start":{},"end":{"sum":{"bytes":1}},"error":null}"#,
+            r#"{"start":{},"end":{"sum":{"bytes":0}}}"#,
+            r#"{"start":{},"end":{"sum":{"bytes":-1}}}"#,
+            r#"{"start":{},"end":{"sum":{"bytes":"1"}}}"#,
+            "noise\n{\"start\":{},\"end\":{\"sum\":{\"bytes\":1}}}",
+            "{\"event\":\"start\",\"data\":{}}\n{\"event\":\"end\",\"data\":{\"sum\":{\"bytes\":1}}}",
+            "{\"start\":{},\"end\":{\"sum\":{\"bytes\":1}}}\n{}",
+        ] {
+            assert!(parse_iperf_summary(&output(stdout)).is_none(), "{stdout}");
+        }
+    }
 }
