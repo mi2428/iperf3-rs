@@ -22,22 +22,21 @@ This document is the maintainer and developer reference for `iperf3-rs`.
 
 ## Common Commands
 
-The Makefile help is the source of truth for local commands:
+Use `make help` for the current target list and resolved defaults. The reference
+below uses portable Makefile expressions, not one host's terminal output:
 
-```console
-$ make help
-
+```text
 Development
   build          Build the host binary into bin/
   install        Build and install the host binary into INSTALL_BINDIR
   fmt            Format Rust sources. Use CHECK_ONLY=1 to check without writing
-  lint           Run clippy with warnings treated as errors
+  lint           Run all-target/all-feature clippy with warnings treated as errors
   doc            Build rustdoc with warnings treated as errors
-  test           Run unit tests. Use NO_DEFAULT=1 to disable default features
+  test           Run Cargo tests (unit, local integration, doctests). NO_DEFAULT=1 disables defaults
   kani           Run Kani model checking harnesses
   e2e            Run Docker E2E tests
   integration    Run local integration tests. Use EXAMPLES=name,all for examples
-  check          Run formatting, lint, tests, and completion checks
+  check          Run formatting, lint, rustdoc, default/no-default tests, and completion checks
   multipass      Launch a Multipass VM and copy the source tree for manual Linux testing
   clean          Remove local build artifacts
 
@@ -57,10 +56,11 @@ Variables:
   ARCH                   Release arch list: amd64,arm64
   EXAMPLES               Example integration tests for make integration: bwcheck,all
   NO_DEFAULT             Disable default Cargo features for make test when set, for example 1
-  INSTALL_BINDIR         Install directory, defaults to /Users/teo/.local/bin
-  BASH_COMPLETION_DIR    Bash completion install dir, defaults to /Users/teo/.local/share/bash-completion/completions
-  ZSH_COMPLETION_DIR     Zsh completion install dir, defaults to /opt/homebrew/share/zsh/site-functions
-  FISH_COMPLETION_DIR    Fish completion install dir, defaults to /Users/teo/.local/share/fish/vendor_completions.d
+  INSTALL_PREFIX         Installation prefix, defaults to $HOME/.local
+  INSTALL_BINDIR         Install directory, defaults to $(INSTALL_PREFIX)/bin
+  BASH_COMPLETION_DIR    Bash completion directory, defaults to $(INSTALL_PREFIX)/share/bash-completion/completions
+  ZSH_COMPLETION_DIR     Discovered zsh site-functions directory, or prefix fallback (see below)
+  FISH_COMPLETION_DIR    Fish completion directory, defaults to $(INSTALL_PREFIX)/share/fish/vendor_completions.d
   MULTIPASS_NAME         Multipass VM name, defaults to iperf3-rs-dev
 
 Examples:
@@ -75,6 +75,13 @@ Examples:
   make dist OS=darwin,linux ARCH=amd64,arm64   # to build release binaries and checksums
   make multipass                               # to prepare a Linux VM for manual testing
 ```
+
+When zsh is available, the Makefile selects the first existing writable directory
+in `zsh -fc`'s `$fpath` whose path ends in `/site-functions`. If none is found,
+`ZSH_COMPLETION_DIR` falls back to `$(INSTALL_PREFIX)/share/zsh/site-functions`.
+Override these Make variables explicitly when needed: changing `INSTALL_PREFIX`
+does not replace a successfully discovered zsh directory. A fallback directory
+may need to be added to `$fpath` before `compinit`, as the install target reports.
 
 ## Rustdoc
 
@@ -145,6 +152,11 @@ The C shim should stay small. It exists for operations that are awkward through 
 Pushgateway HTTPS uses Rustls with webpki roots, so HTTPS Pushgateway requests do not depend on OpenSSL.
 
 ## Verification
+
+`make check` runs Rust formatting, `cargo clippy --all-targets --all-features -- -D warnings`,
+`cargo doc --no-deps` with rustdoc warnings treated as errors, default/no-default
+Cargo tests, and shell completion syntax checks. Local completion checks skip
+zsh or fish when unavailable; CI installs both and checks all supported shells.
 
 ### When to Run What
 
@@ -233,9 +245,9 @@ same source notices in `/licenses/` without changing their build base or ABI.
 
 Workflows:
 
-- `.github/workflows/checks.yml`: pull-request checks for workflow linting, Rust linting, default/no-default Cargo tests, Kani, Docker E2E tests, example integration tests, and Linux dist startup smoke tests.
-- `.github/workflows/release.yml`: cargo-dist archives, GitHub Releases, and Homebrew formula publishing.
-- `.github/workflows/ghcr.yml`: multi-arch GHCR image publishing after a GitHub Release is published.
+- `.github/workflows/checks.yml`: pull-request `lint`, `test`, `kani`, `e2e`, and `dist` jobs, with a `required` aggregate gate. Lint covers root/example formatting and clippy, dependency/Action pin checks, rustdoc, and Bash/zsh/fish completion syntax; tests cover default/no-default and example Cargo runs. Docker jobs cover ignored E2E/example suites and Linux dist startup smoke tests. There is no separate workflow-lint job.
+- `.github/workflows/release.yml`: PR planning, release-tag builds, and manual existing-tag retries for cargo-dist archives, GitHub Releases, and Homebrew formula publishing.
+- `.github/workflows/ghcr.yml`: multi-arch images on a published Release, `release-published` repository dispatch, or manual tag publish/retry.
 
 `checks.yml` intentionally spells out cargo, Docker, and Kani commands instead of invoking Makefile targets so CI behavior does not silently change when the Makefile is refactored.
 

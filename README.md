@@ -203,20 +203,24 @@ Developer setup, verification, release operations, and detailed behavior contrac
 
 The current test suite is intentionally broader than ordinary unit coverage: it exercises the Rust API, CLI behavior, Docker interop with upstream iperf3, Pushgateway delivery, release-image shape, and bounded model-checking invariants.
 
-Current coverage snapshot:
+Coverage includes:
 
-- 95 default-feature unit tests.
-- 12 local integration tests in `tests/integration`.
-- 2 rustdoc compile tests.
-- 2 Docker E2E tests in `tests/e2e`, covering Compose interop, live Pushgateway metrics, protocol variants, and release-image smoke behavior.
-- 1 Docker example integration test for `examples/bwcheck`.
-- 21 Kani proof harnesses for parsers, metric aggregation, Prometheus labels, Pushgateway retry/path encoding, and other bounded invariants.
+- Unit tests alongside the implementation in `src/`.
+- Local Rust API and CLI integration tests in `tests/integration`.
+- Rustdoc examples in `src/` checked as doctests.
+- Docker E2E tests in `tests/e2e`, covering Compose interop, live Pushgateway metrics, protocol variants, and release-image smoke behavior.
+- Docker library-example integration in `examples/bwcheck/integration_test.rs`.
+- Kani proof harnesses in `src/` for parsers, metric aggregation, Prometheus labels, Pushgateway retry/path encoding, and other bounded invariants.
 
-That is 133 named default-feature runtime/model-checking checks, plus a no-default feature matrix that re-runs 46 unit, integration, and doctest checks without `pushgateway`/`serde`.
+Default and no-default Cargo runs exercise the optional `pushgateway`/`serde`
+boundaries. Ignored Docker suites run separately; test counts are reported by
+the runners rather than maintained as a documentation snapshot.
 
 ```console
 $ make check        # fmt, clippy, docs, default tests, no-default tests, completions
+$ make test NO_DEFAULT=1  # Cargo tests without default features
 $ make integration  # local integration suite
+$ make integration EXAMPLES=all  # Docker library-example integrations
 $ make e2e          # Docker E2E suite
 $ make kani         # Kani proof harnesses
 ```
