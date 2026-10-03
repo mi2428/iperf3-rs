@@ -328,31 +328,70 @@ pub(crate) fn scenario<T>(name: &str, run: impl FnOnce() -> T) -> T {
 }
 
 pub(crate) fn retry_json_client_output(label: &str, mut run: impl FnMut() -> Output) -> Output {
-    // iperf servers can take a moment to accept connections after Compose marks
-    // the containers as started. Retrying here makes startup ordering explicit
-    // without weakening the final success condition: the last successful output
-    // still has to be parseable iperf JSON, and callers assert traffic.
-    wait_for(label, || {
-        let output = run();
-        if !output.status.success() || parse_iperf_summary(&output).is_none() {
-            return output;
-        }
-        output
-    })
+    // Retry startup refusal or incomplete output, not completed product errors,
+    // output-contract violations, or successful runs without traffic.
+    wait_for(label, || json_client_attempt(label, run()))
+}
+
+fn json_client_attempt(label: &str, output: Output) -> Output {
+    if output.status.success() && parse_iperf_summary(&output).is_some() {
+        return output;
+    }
+    let document = serde_json::from_slice::<Value>(&output.stdout);
+    let error = document
+        .as_ref()
+        .ok()
+        .and_then(|json| json.get("error"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let startup_refusal = [error, stderr.as_ref()].iter().any(|message| {
+        message.contains("unable to connect to server") && message.contains("Connection refused")
+    });
+    let incomplete = output.status.success()
+        && match document {
+            Err(error) => error.is_eof(),
+            Ok(json) => {
+                json.is_object()
+                    && json.get("error").is_none()
+                    && json.get("start").is_none_or(Value::is_object)
+                    && json.get("end").is_none_or(Value::is_object)
+                    && (json.get("start").is_none() || json.get("end").is_none())
+            }
+        };
+    if startup_refusal || incomplete {
+        return failed_output_like(output);
+    }
+    panic!(
+        "{label} returned a non-retryable iperf result\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        stderr
+    );
 }
 
 pub(crate) fn wait_for(label: &str, mut run: impl FnMut() -> Output) -> Output {
+    wait_for_attempts(label, 30, Duration::from_secs(1), &mut run)
+}
+
+fn wait_for_attempts(
+    label: &str,
+    attempts: usize,
+    delay: Duration,
+    mut run: impl FnMut() -> Output,
+) -> Output {
     // Poll command-style checks until they return success, and include the last
     // stdout/stderr in the panic so failures are actionable in CI logs.
     let mut last = None;
-    for _ in 0..30 {
+    for attempt in 0..attempts {
         let output = run();
         if output.status.success() {
             return output;
         }
 
         last = Some(output);
-        thread::sleep(Duration::from_secs(1));
+        if attempt + 1 < attempts {
+            thread::sleep(delay);
+        }
     }
 
     let output = last.expect("wait loop should run at least once");
@@ -644,5 +683,82 @@ mod tests {
         ] {
             assert!(parse_iperf_summary(&output(stdout)).is_none(), "{stdout}");
         }
+    }
+
+    #[test]
+    fn json_retry_accepts_valid_first_and_incomplete_then_valid() {
+        let valid = r#"{"start":{},"end":{"sum":{"bytes":1}}}"#;
+        for incomplete_first in [false, true] {
+            let mut calls = 0;
+            let result = retry_json_client_output("test JSON", || {
+                calls += 1;
+                output(if incomplete_first && calls == 1 {
+                    "{}"
+                } else {
+                    valid
+                })
+            });
+            assert_eq!(calls, if incomplete_first { 2 } else { 1 });
+            assert!(result.status.success());
+            assert!(parse_iperf_summary(&result).is_some());
+        }
+    }
+
+    #[test]
+    fn json_retry_does_not_hide_semantic_errors() {
+        for stdout in [
+            r#"{"error":"invalid option"}"#,
+            r#"{"start":null,"end":{"sum":{"bytes":1}}}"#,
+            r#"{"start":{},"end":{"sum":{"bytes":0}}}"#,
+            "noise\n{}",
+        ] {
+            let mut calls = 0;
+            let failure = panic::catch_unwind(AssertUnwindSafe(|| {
+                retry_json_client_output("semantic error", || {
+                    calls += 1;
+                    output(stdout)
+                });
+            }));
+            assert!(failure.is_err());
+            assert_eq!(calls, 1);
+        }
+        let mut calls = 0;
+        let failure = panic::catch_unwind(AssertUnwindSafe(|| {
+            retry_json_client_output("failed completed run", || {
+                calls += 1;
+                failed_output_like(output(r#"{"start":{},"end":{"sum":{"bytes":1}}}"#))
+            });
+        }));
+        assert!(failure.is_err());
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn json_retry_startup_refusal_and_persistent_incomplete_are_bounded() {
+        let mut calls = 0;
+        let result = wait_for_attempts("startup", 2, Duration::ZERO, || {
+            calls += 1;
+            json_client_attempt(
+                "startup",
+                output(if calls == 1 {
+                    r#"{"error":"unable to connect to server: Connection refused"}"#
+                } else {
+                    r#"{"start":{},"end":{"sum":{"bytes":1}}}"#
+                }),
+            )
+        });
+        assert_eq!(calls, 2);
+        assert!(parse_iperf_summary(&result).is_some());
+        calls = 0;
+        assert!(
+            panic::catch_unwind(AssertUnwindSafe(|| {
+                wait_for_attempts("incomplete", 2, Duration::ZERO, || {
+                    calls += 1;
+                    json_client_attempt("incomplete", output("{}"))
+                });
+            }))
+            .is_err()
+        );
+        assert_eq!(calls, 2);
     }
 }
