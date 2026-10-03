@@ -206,8 +206,11 @@ impl IperfCommand {
     }
 
     /// Omit pre-test statistics for the given duration with iperf's `-O`.
+    ///
+    /// Upstream parses whole seconds. Fractional durations are rounded up, as
+    /// with [`IperfCommand::duration`], so nonzero warm-up time is not lost.
     pub fn omit(&mut self, duration: Duration) -> &mut Self {
-        self.arg("-O").arg(decimal_seconds_arg(duration))
+        self.arg("-O").arg(whole_seconds_arg(duration))
     }
 
     /// Bind to a local address or `address%device` with iperf's `-B`.
@@ -949,7 +952,7 @@ mod tests {
                 "--connect-timeout".to_owned(),
                 "1500".to_owned(),
                 "-O".to_owned(),
-                "0.25".to_owned(),
+                "1".to_owned(),
                 "-B".to_owned(),
                 "127.0.0.1%lo0".to_owned(),
                 "-N".to_owned(),
@@ -1080,6 +1083,30 @@ mod tests {
         assert_eq!(milliseconds_arg(Duration::from_nanos(1)), "1");
         assert_eq!(milliseconds_arg(Duration::from_millis(1500)), "1500");
         assert_eq!(milliseconds_arg(Duration::new(1, 1)), "1001");
+    }
+
+    #[test]
+    fn typed_omit_preserves_whole_second_intent_in_native_parser() {
+        unsafe extern "C" {
+            fn iperf_get_test_omit(test: *mut crate::iperf::RawIperfTest) -> std::os::raw::c_int;
+        }
+
+        let _guard = run_lock().lock().unwrap();
+        for (duration, expected) in [
+            (Duration::ZERO, 0),
+            (Duration::from_millis(250), 1),
+            (Duration::from_secs(1), 1),
+            (Duration::from_millis(1500), 2),
+        ] {
+            let mut command = IperfCommand::client("127.0.0.1");
+            command.omit(duration);
+            let setup = setup_run(command).unwrap();
+
+            assert_eq!(
+                unsafe { iperf_get_test_omit(setup.test.as_ptr()) },
+                expected
+            );
+        }
     }
 
     #[test]
