@@ -45,6 +45,8 @@ impl MetricsFileFormat {
 /// JSONL output appends one object per event. Prometheus output atomically
 /// replaces the file with the latest encoded snapshot on each write.
 /// JSONL writes through this sink and its clones are serialized per record.
+/// New files use the platform's default creation permissions (including umask
+/// on Unix). Prometheus replacements preserve the destination permissions.
 #[derive(Debug, Clone)]
 pub struct MetricsFileSink {
     path: PathBuf,
@@ -198,22 +200,31 @@ fn file_error(
 
 fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
     let temp_path = temp_path_for(path);
-    let result = write_temp_then_rename(&temp_path, path, contents);
-    if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
-    }
-    result.map_err(|err| file_error("failed to write metrics file", path, err))
+    write_temp_then_rename(&temp_path, path, contents)
+        .map_err(|err| file_error("failed to write metrics file", path, err))
 }
 
 fn write_temp_then_rename(temp_path: &Path, path: &Path, contents: &[u8]) -> std::io::Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(temp_path)?;
-    file.write_all(contents)?;
-    file.flush()?;
-    drop(file);
-    fs::rename(temp_path, path)
+    let permissions = fs::metadata(path)?.permissions();
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(temp_path)?;
+    let result = (|| {
+        file.set_permissions(permissions)?;
+        file.write_all(contents)?;
+        file.flush()?;
+        drop(file);
+        fs::rename(temp_path, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temp_path);
+    }
+    result
 }
 
 fn temp_path_for(path: &Path) -> PathBuf {
@@ -348,6 +359,46 @@ mod tests {
         assert!(!contents.contains("nettest_transferred_bytes{site=\"ci\"} 1\n"));
         assert_no_temp_files_for(&path);
         let _ = fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prometheus_replacements_preserve_private_and_default_modes() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_path("prom");
+        let sink = MetricsFileSink::new(&path, MetricsFileFormat::Prometheus).unwrap();
+        let default = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        for mode in [default, 0o600, 0o640] {
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            for bytes in [1.0, 2.0] {
+                sink.write_interval(&sample_metrics(bytes)).unwrap();
+                assert_eq!(
+                    fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                    mode
+                );
+            }
+        }
+        assert_no_temp_files_for(&path);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn failed_atomic_replacement_preserves_destination_and_cleans_owned_temp() {
+        let path = temp_path("prom");
+        let temp = temp_path("tmp");
+        fs::write(&path, b"previous snapshot\n").unwrap();
+        fs::create_dir(&temp).unwrap();
+        assert!(write_temp_then_rename(&temp, &path, b"new snapshot\n").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"previous snapshot\n");
+        assert!(temp.is_dir());
+        fs::remove_dir(&temp).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        let err = atomic_write(&path, b"new snapshot\n").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::MetricsFile);
+        assert!(path.is_dir());
+        assert_no_temp_files_for(&path);
+        fs::remove_dir(path).unwrap();
     }
 
     #[test]
