@@ -247,6 +247,27 @@ not supported for image tags. Prereleases never update `latest`; the manual
 for a stable tag. Stable retries normally update `latest`, including an intentional
 older-tag rollback. There is no automatic newest-version/monotonic policy.
 
+### Dependency maintenance ownership
+
+The release maintainer (`@mi2428`) reviews dependency updates. Renovate explicitly
+refreshes both `Cargo.lock` and `examples/bwcheck/Cargo.lock` in the monthly
+Asia/Tokyo window; direct dependency PRs remain reviewed, not auto-merged.
+Security updates are reviewed immediately outside that window rather than waiting
+for its schedule. Check both feature sets and examples when updating locks.
+
+The native submodule intentionally does not follow `master` through Renovate.
+At least monthly, and immediately on a security announcement, the release
+maintainer reviews official [esnet/iperf releases](https://github.com/esnet/iperf/releases),
+resolves the official tag to its commit, reviews fix ancestry, and updates the
+gitlink in a dedicated PR with warm-cache/native interoperability checks.
+
+Run `python3 scripts/check_dependency_pins.py` when updating Rust/image/dist pins.
+Coordinate rust-toolchain, Makefile, Docker images and CI while retaining the
+declared MSRV and Bullseye ABI contract. The checker does not demand an MSRV bump
+for a newer build toolchain. Review Kani's pinned version against its documented
+compiler support separately. Preserve hand-edited release CI and its external
+setup; Renovate also scans `.github/dist-build-setup.yml` for Action updates.
+
 ## Maintainer Checklist
 
 Before publishing a release:

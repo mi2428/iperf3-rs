@@ -3,5 +3,16 @@
   "extends": ["config:recommended"],
   "timezone": "Asia/Tokyo",
   "schedule": ["* 0-5 1 * *"],
-  "updateNotScheduled": false
+  "updateNotScheduled": false,
+  "automerge": false,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["* 0-5 1 * *"]
+  },
+  "git-submodules": {
+    "enabled": false
+  },
+  "github-actions": {
+    "managerFilePatterns": ["/^\\.github/dist-build-setup\\.yml$/"]
+  }
 }
