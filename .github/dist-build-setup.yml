@@ -28,7 +28,7 @@
       xz-utils
 
 - name: Cache Cargo sources
-  uses: actions/cache@v5
+  uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
   with:
     path: |
       ~/.cargo/registry/index
@@ -38,7 +38,7 @@
     restore-keys: ${{ runner.os }}-release-cargo-sources-
 
 - name: Cache Rust build outputs
-  uses: actions/cache@v5
+  uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
   with:
     path: target
     key: ${{ runner.os }}-${{ join(matrix.targets, '-') }}-${{ contains(join(matrix.targets, ','), 'unknown-linux-gnu') && 'glibc-bullseye' || 'native' }}-release-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}

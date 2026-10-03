@@ -63,7 +63,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
           persist-credentials: false
@@ -76,7 +76,7 @@ jobs:
         shell: bash
         run: "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.31.0/cargo-dist-installer.sh | sh"
       - name: Cache dist
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/dist
@@ -96,7 +96,7 @@ jobs:
           cat plan-dist-manifest.json
           echo "manifest=$(jq -c "." plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
       - name: "Upload dist-manifest.json"
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-plan-dist-manifest
           path: plan-dist-manifest.json
@@ -130,7 +130,7 @@ jobs:
       - name: enable windows longpaths
         run: |
           git config --global core.longpaths true
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
           persist-credentials: false
@@ -168,7 +168,7 @@ jobs:
             xz-utils
         shell: "bash"
       - name: "Cache Cargo sources"
-        uses: "actions/cache@v5"
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           "key": "${{ runner.os }}-release-cargo-sources-${{ hashFiles('Cargo.lock') }}"
           "path": |
@@ -177,7 +177,7 @@ jobs:
             ~/.cargo/git/db
           "restore-keys": "${{ runner.os }}-release-cargo-sources-"
       - name: "Cache Rust build outputs"
-        uses: "actions/cache@v5"
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           "key": "${{ runner.os }}-${{ join(matrix.targets, '-') }}-${{ env.RELEASE_CACHE_ABI }}-release-target-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'native/**', 'iperf3/configure', 'iperf3/src/iperf.h', 'iperf3/src/iperf_api.h') }}"
           "path": "target"
@@ -186,7 +186,7 @@ jobs:
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest
       - name: Fetch local artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: artifacts-*
           path: target/distrib/
@@ -231,7 +231,7 @@ jobs:
 
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
       - name: "Upload artifacts"
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-build-local-${{ join(matrix.targets, '_') }}
           path: |
@@ -247,7 +247,7 @@ jobs:
     env:
       BUILD_MANIFEST_NAME: target/distrib/global-dist-manifest.json
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
           persist-credentials: false
@@ -255,14 +255,14 @@ jobs:
       - name: Stage upstream binary notice
         run: cp iperf3/LICENSE LICENSE-IPERF3
       - name: Install cached dist
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/
       - run: chmod +x ~/.cargo/bin/dist
       # Get all the local artifacts for the global tasks to use (for e.g. checksums)
       - name: Fetch local artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: artifacts-*
           path: target/distrib/
@@ -280,7 +280,7 @@ jobs:
 
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
       - name: "Upload artifacts"
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-build-global
           path: |
@@ -302,7 +302,7 @@ jobs:
     outputs:
       val: ${{ steps.host.outputs.manifest }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
           persist-credentials: false
@@ -310,14 +310,14 @@ jobs:
       - name: Stage upstream binary notice
         run: cp iperf3/LICENSE LICENSE-IPERF3
       - name: Install cached dist
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/
       - run: chmod +x ~/.cargo/bin/dist
       # Fetch artifacts from scratch-storage
       - name: Fetch artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: artifacts-*
           path: target/distrib/
@@ -330,14 +330,14 @@ jobs:
           cat dist-manifest.json
           echo "manifest=$(jq -c "." dist-manifest.json)" >> "$GITHUB_OUTPUT"
       - name: "Upload dist-manifest.json"
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           # Overwrite the previous copy
           name: artifacts-dist-manifest
           path: dist-manifest.json
       # Create a GitHub Release while uploading all files to it
       - name: "Download GitHub Artifacts"
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: artifacts-*
           path: artifacts
@@ -381,14 +381,14 @@ jobs:
       GITHUB_EMAIL: "admin+bot@axo.dev"
     if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: true
           repository: "mi2428/homebrew-iperf3-rs"
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
       # So we have access to the formula
       - name: Fetch homebrew formulae
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: artifacts-*
           path: Formula/
@@ -437,7 +437,7 @@ jobs:
       RELEASE_TAG: ${{ needs.plan.outputs.tag }}
       RELEASE_PRERELEASE: ${{ fromJson(needs.plan.outputs.val).announcement_is_prerelease }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
           persist-credentials: false

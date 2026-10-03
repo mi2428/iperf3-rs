@@ -274,6 +274,14 @@ only in the publishing host job. Only that job and GHCR dispatch can write
 repository contents. Homebrew keeps its separate tap token, and GHCR grants
 package writes only to the digest-build and manifest-publish jobs that need them.
 
+Action refs are full commit SHAs with their existing version comments, including
+the external dist setup. Renovate proposes reviewed digest updates; it does not
+auto-merge them. `python3 scripts/check_action_pins.py` checks consistency offline;
+`--verify-upstream` resolves the official refs with `gh` for review. Kani's `v1`
+is the upstream branch (not a tag), so review its branch digest manually when
+Renovate cannot extract an update. Do not silently upgrade Action majors or
+regenerate the hand-edited release workflow to refresh pins.
+
 ## Maintainer Checklist
 
 Before publishing a release:
