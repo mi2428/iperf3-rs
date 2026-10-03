@@ -401,7 +401,7 @@ dependencies = [
 
 [[package]]
 name = "iperf3-rs"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "base64",
