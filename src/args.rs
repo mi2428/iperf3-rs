@@ -83,36 +83,14 @@ fn extract_app_options_with_env(
         .map(|raw| parse_env_labels("IPERF3_PUSH_LABELS", &raw, true))
         .transpose()?
         .unwrap_or_default();
-    let mut push_timeout = get_env("IPERF3_PUSH_TIMEOUT")
-        .map(|raw| parse_duration_option("IPERF3_PUSH_TIMEOUT", &raw))
-        .transpose()?
-        .unwrap_or_else(PushGatewayConfig::default_timeout);
-    let mut push_retries = get_env("IPERF3_PUSH_RETRIES")
-        .map(|raw| parse_retries("IPERF3_PUSH_RETRIES", &raw))
-        .transpose()?
-        .unwrap_or(PushGatewayConfig::DEFAULT_RETRIES);
-    let mut push_user_agent = get_env("IPERF3_PUSH_USER_AGENT")
-        .map(|raw| parse_user_agent("IPERF3_PUSH_USER_AGENT", &raw))
-        .transpose()?
-        .unwrap_or_else(PushGatewayConfig::default_user_agent);
-    let mut metrics_prefix = get_env("IPERF3_METRICS_PREFIX")
-        .map(|raw| parse_metric_prefix("IPERF3_METRICS_PREFIX", &raw))
-        .transpose()?
-        .unwrap_or_else(|| PushGatewayConfig::DEFAULT_METRIC_PREFIX.to_owned());
-    let mut push_interval = get_env("IPERF3_PUSH_INTERVAL")
-        .map(|raw| parse_duration_option("IPERF3_PUSH_INTERVAL", &raw))
-        .transpose()?;
-    let mut push_delete_on_exit = get_env("IPERF3_PUSH_DELETE_ON_EXIT")
-        .map(|raw| parse_bool_option("IPERF3_PUSH_DELETE_ON_EXIT", &raw))
-        .transpose()?
-        .unwrap_or(false);
+    let mut push_timeout = None;
+    let mut push_retries = None;
+    let mut push_user_agent = None;
+    let mut metrics_prefix = None;
+    let mut push_interval = None;
+    let mut push_delete_on_exit = None;
     let mut metrics_file = get_env("IPERF3_METRICS_FILE").map(PathBuf::from);
-    let raw_metrics_format = get_env("IPERF3_METRICS_FORMAT");
-    let mut metrics_format = raw_metrics_format
-        .as_deref()
-        .map(|raw| parse_metrics_format("IPERF3_METRICS_FORMAT", raw))
-        .transpose()?
-        .unwrap_or(MetricsFileFormat::Jsonl);
+    let mut metrics_format = None;
     let mut metrics_labels = get_env("IPERF3_METRICS_LABELS")
         .map(|raw| parse_env_labels("IPERF3_METRICS_LABELS", &raw, false))
         .transpose()?
@@ -120,7 +98,7 @@ fn extract_app_options_with_env(
     let mut saw_push_job = false;
     let mut saw_push_label = !push_labels.is_empty();
     let mut saw_push_setting = false;
-    let mut saw_metrics_setting = raw_metrics_format.is_some();
+    let mut saw_metrics_setting = false;
     let mut saw_metrics_label = !metrics_labels.is_empty();
     let mut saw_metric_prefix = false;
 
@@ -149,19 +127,19 @@ fn extract_app_options_with_env(
                     saw_metrics_label = true;
                 }
                 "--push.timeout" => {
-                    push_timeout = parse_duration_option("--push.timeout", value)?;
+                    push_timeout = Some(parse_duration_option("--push.timeout", value)?);
                     saw_push_setting = true;
                 }
                 "--push.retries" => {
-                    push_retries = parse_retries("--push.retries", value)?;
+                    push_retries = Some(parse_retries("--push.retries", value)?);
                     saw_push_setting = true;
                 }
                 "--push.user-agent" => {
-                    push_user_agent = parse_user_agent("--push.user-agent", value)?;
+                    push_user_agent = Some(parse_user_agent("--push.user-agent", value)?);
                     saw_push_setting = true;
                 }
                 "--metrics.prefix" => {
-                    metrics_prefix = parse_metric_prefix("--metrics.prefix", value)?;
+                    metrics_prefix = Some(parse_metric_prefix("--metrics.prefix", value)?);
                     saw_metric_prefix = true;
                 }
                 "--push.interval" => {
@@ -169,14 +147,14 @@ fn extract_app_options_with_env(
                     saw_push_setting = true;
                 }
                 "--push.delete-on-exit" => {
-                    push_delete_on_exit = parse_bool_option("--push.delete-on-exit", value)?;
+                    push_delete_on_exit = Some(parse_bool_option("--push.delete-on-exit", value)?);
                     saw_push_setting = true;
                 }
                 "--metrics.file" => {
                     metrics_file = Some(PathBuf::from(value));
                 }
                 "--metrics.format" => {
-                    metrics_format = parse_metrics_format("--metrics.format", value)?;
+                    metrics_format = Some(parse_metrics_format("--metrics.format", value)?);
                     saw_metrics_setting = true;
                 }
                 _ => pass_through.push(arg.clone()),
@@ -210,31 +188,31 @@ fn extract_app_options_with_env(
                 saw_metrics_label = true;
             }
             "--push.timeout" => {
-                push_timeout = parse_duration_option(
+                push_timeout = Some(parse_duration_option(
                     "--push.timeout",
                     &take_value(&rest, &mut i, "--push.timeout")?,
-                )?;
+                )?);
                 saw_push_setting = true;
             }
             "--push.retries" => {
-                push_retries = parse_retries(
+                push_retries = Some(parse_retries(
                     "--push.retries",
                     &take_value(&rest, &mut i, "--push.retries")?,
-                )?;
+                )?);
                 saw_push_setting = true;
             }
             "--push.user-agent" => {
-                push_user_agent = parse_user_agent(
+                push_user_agent = Some(parse_user_agent(
                     "--push.user-agent",
                     &take_value(&rest, &mut i, "--push.user-agent")?,
-                )?;
+                )?);
                 saw_push_setting = true;
             }
             "--metrics.prefix" => {
-                metrics_prefix = parse_metric_prefix(
+                metrics_prefix = Some(parse_metric_prefix(
                     "--metrics.prefix",
                     &take_value(&rest, &mut i, "--metrics.prefix")?,
-                )?;
+                )?);
                 saw_metric_prefix = true;
             }
             "--push.interval" => {
@@ -245,7 +223,7 @@ fn extract_app_options_with_env(
                 saw_push_setting = true;
             }
             "--push.delete-on-exit" => {
-                push_delete_on_exit = true;
+                push_delete_on_exit = Some(true);
                 saw_push_setting = true;
                 i += 1;
             }
@@ -253,10 +231,10 @@ fn extract_app_options_with_env(
                 metrics_file = Some(PathBuf::from(take_value(&rest, &mut i, "--metrics.file")?));
             }
             "--metrics.format" => {
-                metrics_format = parse_metrics_format(
+                metrics_format = Some(parse_metrics_format(
                     "--metrics.format",
                     &take_value(&rest, &mut i, "--metrics.format")?,
-                )?;
+                )?);
                 saw_metrics_setting = true;
             }
             _ => {
@@ -266,6 +244,56 @@ fn extract_app_options_with_env(
         }
     }
 
+    // Only defaults that were not replaced by CLI values are effective inputs.
+    let push_timeout = env_default(
+        push_timeout,
+        "IPERF3_PUSH_TIMEOUT",
+        &mut get_env,
+        parse_duration_option,
+    )?
+    .unwrap_or_else(PushGatewayConfig::default_timeout);
+    let push_retries = env_default(
+        push_retries,
+        "IPERF3_PUSH_RETRIES",
+        &mut get_env,
+        parse_retries,
+    )?
+    .unwrap_or(PushGatewayConfig::DEFAULT_RETRIES);
+    let push_user_agent = env_default(
+        push_user_agent,
+        "IPERF3_PUSH_USER_AGENT",
+        &mut get_env,
+        parse_user_agent,
+    )?
+    .unwrap_or_else(PushGatewayConfig::default_user_agent);
+    let metrics_prefix = env_default(
+        metrics_prefix,
+        "IPERF3_METRICS_PREFIX",
+        &mut get_env,
+        parse_metric_prefix,
+    )?
+    .unwrap_or_else(|| PushGatewayConfig::DEFAULT_METRIC_PREFIX.to_owned());
+    let push_interval = env_default(
+        push_interval,
+        "IPERF3_PUSH_INTERVAL",
+        &mut get_env,
+        parse_duration_option,
+    )?;
+    let push_delete_on_exit = env_default(
+        push_delete_on_exit,
+        "IPERF3_PUSH_DELETE_ON_EXIT",
+        &mut get_env,
+        parse_bool_option,
+    )?
+    .unwrap_or(false);
+    let metrics_format = env_default(
+        metrics_format,
+        "IPERF3_METRICS_FORMAT",
+        &mut get_env,
+        parse_metrics_format,
+    )?;
+    saw_metrics_setting |= metrics_format.is_some();
+    let metrics_format = metrics_format.unwrap_or(MetricsFileFormat::Jsonl);
     let push_url = push_url.as_deref().map(parse_url).transpose()?;
     if push_url.is_none() && saw_push_job {
         bail!("--push.job requires --push.url or IPERF3_PUSH_URL");
@@ -315,6 +343,18 @@ fn extract_app_options_with_env(
         },
         pass_through,
     ))
+}
+
+fn env_default<T>(
+    cli: Option<T>,
+    key: &str,
+    get_env: &mut impl FnMut(&str) -> Option<String>,
+    parse: impl FnOnce(&str, &str) -> Result<T>,
+) -> Result<Option<T>> {
+    match cli {
+        Some(value) => Ok(Some(value)),
+        None => get_env(key).map(|raw| parse(key, &raw)).transpose(),
+    }
 }
 
 fn split_long_value(arg: &str) -> Option<(&str, &str)> {
@@ -731,6 +771,124 @@ mod tests {
             ]
         );
         assert_eq!(iperf, ["iperf3-rs", "-s"]);
+    }
+
+    #[test]
+    fn scalar_cli_values_replace_invalid_environment_defaults() {
+        let values = [
+            ("--push.timeout", "2s"),
+            ("--push.interval", "3s"),
+            ("--push.retries", "2"),
+            ("--push.user-agent", "cli-agent"),
+            ("--push.delete-on-exit", "true"),
+            ("--metrics.prefix", "cli_prefix"),
+            ("--metrics.format", "prometheus"),
+        ];
+        for inline in [true, false] {
+            let mut args = vec![
+                "iperf3-rs".to_owned(),
+                "--push.url=localhost:9091".to_owned(),
+                "--metrics.file=metrics.prom".to_owned(),
+                "-s".to_owned(),
+            ];
+            for (option, value) in values {
+                if inline {
+                    args.push(format!("{option}={value}"));
+                } else {
+                    args.push(option.to_owned());
+                    if option != "--push.delete-on-exit" {
+                        args.push(value.to_owned());
+                    }
+                }
+            }
+            let (app, iperf) = extract_app_options_with_env(args, |key| match key {
+                "IPERF3_PUSH_TIMEOUT"
+                | "IPERF3_PUSH_INTERVAL"
+                | "IPERF3_PUSH_RETRIES"
+                | "IPERF3_PUSH_DELETE_ON_EXIT"
+                | "IPERF3_METRICS_PREFIX"
+                | "IPERF3_METRICS_FORMAT" => Some("invalid!".to_owned()),
+                "IPERF3_PUSH_USER_AGENT" => Some("invalid\nagent".to_owned()),
+                _ => None,
+            })
+            .unwrap();
+            assert_eq!(app.push_timeout, Duration::from_secs(2));
+            assert_eq!(app.push_interval, Some(Duration::from_secs(3)));
+            assert_eq!(app.push_retries, 2);
+            assert_eq!(app.push_user_agent, "cli-agent");
+            assert!(app.push_delete_on_exit);
+            assert_eq!(app.metrics_prefix, "cli_prefix");
+            assert_eq!(app.metrics_format, MetricsFileFormat::Prometheus);
+            assert_eq!(iperf, ["iperf3-rs", "-s"]);
+        }
+    }
+
+    #[test]
+    fn invalid_effective_scalar_values_never_fall_back() {
+        for (key, option, valid, invalid) in [
+            ("IPERF3_PUSH_TIMEOUT", "--push.timeout", "2s", "bad"),
+            ("IPERF3_PUSH_INTERVAL", "--push.interval", "3s", "bad"),
+            ("IPERF3_PUSH_RETRIES", "--push.retries", "2", "bad"),
+            (
+                "IPERF3_PUSH_USER_AGENT",
+                "--push.user-agent",
+                "agent",
+                "bad\nagent",
+            ),
+            (
+                "IPERF3_PUSH_DELETE_ON_EXIT",
+                "--push.delete-on-exit",
+                "true",
+                "bad",
+            ),
+            (
+                "IPERF3_METRICS_PREFIX",
+                "--metrics.prefix",
+                "prefix",
+                "bad-prefix",
+            ),
+            ("IPERF3_METRICS_FORMAT", "--metrics.format", "jsonl", "bad"),
+        ] {
+            let args = vec![
+                "iperf3-rs".to_owned(),
+                "--push.url=localhost:9091".to_owned(),
+                "--metrics.file=metrics.jsonl".to_owned(),
+            ];
+            let err = extract_app_options_with_env(args.clone(), |name| {
+                (name == key).then(|| invalid.to_owned())
+            })
+            .unwrap_err();
+            assert!(err.to_string().contains(key), "{err}");
+
+            for inline in [true, false] {
+                let mut args = args.clone();
+                if inline || option == "--push.delete-on-exit" {
+                    args.push(format!("{option}={invalid}"));
+                } else {
+                    args.extend([option.to_owned(), invalid.to_owned()]);
+                }
+                let err = extract_app_options_with_env(args, |name| {
+                    (name == key).then(|| valid.to_owned())
+                })
+                .unwrap_err();
+                assert!(err.to_string().contains(option), "{err}");
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_scalars_keep_last_valid_value_and_reject_invalid_occurrences() {
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "--push.url=localhost:9091".to_owned(),
+            "--push.timeout=1s".to_owned(),
+            "--push.timeout=2s".to_owned(),
+        ];
+        let (app, _) = extract_app_options_with_env(args.clone(), |_| None).unwrap();
+        assert_eq!(app.push_timeout, Duration::from_secs(2));
+        let mut invalid = args;
+        invalid[2] = "--push.timeout=bad".to_owned();
+        assert!(extract_app_options_with_env(invalid, |_| None).is_err());
     }
 
     #[test]
