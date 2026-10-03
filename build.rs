@@ -25,17 +25,39 @@ fn main() {
     let libiperf = build_src.join(".libs").join("libiperf.a");
     let makefile = build_src.join("Makefile");
 
-    // Keep Cargo's rebuild triggers focused on the files that define the FFI
-    // contract and on the configure options that affect the native build.
-    // Autotools itself handles the full C dependency graph inside `make`.
+    // Native source, headers and Autotools inputs must invalidate Cargo's cache,
+    // including changes made when the vendored revision is updated.
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=native/iperf3rs_shim.c");
     println!("cargo:rerun-if-changed=native/iperf3rs_shim.h");
-    println!("cargo:rerun-if-changed=iperf3/configure");
-    println!("cargo:rerun-if-changed=iperf3/src/iperf_api.h");
-    println!("cargo:rerun-if-changed=iperf3/src/iperf.h");
+    println!("cargo:rerun-if-changed=iperf3");
+    emit_git_rerun_instructions(&iperf_dir);
     println!("cargo:rerun-if-env-changed={CONFIGURE_ARGS_ENV}");
     println!("cargo:rerun-if-env-changed={OPENSSL_FEATURE_ENV}");
+    // cc tracks the shim's target-specific compiler variables. Autotools also
+    // inherits native tool/configuration inputs that cc does not consume.
+    for key in [
+        "CC",
+        "CFLAGS",
+        "CPP",
+        "CPPFLAGS",
+        "LDFLAGS",
+        "LIBS",
+        "AR",
+        "RANLIB",
+        "LD",
+        "NM",
+        "STRIP",
+        "LT_SYS_LIBRARY_PATH",
+        "PKG_CONFIG",
+        "PKG_CONFIG_PATH",
+        "PKG_CONFIG_LIBDIR",
+        "PKG_CONFIG_SYSROOT_DIR",
+        "CONFIG_SITE",
+        "PATH",
+    ] {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
     emit_build_metadata(&manifest_dir, &host, &target, &profile);
 
     if !iperf_src.join("iperf.h").exists() {
@@ -46,23 +68,15 @@ fn main() {
     // those artifacts first so this build script owns the configured state.
     clean_in_source_config_if_needed(&iperf_dir);
 
-    // Build artifacts live under OUT_DIR because Cargo may build this crate
-    // for multiple targets or profiles in the same checkout. The stamp records
-    // the inputs that change configure output, so we can reuse libiperf across
-    // incremental Rust rebuilds without accidentally mixing host/target builds.
+    // Cargo skips this script for unchanged inputs; OUT_DIR survives reruns.
+    // ponytail: rebuild libiperf on any rerun; narrow invalidation only if this
+    // cost matters, without letting old objects survive native/config changes.
     let configure_args = effective_configure_args();
-    let configure_args_stamp = configure_args.join(" ");
-    let stamp = format!("target={target}\nhost={host}\nconfigure_args={configure_args_stamp}\n");
-    if !libiperf.exists() || read_stamp(&build_dir).as_deref() != Some(stamp.as_str()) {
-        if build_dir.exists() {
-            fs::remove_dir_all(&build_dir).unwrap_or_else(|err| {
-                panic!("failed to remove stale libiperf build directory: {err}")
-            });
-        }
-        configure_and_build_iperf(&iperf_dir, &build_dir, &host, &target, &configure_args);
-        fs::write(build_dir.join(".iperf3-rs-build-stamp"), stamp)
-            .unwrap_or_else(|err| panic!("failed to write libiperf build stamp: {err}"));
+    if build_dir.exists() {
+        fs::remove_dir_all(&build_dir)
+            .unwrap_or_else(|err| panic!("failed to remove stale libiperf build directory: {err}"));
     }
+    configure_and_build_iperf(&iperf_dir, &build_dir, &host, &target, &configure_args);
 
     // Compile a tiny C shim with Cargo's `cc` integration. The shim keeps Rust
     // from reaching directly into libiperf internals where the C API needs
@@ -386,8 +400,4 @@ fn read_make_var(contents: &str, key: &str) -> Option<String> {
     contents
         .lines()
         .find_map(|line| line.strip_prefix(&format!("{key} = ")).map(str::to_owned))
-}
-
-fn read_stamp(build_dir: &Path) -> Option<String> {
-    fs::read_to_string(build_dir.join(".iperf3-rs-build-stamp")).ok()
 }
