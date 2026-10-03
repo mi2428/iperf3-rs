@@ -2,10 +2,12 @@
 
 #include "iperf_config.h"
 
+#include <getopt.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "iperf.h"
 #include "iperf_api.h"
@@ -16,6 +18,36 @@ static iperf3rs_metrics_callback interval_metrics_callback = NULL;
 static void iperf3rs_reporter_callback(struct iperf_test *test);
 static void iperf3rs_emit_interval_metrics(struct iperf_test *test);
 static int iperf3rs_add_nonnegative(double *sum, long value);
+
+static void
+iperf3rs_reset_getopt(void)
+{
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
+    optreset = 1;
+    optind = 1;
+#else
+    optind = 0;
+#endif
+    optarg = NULL;
+}
+
+void
+iperf3rs_clear_error_state(void)
+{
+    i_errno = 0;
+    errarg = NULL;
+}
+
+int
+iperf3rs_parse_arguments(struct iperf_test *test, int argc, char **argv)
+{
+    int rc;
+    iperf3rs_reset_getopt();
+    iperf3rs_clear_error_state();
+    rc = iperf_parse_arguments(test, argc, argv);
+    iperf3rs_reset_getopt();
+    return rc;
+}
 
 void
 iperf3rs_enable_interval_metrics(struct iperf_test *test, iperf3rs_metrics_callback callback)

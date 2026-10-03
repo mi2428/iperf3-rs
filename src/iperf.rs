@@ -56,11 +56,12 @@ mod ffi {
         pub fn iperf_new_test() -> *mut iperf_test;
         pub fn iperf_defaults(test: *mut iperf_test) -> c_int;
         pub fn iperf_free_test(test: *mut iperf_test);
-        pub fn iperf_parse_arguments(
+        pub fn iperf3rs_parse_arguments(
             test: *mut iperf_test,
             argc: c_int,
             argv: *mut *mut c_char,
         ) -> c_int;
+        pub fn iperf3rs_clear_error_state();
         pub fn iperf_run_client(test: *mut iperf_test) -> c_int;
         pub fn iperf_reset_test(test: *mut iperf_test);
         pub fn iperf_get_test_role(test: *mut iperf_test) -> c_char;
@@ -153,7 +154,7 @@ impl IperfTest {
             .collect::<Vec<_>>();
         argv.push(std::ptr::null_mut());
 
-        let rc = unsafe { ffi::iperf_parse_arguments(self.as_ptr(), argc, argv.as_mut_ptr()) };
+        let rc = unsafe { ffi::iperf3rs_parse_arguments(self.as_ptr(), argc, argv.as_mut_ptr()) };
         if rc < 0 {
             return Err(Error::libiperf(format!(
                 "failed to parse iperf options: {}",
@@ -254,7 +255,11 @@ impl IperfTest {
 
 impl Drop for IperfTest {
     fn drop(&mut self) {
-        unsafe { ffi::iperf_free_test(self.as_ptr()) };
+        unsafe {
+            ffi::iperf_free_test(self.as_ptr());
+            // Error formatting has already copied any borrowed argv diagnostic.
+            ffi::iperf3rs_clear_error_state();
+        }
     }
 }
 
@@ -357,5 +362,38 @@ mod tests {
                 .to_bytes(),
             b"1M"
         );
+    }
+
+    #[test]
+    fn failed_parse_does_not_poison_subsequent_native_parsing() {
+        let _guard = crate::command::run_lock().lock().unwrap();
+        for (option, value) in [("-p", "0"), ("-b", "invalid")] {
+            let error = {
+                let mut test = IperfTest::new().unwrap();
+                test.parse_arguments(&[
+                    "iperf3-rs".to_owned(),
+                    "-c".to_owned(),
+                    "127.0.0.1".to_owned(),
+                    option.to_owned(),
+                    value.to_owned(),
+                ])
+                .unwrap_err()
+            };
+            assert_eq!(error.kind(), ErrorKind::Libiperf);
+            if option == "-b" {
+                assert!(error.to_string().contains("invalid"));
+            }
+
+            let mut next = IperfTest::new().unwrap();
+            next.parse_arguments(&[
+                "iperf3-rs".to_owned(),
+                "-c".to_owned(),
+                "127.0.0.1".to_owned(),
+                "-b".to_owned(),
+                "1M".to_owned(),
+            ])
+            .unwrap();
+            assert_eq!(next.role(), Role::Client);
+        }
     }
 }
