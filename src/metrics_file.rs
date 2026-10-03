@@ -4,6 +4,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 
@@ -43,11 +44,13 @@ impl MetricsFileFormat {
 ///
 /// JSONL output appends one object per event. Prometheus output atomically
 /// replaces the file with the latest encoded snapshot on each write.
+/// JSONL writes through this sink and its clones are serialized per record.
 #[derive(Debug, Clone)]
 pub struct MetricsFileSink {
     path: PathBuf,
     format: MetricsFileFormat,
     encoder: PrometheusEncoder,
+    jsonl_write: Arc<Mutex<()>>,
 }
 
 impl MetricsFileSink {
@@ -89,6 +92,7 @@ impl MetricsFileSink {
             path: path.into(),
             format,
             encoder: PrometheusEncoder::with_labels(metric_prefix, labels)?,
+            jsonl_write: Arc::new(Mutex::new(())),
         };
         sink.create_empty_file()?;
         Ok(sink)
@@ -138,6 +142,12 @@ impl MetricsFileSink {
     where
         T: Serialize,
     {
+        let _guard = self.jsonl_write.lock().map_err(|_| {
+            Error::new(
+                ErrorKind::MetricsFile,
+                "metrics JSONL writer lock is poisoned",
+            )
+        })?;
         let mut file = OpenOptions::new()
             .append(true)
             .open(&self.path)
@@ -280,6 +290,43 @@ mod tests {
         assert!(lines[0].contains(r#""transferred_bytes":1.0"#));
         assert!(lines[1].contains(r#""transferred_bytes":2.0"#));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn jsonl_shared_and_cloned_writers_preserve_complete_records() {
+        use std::sync::Barrier;
+        use std::thread;
+
+        let path = temp_path("jsonl");
+        let sink = MetricsFileSink::new(&path, MetricsFileFormat::Jsonl).unwrap();
+        let clone = sink.clone();
+        let barrier = Barrier::new(3);
+        thread::scope(|scope| {
+            for (id, writer) in [&sink, &sink, &clone].into_iter().enumerate() {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    for record in 0..100 {
+                        barrier.wait();
+                        writer
+                            .write_interval(&sample_metrics((id * 100 + record) as f64))
+                            .unwrap();
+                    }
+                });
+            }
+        });
+        let contents = fs::read_to_string(&path).unwrap();
+        let values: std::collections::HashSet<_> = contents
+            .lines()
+            .map(|line| {
+                let event: serde_json::Value = serde_json::from_str(line).unwrap();
+                assert_eq!(event["schema_version"], 1);
+                assert_eq!(event["event"], "interval");
+                event["transferred_bytes"].as_f64().unwrap() as usize
+            })
+            .collect();
+        assert_eq!(contents.lines().count(), 300);
+        assert_eq!(values.len(), 300);
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
