@@ -663,7 +663,12 @@ fn setup_run(command: IperfCommand) -> Result<RunSetup> {
     validate_pushgateway_request(&command)?;
 
     let mut test = IperfTest::new()?;
-    test.parse_arguments(&command.argv())?;
+    let outcome = test.parse_arguments(&command.argv())?;
+    if outcome != crate::iperf::ParseOutcome::Parsed {
+        return Err(Error::invalid_argument(format!(
+            "iperf arguments request {outcome:?}, not a measurement"
+        )));
+    }
     if command.should_suppress_output() {
         test.suppress_output()?;
     }

@@ -4,6 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "native/source_adapter.rs"]
+mod source_adapter;
+
 const CONFIGURE_ARGS_ENV: &str = "IPERF3_CONFIGURE_ARGS";
 const OPENSSL_FEATURE_ENV: &str = "CARGO_FEATURE_OPENSSL";
 
@@ -30,6 +33,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=native/iperf3rs_shim.c");
     println!("cargo:rerun-if-changed=native/iperf3rs_shim.h");
+    println!("cargo:rerun-if-changed=native/source_adapter.rs");
     println!("cargo:rerun-if-changed=iperf3");
     emit_git_rerun_instructions(&iperf_dir);
     println!("cargo:rerun-if-env-changed={CONFIGURE_ARGS_ENV}");
@@ -140,6 +144,16 @@ fn configure_and_build_iperf(
     }
 
     run(configure, "configure iperf3");
+
+    // Automake's VPATH recipes prefer local source files over the vendored ones.
+    // Adapt only reviewed C files inside OUT_DIR; never patch the submodule.
+    for (name, adapt) in [
+        ("iperf_api.c", source_adapter::api as fn(&str) -> String),
+        ("iperf_server_api.c", source_adapter::server),
+    ] {
+        let source = fs::read_to_string(iperf_dir.join("src").join(name)).unwrap();
+        fs::write(build_dir.join("src").join(name), adapt(&source)).unwrap();
+    }
 
     let mut make = Command::new("make");
     // Build only libiperf, not the upstream iperf3 CLI, because the Rust binary

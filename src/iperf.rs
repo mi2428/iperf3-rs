@@ -121,6 +121,14 @@ pub struct IperfTest {
     argv_storage: Vec<Vec<u8>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ParseOutcome {
+    Parsed,
+    Help,
+    Version,
+    UsageError,
+}
+
 pub(crate) struct SigpipeGuard(Option<NonNull<c_void>>);
 
 impl SigpipeGuard {
@@ -180,7 +188,7 @@ impl IperfTest {
         self.ptr.as_ptr()
     }
 
-    pub fn parse_arguments(&mut self, args: &[String]) -> Result<()> {
+    pub(crate) fn parse_arguments(&mut self, args: &[String]) -> Result<ParseOutcome> {
         let argc = c_int::try_from(args.len())
             .map_err(|_| Error::invalid_argument("too many iperf arguments"))?;
         let storage = args
@@ -206,7 +214,13 @@ impl IperfTest {
                 current_error()
             )));
         }
-        Ok(())
+        match rc {
+            0 => Ok(ParseOutcome::Parsed),
+            1 => Ok(ParseOutcome::Help),
+            2 => Ok(ParseOutcome::Version),
+            3 => Ok(ParseOutcome::UsageError),
+            _ => Err(Error::internal("unknown native parser outcome")),
+        }
     }
 
     pub(crate) fn enable_interval_metrics(&mut self, callback: ffi::MetricsCallback) {

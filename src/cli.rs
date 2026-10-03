@@ -7,7 +7,7 @@ use anyhow::{Context, Result, anyhow};
 
 use crate::args::extract_app_options;
 use crate::help;
-use crate::iperf::{IperfTest, SigpipeGuard};
+use crate::iperf::{IperfTest, ParseOutcome, SigpipeGuard};
 use crate::metrics::{IntervalMetricsReporter, MetricsSinks};
 use crate::metrics_file::MetricsFileSink;
 use crate::pushgateway::{PushGateway, PushGatewayConfig};
@@ -55,7 +55,19 @@ fn run() -> Result<()> {
 
     let mut sigpipe = SigpipeGuard::install()?;
     let mut test = IperfTest::new().context("failed to create iperf test")?;
-    test.parse_arguments(&iperf_args)?;
+    match test.parse_arguments(&iperf_args)? {
+        ParseOutcome::Parsed => {}
+        ParseOutcome::Help => {
+            print!("{}", help::render_full_help(&crate::iperf::usage_long()?));
+            return Ok(());
+        }
+        ParseOutcome::Version => {
+            let libiperf_version = crate::iperf::libiperf_version();
+            print!("{}", version::render(&version::current(&libiperf_version)));
+            return Ok(());
+        }
+        ParseOutcome::UsageError => std::process::exit(EXIT_OPTION_ERROR.into()),
+    }
 
     let mut sinks = MetricsSinks::new();
     if let Some(push_url) = app.push_url {
