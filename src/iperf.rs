@@ -62,6 +62,12 @@ mod ffi {
             argv: *mut *mut c_char,
         ) -> c_int;
         pub fn iperf3rs_clear_error_state();
+        #[cfg(all(feature = "pushgateway", feature = "serde"))]
+        pub fn iperf3rs_arg_boundary(
+            word: *mut c_char,
+            next: *mut c_char,
+            info: *mut c_int,
+        ) -> c_int;
         pub fn iperf_run_client(test: *mut iperf_test) -> c_int;
         pub fn iperf_reset_test(test: *mut iperf_test);
         pub fn iperf_get_test_role(test: *mut iperf_test) -> c_char;
@@ -95,6 +101,23 @@ mod ffi {
 }
 
 pub(crate) use ffi::iperf_test as RawIperfTest;
+
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
+pub(crate) fn arg_boundary(word: &str, next: Option<&str>) -> Result<(usize, i32)> {
+    let bytes = |value: &str| {
+        CString::new(value)
+            .map(CString::into_bytes_with_nul)
+            .map_err(|_| Error::invalid_argument("argument contains NUL"))
+    };
+    let mut word = bytes(word)?;
+    let mut next = next.map(bytes).transpose()?;
+    let next = next
+        .as_mut()
+        .map_or(std::ptr::null_mut(), |value| value.as_mut_ptr().cast());
+    let mut info = 0;
+    let span = unsafe { ffi::iperf3rs_arg_boundary(word.as_mut_ptr().cast(), next, &mut info) };
+    Ok((span as usize, info))
+}
 
 /// Role selected by libiperf after parsing iperf arguments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

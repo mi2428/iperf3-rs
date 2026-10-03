@@ -166,8 +166,14 @@ fn cli_required_files_succeed_when_pushgateway_is_unavailable() {
         let _server = OneOffServer::start(port);
         let path = temp_metrics_path("jsonl");
         let unavailable = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let endpoint = format!("http://{}", unavailable.local_addr().unwrap());
-        drop(unavailable);
+        // Own the negative endpoint until the run ends. It accepts no HTTP
+        // requests, so timeout (not another fixture's protocol) makes it fail.
+        let address = unavailable.local_addr().unwrap();
+        let endpoint = format!("http://{address}");
+        assert_eq!(
+            TcpListener::bind(address).unwrap_err().kind(),
+            std::io::ErrorKind::AddrInUse
+        );
         let mut options = vec![
             "-J",
             "--push.url",
@@ -179,6 +185,10 @@ fn cli_required_files_succeed_when_pushgateway_is_unavailable() {
             options.extend(["--push.interval", "60s"]);
         }
         let output = run_cli_metrics_file_client(port, &path, &options);
+        assert_eq!(
+            TcpListener::bind(address).unwrap_err().kind(),
+            std::io::ErrorKind::AddrInUse
+        );
         assert!(output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("failed to push metrics"));
         assert!(
@@ -251,6 +261,49 @@ fn cli_timestamp_formats_are_optional_attached_values() {
         );
         fs::remove_file(metrics_file).unwrap();
     }
+}
+
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
+#[test]
+fn cli_keeps_option_shaped_data_and_title_in_json() {
+    let port = free_loopback_port();
+    let _server = OneOffServer::start(port);
+    let metrics_file = temp_metrics_path("jsonl");
+    let output = run_cli_metrics_file_client(
+        port,
+        &metrics_file,
+        &[
+            "-J",
+            "--extra-data",
+            "--push.timeout=bad",
+            "--title",
+            "--help",
+        ],
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["extra_data"], "--push.timeout=bad");
+    assert_eq!(json["title"], "--help");
+    fs::remove_file(metrics_file).unwrap();
+}
+
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
+#[test]
+fn library_transfers_an_ordinary_file_after_native_preprocessing() {
+    let port = free_loopback_port();
+    let _server = OneOffServer::start(port);
+    let source = temp_metrics_path("data");
+    let bytes = vec![b'x'; 32 * 1024];
+    fs::write(&source, &bytes).unwrap();
+    let mut command = iperf3_rs::IperfCommand::client("127.0.0.1");
+    command
+        .port(port)
+        .json()
+        .args(["-F", source.to_str().unwrap()]);
+    let result = command.run();
+    fs::remove_file(source).unwrap();
+    let result = result.expect("native file transfer should complete after the listen marker");
+    let json: serde_json::Value = serde_json::from_str(result.json_output().unwrap()).unwrap();
+    assert!(json["end"]["sum_sent"]["bytes"].as_u64().unwrap() >= bytes.len() as u64);
 }
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]

@@ -13,6 +13,7 @@
 #include "iperf.h"
 #include "iperf_api.h"
 #include "iperf3rs_shim.h"
+#include "iperf3rs_options.h"
 
 static iperf3rs_metrics_callback interval_metrics_callback = NULL;
 /* Like the callback, this snapshot belongs to the serialized native run. */
@@ -52,6 +53,43 @@ iperf3rs_parse_arguments(struct iperf_test *test, int argc, char **argv)
     rc = iperf_parse_arguments(test, argc, argv);
     iperf3rs_reset_getopt();
     return rc;
+}
+
+/* Classify a single upstream option word without applying its semantics. */
+int
+iperf3rs_arg_boundary(char *word, char *next, int *info)
+{
+    char program[] = "iperf3-rs";
+    char *argv[] = { program, word, next, NULL };
+    int argc = next == NULL ? 2 : 3;
+    int flag;
+    int consumed = 1;
+    int previous_opterr = opterr;
+    *info = 0;
+    if (word[0] != '-' || word[1] == '\0') {
+        return consumed;
+    }
+    opterr = 0;
+    iperf3rs_reset_getopt();
+    while ((flag = getopt_long(argc, argv, iperf3rs_shortopts, iperf3rs_longopts, NULL)) != -1) {
+        if (optind > 2) {
+            consumed = 2;
+        }
+        if (flag == '?' || flag == ':') {
+            *info = -1; /* preserve the upstream unknown/missing option path */
+            break;
+        }
+        if (flag == 'h' || flag == 'v') {
+            *info = flag == 'h' ? 1 : 2;
+            break;
+        }
+        if (optind >= 2) {
+            break; /* Do not parse the following operand as another option. */
+        }
+    }
+    iperf3rs_reset_getopt();
+    opterr = previous_opterr;
+    return consumed;
 }
 
 void

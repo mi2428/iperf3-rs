@@ -5,10 +5,11 @@ use std::{
 };
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 use std::{
-    io::{ErrorKind as IoErrorKind, Read, Write},
+    io::{BufRead, BufReader, ErrorKind as IoErrorKind, Read, Write},
     net::TcpListener,
     path::Path,
     process::{Child, Command, Output, Stdio},
+    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -21,32 +22,13 @@ pub fn run_library_client(
     port: u16,
     mode: MetricsMode,
 ) -> (iperf3_rs::IperfResult, Vec<MetricEvent>) {
-    let mut last_error = String::new();
-    for _ in 0..20 {
-        match try_run_library_client(port, mode) {
-            Ok(result) => return result,
-            Err(err) => {
-                last_error = err.to_string();
-                thread::sleep(Duration::from_millis(100));
-            }
-        }
-    }
-    panic!("client should complete: {last_error}");
+    try_run_library_client(port, mode).expect("client should complete after server readiness")
 }
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 pub fn run_library_client_blocking(port: u16, mode: MetricsMode) -> iperf3_rs::IperfResult {
-    let mut last_error = String::new();
-    for _ in 0..20 {
-        match try_run_library_client_blocking(port, mode) {
-            Ok(result) => return result,
-            Err(err) => {
-                last_error = err.to_string();
-                thread::sleep(Duration::from_millis(100));
-            }
-        }
-    }
-    panic!("blocking client should complete: {last_error}");
+    try_run_library_client_blocking(port, mode)
+        .expect("blocking client should complete after server readiness")
 }
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
@@ -100,41 +82,32 @@ pub fn try_run_library_direct_push_client(
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 pub fn run_cli_metrics_file_client(port: u16, metrics_file: &Path, extra_args: &[&str]) -> Output {
-    let mut last_output = None;
-    for _ in 0..20 {
-        let port = port.to_string();
-        let metrics_file = metrics_file.to_string_lossy();
-        let mut args = vec![
-            "-c",
-            "127.0.0.1",
-            "-p",
-            port.as_str(),
-            "-t",
-            "1",
-            "-i",
-            "1",
-            "--metrics.file",
-            metrics_file.as_ref(),
-        ];
-        args.extend_from_slice(extra_args);
-
-        let output = Command::new(env!("CARGO_BIN_EXE_iperf3-rs"))
-            .args(args)
-            .output()
-            .expect("run iperf3-rs client with metrics file");
-        if output.status.success() {
-            return output;
-        }
-        last_output = Some(output);
-        thread::sleep(Duration::from_millis(100));
-    }
-
-    let output = last_output.expect("client should have run at least once");
-    panic!(
+    let port = port.to_string();
+    let metrics_file = metrics_file.to_string_lossy();
+    let mut args = vec![
+        "-c",
+        "127.0.0.1",
+        "-p",
+        port.as_str(),
+        "-t",
+        "1",
+        "-i",
+        "1",
+        "--metrics.file",
+        metrics_file.as_ref(),
+    ];
+    args.extend_from_slice(extra_args);
+    let output = Command::new(env!("CARGO_BIN_EXE_iperf3-rs"))
+        .args(args)
+        .output()
+        .expect("run iperf3-rs client with metrics file");
+    assert!(
+        output.status.success(),
         "client should complete\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    output
 }
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
@@ -146,19 +119,50 @@ pub fn free_loopback_port() -> u16 {
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 pub struct OneOffServer {
     child: Child,
+    output_worker: Option<thread::JoinHandle<()>>,
 }
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 impl OneOffServer {
     pub fn start(port: u16) -> Self {
-        let child = Command::new(env!("CARGO_BIN_EXE_iperf3-rs"))
-            .args(["-s", "-1", "-p", &port.to_string()])
-            .stdout(Stdio::null())
+        let mut child = Command::new(env!("CARGO_BIN_EXE_iperf3-rs"))
+            .args(["-s", "-1", "-p", &port.to_string(), "--forceflush"])
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .expect("start iperf3-rs one-off server");
 
-        Self { child }
+        let stdout = child.stdout.take().unwrap();
+        let (ready, receiver) = mpsc::channel();
+        let output_worker = thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let marker = format!("Server listening on {port} ");
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Err(error) => {
+                        let _ = ready.send(Err(error));
+                        break;
+                    }
+                    Ok(_) => {
+                        if line.starts_with(&marker) {
+                            let _ = ready.send(Ok(()));
+                        }
+                    }
+                }
+            }
+        });
+        let server = Self {
+            child,
+            output_worker: Some(output_worker),
+        };
+        receiver
+            .recv_timeout(Duration::from_secs(3))
+            .expect("test-owned server should emit its force-flushed listen marker")
+            .expect("test-owned stdout should be readable");
+        server
     }
 }
 
@@ -169,6 +173,9 @@ impl Drop for OneOffServer {
             let _ = self.child.kill();
         }
         let _ = self.child.wait();
+        if let Some(worker) = self.output_worker.take() {
+            worker.join().expect("test-owned stdout reader should stop");
+        }
     }
 }
 

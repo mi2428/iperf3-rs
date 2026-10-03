@@ -57,6 +57,51 @@ fn cli_scalar_overrides_reach_upstream_validation() {
 }
 
 #[cfg(unix)]
+#[test]
+fn option_shaped_operands_reach_upstream_without_being_consumed() {
+    for args in [
+        vec!["--extra-data", "--push.timeout=bad"],
+        vec!["--extra-data", "--help"],
+        vec!["--extr", "--version"],
+        vec!["-VT--help"],
+        vec!["--push.url=localhost:9091", "--push.user-agent", "--help"],
+    ] {
+        let output = cli()
+            .args(["-c", "127.0.0.1", "-p", "0"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .contains("failed to parse iperf options")
+        );
+        assert!(
+            !String::from_utf8(output.stdout)
+                .unwrap()
+                .contains("iperf3-rs options")
+        );
+    }
+    let output = cli().args(["--unknown-option", "--help"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        !String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("iperf3-rs options")
+    );
+    for flag in ["-hV", "--hel", "-Vv"] {
+        let output = cli()
+            .env("IPERF3_PUSH_TIMEOUT", "bad")
+            .arg(flag)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[cfg(unix)]
 mod encoding {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt, process::Output};
 

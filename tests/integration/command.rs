@@ -1,4 +1,4 @@
-use std::{thread, time::Duration};
+use std::time::Duration;
 
 use super::helpers::*;
 use iperf3_rs::{MetricDirection, MetricEvent, MetricsMode, PushGatewayConfig, TransportProtocol};
@@ -142,21 +142,10 @@ fn command_run_with_pushgateway_pushes_interval_metrics() {
         .label("scenario", "library-direct")
         .timeout(Duration::from_secs(1));
 
-    let mut last_error = String::new();
-    for _ in 0..20 {
-        match try_run_library_direct_push_client(port, config.clone()) {
-            Ok(()) => {
-                let request = sink.wait();
-                assert!(request.contains("/metrics/job/iperf3/scenario/library-direct"));
-                assert!(request.contains("iperf3_transferred_bytes"));
-                assert!(request.contains("iperf3_bandwidth_bits_per_second"));
-                return;
-            }
-            Err(err) => {
-                last_error = err.to_string();
-                thread::sleep(Duration::from_millis(100));
-            }
-        }
-    }
-    panic!("client should complete and push metrics: {last_error}");
+    try_run_library_direct_push_client(port, config)
+        .expect("client should complete and push metrics after server readiness");
+    let request = sink.wait();
+    assert!(request.contains("/metrics/job/iperf3/scenario/library-direct"));
+    assert!(request.contains("iperf3_transferred_bytes"));
+    assert!(request.contains("iperf3_bandwidth_bits_per_second"));
 }

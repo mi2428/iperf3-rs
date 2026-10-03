@@ -58,7 +58,7 @@ fn extract_app_options_with_env(
     pass_through.push(program);
 
     let rest: Vec<String> = iter.collect();
-    let (show_help, show_version) = find_informational_request(&rest);
+    let (spans, show_help, show_version) = argument_boundaries(&rest)?;
     if show_help || show_version {
         return Ok((
             AppOptions {
@@ -113,6 +113,12 @@ fn extract_app_options_with_env(
             // After `--`, every token belongs to libiperf exactly as written.
             pass_through.extend(rest[i..].iter().cloned());
             break;
+        }
+
+        if spans[i] != 0 {
+            pass_through.extend(rest[i..i + spans[i]].iter().cloned());
+            i += spans[i];
+            continue;
         }
 
         if let Some((key, value)) = split_long_value(arg) {
@@ -569,25 +575,48 @@ fn reject_duplicate_labels(option: &str, labels: &[(String, String)]) -> Result<
     Ok(())
 }
 
-fn find_informational_request(args: &[String]) -> (bool, bool) {
-    let mut show_help = false;
-    let mut show_version = false;
-    for arg in args {
-        if arg == "--" {
+fn argument_boundaries(args: &[String]) -> Result<(Vec<usize>, bool, bool)> {
+    let _guard = crate::command::run_lock()
+        .lock()
+        .map_err(|_| anyhow!("libiperf run lock is poisoned"))?;
+    let mut spans = vec![1; args.len()];
+    let mut index = 0;
+    while index < args.len() {
+        let word = &args[index];
+        if word == "--" {
             break;
         }
-        show_help |= is_help_option(arg);
-        show_version |= is_version_option(arg);
+        let (key, inline) =
+            split_long_value(word).map_or((word.as_str(), false), |(key, _)| (key, true));
+        let wrapper_value = match key {
+            "--push.url" | "--push.job" | "--push.label" | "--push.timeout" | "--push.retries"
+            | "--push.user-agent" | "--push.interval" | "--metrics.file" | "--metrics.format"
+            | "--metrics.label" | "--metrics.prefix" => Some(true),
+            "--push.delete-on-exit" => Some(false),
+            _ => None,
+        };
+        if let Some(requires_value) = wrapper_value {
+            spans[index] = 0;
+            index += if requires_value && !inline && index + 1 < args.len() {
+                2
+            } else {
+                1
+            };
+        } else {
+            let (span, info) =
+                crate::iperf::arg_boundary(word, args.get(index + 1).map(String::as_str))?;
+            spans[index] = span;
+            if info > 0 {
+                return Ok((spans, info == 1, info == 2));
+            }
+            if info < 0 {
+                // Keep the remaining argv untouched for upstream's error path.
+                break;
+            }
+            index += span;
+        }
     }
-    (show_help, show_version)
-}
-
-fn is_version_option(arg: &str) -> bool {
-    arg == "-v" || arg == "--version"
-}
-
-fn is_help_option(arg: &str) -> bool {
-    arg == "-h" || arg == "--help"
+    Ok((spans, false, false))
 }
 
 #[cfg(kani)]
@@ -706,6 +735,98 @@ mod tests {
         mut get_env: impl FnMut(&str) -> Option<String>,
     ) -> Result<(AppOptions, Vec<String>)> {
         super::extract_app_options_with_env(args, |key| Ok(get_env(key)))
+    }
+
+    #[test]
+    fn upstream_operands_are_never_wrapper_or_information_options() {
+        for option in ["--extra-data", "--extr", "--title", "-T", "-F"] {
+            for value in [
+                "--help",
+                "--version",
+                "--push.timeout=bad",
+                "--metrics.file=x",
+                "--",
+            ] {
+                let args: Vec<_> = ["iperf3-rs", "-c", "127.0.0.1", option, value]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect();
+                let (app, forwarded) =
+                    extract_app_options_with_env(args.clone(), |_| None).unwrap();
+                assert_eq!(forwarded, args);
+                assert!(!app.show_help && !app.show_version);
+                assert!(app.push_url.is_none() && app.metrics_file.is_none());
+            }
+        }
+        for word in [
+            "--extra-data=--help",
+            "-T--help",
+            "-VT--help",
+            "--debug=--help",
+            "--timestamps=--help",
+        ] {
+            let args = vec!["iperf3-rs".to_owned(), word.to_owned()];
+            let (app, forwarded) = extract_app_options_with_env(args.clone(), |_| None).unwrap();
+            assert_eq!(forwarded, args);
+            assert!(!app.show_help && !app.show_version);
+        }
+    }
+
+    #[test]
+    fn wrapper_operands_do_not_request_help() {
+        for option in ["--push.job", "--push.user-agent", "--metrics.file"] {
+            let args = [
+                "iperf3-rs",
+                "--push.url=localhost:9091",
+                "-s",
+                option,
+                "--help",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+            let (app, forwarded) = extract_app_options_with_env(args, |_| None).unwrap();
+            assert!(!app.show_help && !app.show_version);
+            assert_eq!(forwarded, ["iperf3-rs", "-s"]);
+        }
+    }
+
+    #[test]
+    fn native_information_forms_skip_defaults_but_unknown_options_do_not() {
+        for (flag, help) in [
+            ("-hV", true),
+            ("--hel", true),
+            ("-Vv", false),
+            ("--version", false),
+        ] {
+            let args = vec!["iperf3-rs".to_owned(), flag.to_owned()];
+            let (app, _) =
+                super::extract_app_options_with_env(args, |_| bail!("env must not be read"))
+                    .unwrap();
+            assert_eq!(app.show_help, help);
+            assert_eq!(app.show_version, !help);
+        }
+        let args = vec![
+            "iperf3-rs".to_owned(),
+            "--unknown-option".to_owned(),
+            "--help".to_owned(),
+        ];
+        let (app, forwarded) = extract_app_options_with_env(args.clone(), |_| None).unwrap();
+        assert!(!app.show_help && !app.show_version);
+        assert_eq!(forwarded, args);
+    }
+
+    #[test]
+    fn native_optional_arguments_leave_the_next_wrapper_word_unconsumed() {
+        for word in ["--timestamps", "--debug", "-d"] {
+            let args = ["iperf3-rs", word, "--push.url=localhost:9091", "-s"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+            let (app, forwarded) = extract_app_options_with_env(args, |_| None).unwrap();
+            assert!(app.push_url.is_some());
+            assert_eq!(forwarded, ["iperf3-rs", word, "-s"]);
+        }
     }
 
     #[test]

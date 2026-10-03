@@ -81,6 +81,12 @@ fn main() {
             .unwrap_or_else(|err| panic!("failed to remove stale libiperf build directory: {err}"));
     }
     configure_and_build_iperf(&iperf_dir, &build_dir, &host, &target, &configure_args);
+    let upstream_api = fs::read_to_string(iperf_src.join("iperf_api.c")).unwrap();
+    fs::write(
+        out_dir.join("iperf3rs_options.h"),
+        source_adapter::option_metadata(&upstream_api),
+    )
+    .unwrap();
 
     // Compile a tiny C shim with Cargo's `cc` integration. The shim keeps Rust
     // from reaching directly into libiperf internals where the C API needs
@@ -88,6 +94,7 @@ fn main() {
     // libiperf without patching the submodule.
     let mut shim = cc::Build::new();
     shim.file("native/iperf3rs_shim.c")
+        .include(&out_dir)
         .include(&build_src)
         .include(&iperf_src)
         .warnings(false);

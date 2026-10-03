@@ -38,6 +38,40 @@ pub fn server(source: &str) -> String {
     source
 }
 
+pub fn option_metadata(source: &str) -> String {
+    let table_start = "    static struct option longopts[] =\n    {\n";
+    let table_end = "\n    };\n    int flag;";
+    assert_eq!(
+        source.matches(table_start).count(),
+        1,
+        "upstream option table anchor changed"
+    );
+    let table = source
+        .split_once(table_start)
+        .unwrap()
+        .1
+        .split_once(table_end)
+        .expect("upstream option table end changed")
+        .0;
+    let short_start = "getopt_long(argc, argv, \"";
+    let short_end = "\", longopts, NULL)) != -1)";
+    assert_eq!(
+        source.matches(short_start).count(),
+        1,
+        "upstream short option anchor changed"
+    );
+    let short = source
+        .split_once(short_start)
+        .unwrap()
+        .1
+        .split_once(short_end)
+        .expect("upstream short option end changed")
+        .0;
+    format!(
+        "/* Generated verbatim from upstream iperf_parse_arguments. */\nstatic const struct option iperf3rs_longopts[] = {{\n{table}\n}};\nstatic const char iperf3rs_shortopts[] = \"{short}\";\n"
+    )
+}
+
 pub fn replace_once(source: &str, from: &str, to: &str) -> String {
     assert_eq!(
         source.matches(from).count(),
