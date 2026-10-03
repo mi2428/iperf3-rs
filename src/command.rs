@@ -412,7 +412,13 @@ impl IperfCommand {
     /// that know they want metrics for this run. The returned stream is part of
     /// the run contract: drain it until it closes, or drop it if metrics are no
     /// longer needed. Keeping it alive but unread can grow memory on long runs.
+    /// [`MetricsMode::Disabled`] is rejected before a worker is started.
     pub fn spawn_with_metrics(&self, mode: MetricsMode) -> Result<(RunningIperf, MetricsStream)> {
+        if !mode.is_enabled() {
+            return Err(Error::invalid_metrics_mode(
+                "spawn_with_metrics requires Interval or Window metrics",
+            ));
+        }
         let mut command = self.clone();
         command.metrics(mode);
         let mut running = command.spawn()?;
@@ -1050,6 +1056,16 @@ mod tests {
 
         assert!(err.to_string().contains("greater than zero"), "{err:#}");
         assert_eq!(command.metrics_mode, MetricsMode::Disabled);
+    }
+
+    #[test]
+    fn disabled_metrics_convenience_is_rejected_before_native_setup() {
+        // No role is selected: native setup would fail with a different error.
+        let err = IperfCommand::new()
+            .spawn_with_metrics(MetricsMode::Disabled)
+            .unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::InvalidMetricsMode);
     }
 
     #[test]
