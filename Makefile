@@ -295,12 +295,13 @@ dist: ## Build release binaries into dist/. Use OS=darwin,linux and ARCH=amd64,a
 
 .PHONY: dist-smoke
 dist-smoke: ## Smoke-test Linux dist binaries in an old-glibc Debian container
-	@if ! ls "$(DISTDIR)"/$(APP)-linux-* >/dev/null 2>&1; then \
+	@set -eu -o pipefail; \
+	if ! ls "$(DISTDIR)"/$(APP)-linux-* >/dev/null 2>&1; then \
 		printf 'Skipping Linux dist smoke test; no Linux artifacts found\n'; \
 		exit 0; \
-	fi
-	@$(MAKE) --no-print-directory _docker-check
-	@for arch in $(LINUX_ARCHS); do \
+	fi; \
+	$(MAKE) --no-print-directory _docker-check; \
+	for arch in $(LINUX_ARCHS); do \
 		case "$$arch" in \
 			amd64) binary="$(DISTDIR)/$(APP)-$(LINUX_amd64_SUFFIX)"; platform="$(LINUX_amd64_PLATFORM)" ;; \
 			arm64) binary="$(DISTDIR)/$(APP)-$(LINUX_arm64_SUFFIX)"; platform="$(LINUX_arm64_PLATFORM)" ;; \
