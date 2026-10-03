@@ -24,6 +24,24 @@ fn cli_writes_jsonl_metrics_file_without_replacing_stdout() {
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[test]
+fn cli_preserves_unicode_metrics_paths_and_json_stdout() {
+    let port = free_loopback_port();
+    let _server = OneOffServer::start(port);
+    let metrics_file = temp_metrics_path("日本語.jsonl");
+
+    let output = run_cli_metrics_file_client(port, &metrics_file, &["-J"]);
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(json.get("end").is_some());
+    assert!(
+        fs::read_to_string(&metrics_file)
+            .unwrap()
+            .contains(r#""event":"interval""#)
+    );
+    fs::remove_file(metrics_file).unwrap();
+}
+
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
+#[test]
 fn cli_writes_prometheus_metrics_file_with_custom_prefix() {
     let port = free_loopback_port();
     let _server = OneOffServer::start(port);

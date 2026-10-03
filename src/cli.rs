@@ -3,7 +3,7 @@
 use std::env;
 use std::process::ExitCode;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 use crate::args::extract_app_options;
 use crate::help;
@@ -28,13 +28,21 @@ pub fn main() -> ExitCode {
 }
 
 fn run() -> Result<()> {
-    let raw_args: Vec<String> = env::args().collect();
+    let raw_args = env::args_os()
+        .enumerate()
+        .map(|(index, arg)| {
+            arg.into_string()
+                .map_err(|_| anyhow!("argument {index} must be valid UTF-8"))
+        })
+        .collect::<Result<Vec<_>>>();
     // Split wrapper-only metrics options before handing argv to libiperf's own
     // parser, preserving upstream iperf3 option compatibility.
-    let (app, iperf_args) = extract_app_options(raw_args).map_err(|err| {
-        eprintln!("{err:#}");
-        std::process::exit(EXIT_OPTION_ERROR.into());
-    })?;
+    let (app, iperf_args) = raw_args
+        .and_then(extract_app_options)
+        .unwrap_or_else(|err| {
+            eprintln!("{err:#}");
+            std::process::exit(EXIT_OPTION_ERROR.into());
+        });
     if app.show_help {
         print!("{}", help::render_full_help(&crate::iperf::usage_long()?));
         return Ok(());

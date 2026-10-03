@@ -38,12 +38,16 @@ pub struct AppOptions {
 }
 
 pub fn extract_app_options(args: Vec<String>) -> Result<(AppOptions, Vec<String>)> {
-    extract_app_options_with_env(args, |key| env::var(key).ok())
+    extract_app_options_with_env(args, |key| match env::var(key) {
+        Ok(value) => Ok(Some(value)),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => bail!("{key} must be valid UTF-8"),
+    })
 }
 
 fn extract_app_options_with_env(
     args: Vec<String>,
-    mut get_env: impl FnMut(&str) -> Option<String>,
+    mut get_env: impl FnMut(&str) -> Result<Option<String>>,
 ) -> Result<(AppOptions, Vec<String>)> {
     // iperf3-rs options are consumed here so libiperf receives an argv that still
     // looks like the upstream iperf3 CLI.
@@ -76,10 +80,9 @@ fn extract_app_options_with_env(
         ));
     }
 
-    let mut push_url = get_env("IPERF3_PUSH_URL");
-    let mut push_job =
-        get_env("IPERF3_PUSH_JOB").unwrap_or_else(|| PushGatewayConfig::DEFAULT_JOB.to_owned());
-    let mut push_labels = get_env("IPERF3_PUSH_LABELS")
+    let mut push_url = None;
+    let mut push_job = None;
+    let mut push_labels = get_env("IPERF3_PUSH_LABELS")?
         .map(|raw| parse_env_labels("IPERF3_PUSH_LABELS", &raw, true))
         .transpose()?
         .unwrap_or_default();
@@ -89,9 +92,9 @@ fn extract_app_options_with_env(
     let mut metrics_prefix = None;
     let mut push_interval = None;
     let mut push_delete_on_exit = None;
-    let mut metrics_file = get_env("IPERF3_METRICS_FILE").map(PathBuf::from);
+    let mut metrics_file = None;
     let mut metrics_format = None;
-    let mut metrics_labels = get_env("IPERF3_METRICS_LABELS")
+    let mut metrics_labels = get_env("IPERF3_METRICS_LABELS")?
         .map(|raw| parse_env_labels("IPERF3_METRICS_LABELS", &raw, false))
         .transpose()?
         .unwrap_or_default();
@@ -115,7 +118,7 @@ fn extract_app_options_with_env(
             match key {
                 "--push.url" => push_url = Some(value.to_owned()),
                 "--push.job" => {
-                    push_job = value.to_owned();
+                    push_job = Some(value.to_owned());
                     saw_push_job = true;
                 }
                 "--push.label" => {
@@ -168,7 +171,7 @@ fn extract_app_options_with_env(
                 push_url = Some(take_value(&rest, &mut i, "--push.url")?);
             }
             "--push.job" => {
-                push_job = take_value(&rest, &mut i, "--push.job")?;
+                push_job = Some(take_value(&rest, &mut i, "--push.job")?);
                 saw_push_job = true;
             }
             "--push.label" => {
@@ -294,7 +297,22 @@ fn extract_app_options_with_env(
     )?;
     saw_metrics_setting |= metrics_format.is_some();
     let metrics_format = metrics_format.unwrap_or(MetricsFileFormat::Jsonl);
-    let push_url = push_url.as_deref().map(parse_url).transpose()?;
+    let push_url = env_default(push_url, "IPERF3_PUSH_URL", &mut get_env, |_, raw| {
+        Ok(raw.to_owned())
+    })?
+    .as_deref()
+    .map(parse_url)
+    .transpose()?;
+    let push_job = env_default(push_job, "IPERF3_PUSH_JOB", &mut get_env, |_, raw| {
+        Ok(raw.to_owned())
+    })?
+    .unwrap_or_else(|| PushGatewayConfig::DEFAULT_JOB.to_owned());
+    let metrics_file = env_default(
+        metrics_file,
+        "IPERF3_METRICS_FILE",
+        &mut get_env,
+        |_, raw| Ok(PathBuf::from(raw)),
+    )?;
     if push_url.is_none() && saw_push_job {
         bail!("--push.job requires --push.url or IPERF3_PUSH_URL");
     }
@@ -348,12 +366,12 @@ fn extract_app_options_with_env(
 fn env_default<T>(
     cli: Option<T>,
     key: &str,
-    get_env: &mut impl FnMut(&str) -> Option<String>,
+    get_env: &mut impl FnMut(&str) -> Result<Option<String>>,
     parse: impl FnOnce(&str, &str) -> Result<T>,
 ) -> Result<Option<T>> {
     match cli {
         Some(value) => Ok(Some(value)),
-        None => get_env(key).map(|raw| parse(key, &raw)).transpose(),
+        None => get_env(key)?.map(|raw| parse(key, &raw)).transpose(),
     }
 }
 
@@ -681,6 +699,13 @@ mod verification {
 mod tests {
     use super::*;
 
+    fn extract_app_options_with_env(
+        args: Vec<String>,
+        mut get_env: impl FnMut(&str) -> Option<String>,
+    ) -> Result<(AppOptions, Vec<String>)> {
+        super::extract_app_options_with_env(args, |key| Ok(get_env(key)))
+    }
+
     #[test]
     fn strips_custom_options() {
         let args = vec![
@@ -889,6 +914,37 @@ mod tests {
         let mut invalid = args;
         invalid[2] = "--push.timeout=bad".to_owned();
         assert!(extract_app_options_with_env(invalid, |_| None).is_err());
+    }
+
+    #[test]
+    fn unicode_values_and_additive_labels_are_preserved() {
+        let (app, _) = extract_app_options_with_env(
+            [
+                "iperf3-rs",
+                "--push.url=localhost:9091",
+                "--push.job=測定",
+                "--push.label=site=東京",
+                "--metrics.file=測定.prom",
+                "--metrics.format=prometheus",
+                "--metrics.label=site=東京",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+            |key| match key {
+                "IPERF3_PUSH_LABELS" | "IPERF3_METRICS_LABELS" => Some("region=日本".to_owned()),
+                _ => None,
+            },
+        )
+        .unwrap();
+        assert_eq!(app.push_job, "測定");
+        assert_eq!(app.metrics_file, Some(PathBuf::from("測定.prom")));
+        let expected = vec![
+            ("region".to_owned(), "日本".to_owned()),
+            ("site".to_owned(), "東京".to_owned()),
+        ];
+        assert_eq!(app.push_labels, expected);
+        assert_eq!(app.metrics_labels, expected);
     }
 
     #[test]
