@@ -232,6 +232,14 @@ Workflows:
 
 `checks.yml` intentionally spells out cargo, Docker, and Kani commands instead of invoking Makefile targets so CI behavior does not silently change when the Makefile is refactored.
 
+GHCR validates tags with the policy from the executing workflow revision, not a
+helper from the requested old tag. A tag must be Docker-compatible SemVer, exist,
+match the checked-out commit, and match `Cargo.toml`. SemVer `+build` metadata is
+not supported for image tags. Prereleases never update `latest`; the manual
+`prerelease` input means "publish without latest" and may also suppress `latest`
+for a stable tag. Stable retries normally update `latest`, including an intentional
+older-tag rollback. There is no automatic newest-version/monotonic policy.
+
 ## Maintainer Checklist
 
 Before publishing a release:
