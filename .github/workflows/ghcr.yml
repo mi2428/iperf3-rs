@@ -48,12 +48,13 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.workflow_sha }}
+          path: .trusted-policy
           persist-credentials: false
           sparse-checkout: .github/scripts/release_metadata.sh
           sparse-checkout-cone-mode: false
 
       - name: Preserve trusted release policy
-        run: install -m 0755 .github/scripts/release_metadata.sh "${RUNNER_TEMP}/release_metadata.sh"
+        run: install -m 0755 .trusted-policy/.github/scripts/release_metadata.sh "${RUNNER_TEMP}/release_metadata.sh"
 
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -142,12 +143,13 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.workflow_sha }}
+          path: .trusted-policy
           persist-credentials: false
           sparse-checkout: .github/scripts/release_metadata.sh
           sparse-checkout-cone-mode: false
 
       - name: Preserve trusted release policy
-        run: install -m 0755 .github/scripts/release_metadata.sh "${RUNNER_TEMP}/release_metadata.sh"
+        run: install -m 0755 .trusted-policy/.github/scripts/release_metadata.sh "${RUNNER_TEMP}/release_metadata.sh"
 
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

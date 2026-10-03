@@ -9,6 +9,8 @@ root = Path(__file__).resolve().parents[1]
 helper = root / ".github/scripts/release_metadata.sh"
 workflow = (root / ".github/workflows/ghcr.yml").read_text()
 assert workflow.count("ref: ${{ github.workflow_sha }}") == 2
+assert workflow.count("path: .trusted-policy") == 2
+assert workflow.count('install -m 0755 .trusted-policy/.github/scripts/release_metadata.sh') == 2
 assert workflow.count('run: bash "${RUNNER_TEMP}/release_metadata.sh"') == 2
 assert workflow.count("ref: refs/tags/${{") == 2
 (root / "target").mkdir(exist_ok=True)
