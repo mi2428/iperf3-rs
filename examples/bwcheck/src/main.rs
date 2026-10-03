@@ -183,7 +183,8 @@ fn check_endpoint(endpoint: &Endpoint, config: &Config) -> Result<CheckReport> {
         .udp()
         .bitrate_bits_per_second(IPERF_UDP_BITRATE_BPS)
         .duration(Duration::from_secs(IPERF_SECONDS))
-        .report_interval(Duration::from_secs(IPERF_INTERVAL_SECONDS));
+        .report_interval(Duration::from_secs(IPERF_INTERVAL_SECONDS))
+        .json();
 
     // `spawn_with_metrics` starts the iperf run and returns immediately with
     // both the process-local runner and the metrics stream. In interval mode,
@@ -203,11 +204,28 @@ fn check_endpoint(endpoint: &Endpoint, config: &Config) -> Result<CheckReport> {
 
     // Always wait for the run result after consuming metrics. `wait` propagates
     // libiperf failures such as unreachable servers or invalid iperf arguments.
-    running.wait()?;
-
-    let summary = summarize_samples(&samples)?;
-    let passed = summary.bandwidth_bps >= config.min_bandwidth_bps
-        && summary.loss_percent < config.max_loss_percent;
+    let result = running.wait()?;
+    let json = result
+        .json_value()
+        .ok_or("iperf run produced no JSON result")??;
+    if json.get("error").is_some() {
+        return Err("iperf JSON result contains an error".into());
+    }
+    // Forward UDP intervals describe the sender. Only the final receiver
+    // summary establishes which packets arrived at the remote endpoint.
+    let receiver = json
+        .get("end")
+        .and_then(|end| end.get("sum_received"))
+        .filter(|receiver| receiver.is_object())
+        .ok_or("iperf run produced no UDP receiver summary")?;
+    let summary = summarize_samples(
+        &samples,
+        receiver.get("packets").and_then(|value| value.as_f64()),
+        receiver
+            .get("lost_packets")
+            .and_then(|value| value.as_f64()),
+    )?;
+    let passed = passes_thresholds(&summary, config);
 
     Ok(CheckReport {
         endpoint: endpoint.raw.clone(),
@@ -227,39 +245,50 @@ struct MetricsSummary {
     lost_packets: f64,
 }
 
-fn summarize_samples(samples: &[Metrics]) -> Result<MetricsSummary> {
-    // For this example, bandwidth and loss are computed from the raw interval
-    // counters exposed by the library. This keeps the application decision close
-    // to the values libiperf observed, without scraping terminal output.
+fn summarize_samples(
+    samples: &[Metrics],
+    packets: Option<f64>,
+    lost_packets: Option<f64>,
+) -> Result<MetricsSummary> {
+    // Keep live sender bandwidth separate from receiver-observed packet loss.
     let mut bytes = 0.0;
     let mut seconds = 0.0;
-    let mut packets = 0.0;
-    let mut lost_packets = 0.0;
 
     // Omitted intervals are warm-up intervals excluded by iperf. They should not
     // affect an application-level pass/fail decision.
     for sample in samples.iter().filter(|sample| !sample.omitted) {
         bytes += finite_nonnegative(sample.transferred_bytes);
         seconds += finite_nonnegative(sample.interval_duration_seconds);
-        packets += finite_nonnegative(sample.udp_packets.unwrap_or(0.0));
-        lost_packets += finite_nonnegative(sample.udp_lost_packets.unwrap_or(0.0));
     }
 
     if seconds == 0.0 {
         return Err("iperf run produced no non-omitted interval duration".into());
     }
-    // UDP packet counters are the reason this example uses UDP. They let the
-    // application compute loss directly from libiperf metrics.
-    if packets + lost_packets == 0.0 {
-        return Err("iperf run produced no UDP packet counters".into());
+    let packets = packets.ok_or("UDP receiver summary is missing packets")?;
+    let lost_packets = lost_packets.ok_or("UDP receiver summary is missing lost_packets")?;
+    if !packets.is_finite()
+        || packets <= 0.0
+        || packets.fract() != 0.0
+        || !lost_packets.is_finite()
+        || lost_packets < 0.0
+        || lost_packets > packets
+        || lost_packets.fract() != 0.0
+    {
+        return Err("UDP receiver summary has inconsistent packet counters".into());
     }
 
     Ok(MetricsSummary {
         bandwidth_bps: (bytes * 8.0) / seconds,
-        loss_percent: (lost_packets / (packets + lost_packets)) * 100.0,
+        // Upstream's packet count includes missing sequence numbers.
+        loss_percent: (lost_packets / packets) * 100.0,
         packets,
         lost_packets,
     })
+}
+
+fn passes_thresholds(summary: &MetricsSummary, config: &Config) -> bool {
+    summary.bandwidth_bps >= config.min_bandwidth_bps
+        && summary.loss_percent < config.max_loss_percent
 }
 
 fn finite_nonnegative(value: f64) -> f64 {
@@ -280,4 +309,73 @@ fn print_usage() {
     eprintln!(
         "fixed iperf parameters: -u -b {IPERF_UDP_BITRATE_BPS} -t {IPERF_SECONDS} -i {IPERF_INTERVAL_SECONDS}"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> Metrics {
+        let mut sample = Metrics::new();
+        sample.transferred_bytes = 12_500.0;
+        sample.interval_duration_seconds = 1.0;
+        sample.udp_packets = Some(100.0);
+        sample.udp_lost_packets = Some(0.0); // Sender observations are not loss evidence.
+        sample
+    }
+
+    #[test]
+    fn receiver_loss_and_threshold_boundaries() {
+        let summary = summarize_samples(&[sample()], Some(100.0), Some(10.0)).unwrap();
+        assert_eq!(summary.loss_percent, 10.0);
+        assert_eq!(summary.bandwidth_bps, 100_000.0);
+        let mut config = Config {
+            min_bandwidth_bps: 100_000.0,
+            max_loss_percent: 10.0,
+            endpoints: Vec::new(),
+        };
+        assert!(!passes_thresholds(&summary, &config));
+        config.max_loss_percent = 10.1;
+        assert!(passes_thresholds(&summary, &config));
+        config.min_bandwidth_bps = 100_001.0;
+        assert!(!passes_thresholds(&summary, &config));
+        let healthy = summarize_samples(&[sample()], Some(100.0), Some(0.0)).unwrap();
+        config.min_bandwidth_bps = 100_000.0;
+        config.max_loss_percent = 1.0;
+        assert!(passes_thresholds(&healthy, &config));
+        config.max_loss_percent = 0.0;
+        assert!(!passes_thresholds(&healthy, &config));
+    }
+
+    #[test]
+    fn missing_or_inconsistent_receiver_counters_fail() {
+        for (packets, lost) in [
+            (None, Some(0.0)),
+            (Some(100.0), None),
+            (Some(0.0), Some(0.0)),
+            (Some(f64::NAN), Some(0.0)),
+            (Some(100.0), Some(f64::INFINITY)),
+            (Some(100.0), Some(-1.0)),
+            (Some(100.0), Some(101.0)),
+            (Some(100.5), Some(1.0)),
+            (Some(100.0), Some(0.5)),
+        ] {
+            assert!(summarize_samples(&[sample()], packets, lost).is_err());
+        }
+    }
+
+    #[test]
+    fn bandwidth_excludes_omitted_intervals_and_requires_duration() {
+        let mut omitted = sample();
+        omitted.omitted = true;
+        omitted.transferred_bytes = 1_000_000.0;
+        assert_eq!(
+            summarize_samples(&[sample(), omitted.clone()], Some(100.0), Some(0.0))
+                .unwrap()
+                .bandwidth_bps,
+            100_000.0
+        );
+        assert!(summarize_samples(&[omitted], Some(100.0), Some(0.0)).is_err());
+        assert!(summarize_samples(&[], Some(100.0), Some(0.0)).is_err());
+    }
 }

@@ -60,7 +60,11 @@ After all endpoints finish, the checker prints a summary:
 summary checked=2 failed=0
 ```
 
-`bandwidth_bps` and `loss_percent` are computed from non-omitted libiperf interval metrics. The tool does not scrape iperf terminal output.
+`bandwidth_bps` is computed from non-omitted live sender intervals. `loss_percent`,
+`packets`, and `lost_packets` come from the final structured UDP receiver summary;
+sender intervals cannot establish remote packet loss. The packet total already
+includes lost packets. Missing or inconsistent receiver counters fail the check.
+The probe remains forward UDP, and the tool does not scrape terminal output.
 
 ### Exit Status
 
@@ -80,6 +84,18 @@ From the repository root, the same test can be run through the top-level Makefil
 ```console
 $ make integration EXAMPLES=bwcheck
 ```
+
+The receiver-loss regression also runs locally without Docker (Python 3 required):
+
+```console
+$ cargo build --bin iperf3-rs
+$ cargo build --manifest-path examples/bwcheck/Cargo.toml
+$ python3 examples/bwcheck/loss_test.py target/debug/iperf3-rs examples/bwcheck/target/debug/iperf3-rs-bwcheck
+```
+
+It compares a loss-free loopback transfer with a relay that drops every other UDP
+data packet, requires a failing checker exit for the latter, and cleans up its
+own server and relay threads within bounded waits.
 
 ## Limitations
 
