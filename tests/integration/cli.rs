@@ -42,6 +42,25 @@ fn cli_preserves_unicode_metrics_paths_and_json_stdout() {
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[test]
+fn cli_timestamp_formats_are_optional_attached_values() {
+    for (extra, has_prefix) in [
+        (vec!["--timestamps=PROBE"], true),
+        (vec!["--timestamps", "PROBE"], false),
+    ] {
+        let port = free_loopback_port();
+        let _server = OneOffServer::start(port);
+        let metrics_file = temp_metrics_path("jsonl");
+        let output = run_cli_metrics_file_client(port, &metrics_file, &extra);
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap().contains("PROBE"),
+            has_prefix
+        );
+        fs::remove_file(metrics_file).unwrap();
+    }
+}
+
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
+#[test]
 fn cli_writes_prometheus_metrics_file_with_custom_prefix() {
     let port = free_loopback_port();
     let _server = OneOffServer::start(port);

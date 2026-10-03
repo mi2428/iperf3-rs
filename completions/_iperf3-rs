@@ -19,9 +19,10 @@ _arguments -s -S \
   '--json-stream-full-output[output in JSON format with JSON streams enabled]' \
   '--logfile[send output to a log file]:file:_files' \
   '--forceflush[force flushing output at every interval]' \
-  '--timestamps[emit a timestamp at the start of each output line]:format:' \
+  '--timestamps=-[emit a timestamp at the start of each output line]::format:' \
   '--rcv-timeout[idle timeout for receiving data in milliseconds]:milliseconds:' \
-  {-d,--debug}'[emit debugging output]:level:(1 2 3 4)' \
+  '-d[emit debugging output]' \
+  '--debug=-[emit debugging output]::level:(1 2 3 4)' \
   {-v,--version}'[show version information and quit]' \
   {-h,--help}'[show help and quit]' \
   {-D,--daemon}'[run the server as a daemon]' \
