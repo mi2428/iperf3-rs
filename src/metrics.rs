@@ -411,16 +411,13 @@ impl MetricsSinks {
     }
 
     fn queue(&self) -> MetricsQueue {
-        if self.file_is_present()
-            || self
-                .pushgateway
-                .as_ref()
-                .and_then(|pushgateway| pushgateway.push_interval)
-                .is_some()
-        {
+        if self.file_is_present() {
             MetricsQueue::All
         } else {
-            MetricsQueue::Latest
+            self.pushgateway
+                .as_ref()
+                .map(PushGatewaySink::delivery_queue)
+                .unwrap_or(MetricsQueue::Latest)
         }
     }
 
@@ -444,6 +441,17 @@ impl MetricsSinks {
 struct PushGatewaySink {
     sink: PushGateway,
     push_interval: Option<Duration>,
+}
+
+#[cfg(feature = "pushgateway")]
+impl PushGatewaySink {
+    fn delivery_queue(&self) -> MetricsQueue {
+        if self.push_interval.is_some() {
+            MetricsQueue::All
+        } else {
+            MetricsQueue::Latest
+        }
+    }
 }
 
 #[cfg(feature = "pushgateway")]
@@ -533,35 +541,33 @@ pub(crate) enum MetricsQueue {
 }
 
 fn callback_channel(queue: MetricsQueue, role: Role) -> (CallbackTarget, Receiver<Metrics>) {
+    let (tx, rx, latest_rx) = metrics_channel(queue);
+    (
+        CallbackTarget {
+            tx,
+            latest_rx,
+            role,
+        },
+        rx,
+    )
+}
+
+fn metrics_channel<T>(queue: MetricsQueue) -> (Sender<T>, Receiver<T>, Option<Receiver<T>>) {
     match queue {
         MetricsQueue::All => {
             // Library streams promise every sample and must not block
             // libiperf's reporting callback. This means callers own the drain
             // responsibility for long-running streams.
-            let (tx, rx) = unbounded::<Metrics>();
-            (
-                CallbackTarget {
-                    tx,
-                    latest_rx: None,
-                    role,
-                },
-                rx,
-            )
+            let (tx, rx) = unbounded();
+            (tx, rx, None)
         }
         #[cfg(feature = "pushgateway")]
         MetricsQueue::Latest => {
             // Pushgateway stores only the latest value for a grouping key.
             // Keep the callback nonblocking and replace stale queued samples if
             // HTTP writes fall behind.
-            let (tx, rx) = bounded::<Metrics>(1);
-            (
-                CallbackTarget {
-                    tx,
-                    latest_rx: Some(rx.clone()),
-                    role,
-                },
-                rx,
-            )
+            let (tx, rx) = bounded(1);
+            (tx, rx.clone(), Some(rx))
         }
     }
 }
@@ -676,36 +682,50 @@ fn same_window_context(left: &Metrics, right: &Metrics) -> bool {
 }
 
 #[cfg(feature = "pushgateway")]
-fn run_metrics_sinks(rx: Receiver<Metrics>, sinks: MetricsSinks) -> Result<()> {
-    match sinks
-        .pushgateway
-        .as_ref()
-        .and_then(|pushgateway| pushgateway.push_interval)
-    {
-        Some(interval) => push_window_metrics(rx, sinks, interval),
-        None => push_interval_metrics(rx, sinks),
-    }
+fn run_metrics_sinks(rx: Receiver<Metrics>, mut sinks: MetricsSinks) -> Result<()> {
+    let Some(pushgateway) = sinks.pushgateway.take() else {
+        return push_interval_metrics(rx, &sinks, None, None);
+    };
+    // Keep every completed window; only immediate gauges replace stale events.
+    let (tx, push_rx, latest_rx) = metrics_channel(pushgateway.delivery_queue());
+    let interval = pushgateway.push_interval;
+    let worker = thread::spawn(move || deliver_push_metrics(push_rx, pushgateway.sink));
+    let result = match interval {
+        Some(interval) => push_window_metrics(rx, &sinks, interval, &tx),
+        None => push_interval_metrics(rx, &sinks, Some(&tx), latest_rx.as_ref()),
+    };
+    drop(tx);
+    drop(latest_rx);
+    let delivery = worker
+        .join()
+        .map_err(|_| Error::worker("Pushgateway delivery worker thread panicked"));
+    result?;
+    delivery?;
+    Ok(())
 }
 
 #[cfg(feature = "pushgateway")]
-fn push_interval_metrics(rx: Receiver<Metrics>, sinks: MetricsSinks) -> Result<()> {
-    let mut result = Ok(());
+fn push_interval_metrics(
+    rx: Receiver<Metrics>,
+    sinks: &MetricsSinks,
+    tx: Option<&Sender<MetricEvent>>,
+    latest_rx: Option<&Receiver<MetricEvent>>,
+) -> Result<()> {
     for metrics in rx {
-        if let Err(err) = write_metrics_file(&sinks, &metrics) {
-            result = Err(err);
-            break;
+        write_metrics_file(sinks, &metrics)?;
+        if let Some(tx) = tx {
+            enqueue_latest(tx, latest_rx, MetricEvent::Interval(metrics));
         }
-        push_interval_to_gateway(&sinks, &metrics);
     }
-    delete_pushgateway_on_finish(&sinks);
-    result
+    Ok(())
 }
 
 #[cfg(feature = "pushgateway")]
 fn push_window_metrics(
     rx: Receiver<Metrics>,
-    sinks: MetricsSinks,
+    sinks: &MetricsSinks,
     interval: Duration,
+    tx: &Sender<MetricEvent>,
 ) -> Result<()> {
     let mut window = Vec::new();
     let mut deadline = None;
@@ -716,25 +736,25 @@ fn push_window_metrics(
             Some(flush_at) => {
                 let now = Instant::now();
                 if now >= flush_at {
-                    flush_window_metrics(&sinks, &mut window);
+                    flush_window_metrics(tx, &mut window);
                     deadline = None;
                     continue;
                 }
 
                 match rx.recv_timeout(flush_at - now) {
                     Ok(metrics) => {
-                        if let Err(err) = write_metrics_file(&sinks, &metrics) {
+                        if let Err(err) = write_metrics_file(sinks, &metrics) {
                             result = Err(err);
                             break;
                         }
                         if window_context_changes(&window, &metrics) {
-                            flush_window_metrics(&sinks, &mut window);
+                            flush_window_metrics(tx, &mut window);
                             deadline = Some(checked_deadline(interval)?);
                         }
                         window.push(metrics);
                     }
                     Err(RecvTimeoutError::Timeout) => {
-                        flush_window_metrics(&sinks, &mut window);
+                        flush_window_metrics(tx, &mut window);
                         deadline = None;
                     }
                     Err(RecvTimeoutError::Disconnected) => break,
@@ -742,7 +762,7 @@ fn push_window_metrics(
             }
             None => match rx.recv() {
                 Ok(metrics) => {
-                    if let Err(err) = write_metrics_file(&sinks, &metrics) {
+                    if let Err(err) = write_metrics_file(sinks, &metrics) {
                         result = Err(err);
                         break;
                     }
@@ -757,38 +777,34 @@ fn push_window_metrics(
     // The final iperf interval often arrives shortly before the process exits.
     // Flush a partial window so short tests still publish useful summaries.
     if result.is_ok() {
-        flush_window_metrics(&sinks, &mut window);
+        flush_window_metrics(tx, &mut window);
     }
-    delete_pushgateway_on_finish(&sinks);
     result
 }
 
 #[cfg(feature = "pushgateway")]
-fn push_interval_to_gateway(sinks: &MetricsSinks, metrics: &Metrics) {
+fn deliver_push_metrics(rx: Receiver<MetricEvent>, sink: PushGateway) {
     // Pushgateway delivery is intentionally best-effort. File metrics are the
     // required artifact path; transient Pushgateway failures should not change
     // the iperf run's exit status.
-    let result = sinks
-        .pushgateway
-        .as_ref()
-        .map(|pushgateway| pushgateway.sink.push(metrics));
-    if let Some(Err(err)) = result {
-        eprintln!("failed to push metrics: {err:#}");
+    for event in rx {
+        let result = match event {
+            MetricEvent::Interval(metrics) => sink.push(&metrics),
+            MetricEvent::Window(metrics) => sink.push_window(&metrics),
+        };
+        if let Err(err) = result {
+            eprintln!("failed to push metrics: {err:#}");
+        }
     }
+    delete_pushgateway_on_finish(&sink);
 }
 
 #[cfg(feature = "pushgateway")]
-fn flush_window_metrics(sinks: &MetricsSinks, window: &mut Vec<Metrics>) {
+fn flush_window_metrics(tx: &Sender<MetricEvent>, window: &mut Vec<Metrics>) {
     let Some(metrics) = aggregate_window(window) else {
         return;
     };
-    let result = sinks
-        .pushgateway
-        .as_ref()
-        .map(|pushgateway| pushgateway.sink.push_window(&metrics));
-    if let Some(Err(err)) = result {
-        eprintln!("failed to push window metrics: {err:#}");
-    }
+    enqueue_latest(tx, None, MetricEvent::Window(metrics));
     window.clear();
 }
 
@@ -806,16 +822,13 @@ fn write_metrics_file(_sinks: &MetricsSinks, _metrics: &Metrics) -> Result<()> {
 }
 
 #[cfg(feature = "pushgateway")]
-fn delete_pushgateway_on_finish(sinks: &MetricsSinks) {
+fn delete_pushgateway_on_finish(sink: &PushGateway) {
     // Deleting a retained Pushgateway group has the same best-effort contract
     // as pushing samples. Operators can rely on warnings without turning a
     // successful bandwidth test into a failed process exit.
-    let result = sinks
-        .pushgateway
-        .as_ref()
-        .filter(|pushgateway| pushgateway.sink.delete_on_finish())
-        .map(|pushgateway| pushgateway.sink.delete());
-    if let Some(Err(err)) = result {
+    if sink.delete_on_finish()
+        && let Err(err) = sink.delete()
+    {
         eprintln!("failed to delete Pushgateway metrics: {err:#}");
     }
 }
@@ -885,7 +898,8 @@ unsafe extern "C" fn metrics_callback(
     };
 
     enqueue_latest(
-        target,
+        &target.tx,
+        target.latest_rx.as_ref(),
         Metrics {
             timestamp_unix_seconds: current_unix_timestamp_seconds(),
             role: target.role,
@@ -929,15 +943,15 @@ fn nonnegative_usize(value: c_int) -> usize {
     usize::try_from(value).unwrap_or(0)
 }
 
-fn enqueue_latest(target: &CallbackTarget, metrics: Metrics) {
-    match target.tx.try_send(metrics) {
+fn enqueue_latest<T>(tx: &Sender<T>, latest_rx: Option<&Receiver<T>>, metrics: T) {
+    match tx.try_send(metrics) {
         Ok(()) => {}
         Err(TrySendError::Full(metrics)) => {
             // Prefer freshness over completeness when pushes fall behind.
-            if let Some(rx) = &target.latest_rx {
+            if let Some(rx) = latest_rx {
                 let _ = rx.try_recv();
             }
-            let _ = target.tx.try_send(metrics);
+            let _ = tx.try_send(metrics);
         }
         Err(TrySendError::Disconnected(_)) => {}
     }
@@ -1337,14 +1351,16 @@ mod tests {
         };
 
         enqueue_latest(
-            &target,
+            &target.tx,
+            target.latest_rx.as_ref(),
             Metrics {
                 transferred_bytes: 1.0,
                 ..Metrics::default()
             },
         );
         enqueue_latest(
-            &target,
+            &target.tx,
+            target.latest_rx.as_ref(),
             Metrics {
                 transferred_bytes: 2.0,
                 ..Metrics::default()
@@ -1353,6 +1369,192 @@ mod tests {
 
         assert_eq!(rx.try_recv().unwrap().transferred_bytes, 2.0);
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn all_callback_queue_preserves_every_sample() {
+        let (target, rx) = callback_channel(MetricsQueue::All, Role::Client);
+        for bytes in [1.0, 2.0, 3.0] {
+            enqueue_latest(
+                &target.tx,
+                target.latest_rx.as_ref(),
+                Metrics {
+                    transferred_bytes: bytes,
+                    ..Metrics::default()
+                },
+            );
+        }
+        drop(target);
+        assert_eq!(
+            rx.into_iter()
+                .map(|sample| sample.transferred_bytes)
+                .collect::<Vec<_>>(),
+            [1.0, 2.0, 3.0]
+        );
+    }
+
+    #[cfg(all(feature = "pushgateway", feature = "serde"))]
+    #[test]
+    fn held_http_keeps_files_complete_immediate_push_fresh_and_all_windows() {
+        use crate::metrics_file::MetricsFileFormat;
+        use crate::pushgateway::PushGatewayConfig;
+        use std::fs;
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+
+        for (interval, status) in [
+            (None, 202),
+            (Some(Duration::from_secs(60)), 202),
+            (None, 503),
+            (Some(Duration::from_secs(60)), 503),
+        ] {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let endpoint =
+                PushGatewayConfig::parse_endpoint(&listener.local_addr().unwrap().to_string())
+                    .unwrap();
+            let (ready_tx, ready_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let expected = if interval.is_some() {
+                vec![1.0, 2.0, 3.0]
+            } else {
+                vec![1.0, 3.0]
+            };
+            let expected: Vec<_> = if status == 503 {
+                expected
+                    .into_iter()
+                    .flat_map(|value| [value, value])
+                    .collect()
+            } else {
+                expected
+            };
+            let count = expected.len();
+            let server = thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                let mut values = Vec::new();
+                for index in 0..count {
+                    let mut stream = loop {
+                        match listener.accept() {
+                            Ok((stream, _)) => break stream,
+                            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                                assert!(Instant::now() < deadline);
+                                thread::sleep(Duration::from_millis(1));
+                            }
+                            Err(err) => panic!("accept HTTP: {err}"),
+                        }
+                    };
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(3)))
+                        .unwrap();
+                    let mut reader = BufReader::new(&mut stream);
+                    let mut line = String::new();
+                    let mut len = 0;
+                    loop {
+                        line.clear();
+                        assert!(reader.read_line(&mut line).unwrap() > 0);
+                        if line == "\r\n" {
+                            break;
+                        }
+                        if let Some(raw) = line.to_ascii_lowercase().strip_prefix("content-length:")
+                        {
+                            len = raw.trim().parse().unwrap();
+                        }
+                    }
+                    let mut body = vec![0; len];
+                    reader.read_exact(&mut body).unwrap();
+                    let body = String::from_utf8(body).unwrap();
+                    let name = if interval.is_some() {
+                        "iperf3_window_transferred_bytes "
+                    } else {
+                        "iperf3_transferred_bytes "
+                    };
+                    values.push(
+                        body.lines()
+                            .find_map(|line| {
+                                line.strip_prefix(name)
+                                    .map(|value| value.parse::<f64>().unwrap())
+                            })
+                            .unwrap(),
+                    );
+                    if interval.is_some() {
+                        assert!(!body.contains("\niperf3_transferred_bytes "));
+                    }
+                    if index == 0 {
+                        ready_tx.send(()).unwrap();
+                        release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                    }
+                    write!(
+                        stream,
+                        "HTTP/1.1 {status} Test\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .unwrap();
+                }
+                values
+            });
+            let path = std::env::temp_dir().join(format!(
+                "iperf3-fanout-{}-{}.jsonl",
+                std::process::id(),
+                current_unix_timestamp_seconds()
+            ));
+            let mut sinks = MetricsSinks::new();
+            sinks.file(MetricsFileSink::new(&path, MetricsFileFormat::Jsonl).unwrap());
+            sinks.pushgateway(
+                PushGateway::new(
+                    PushGatewayConfig::new(endpoint)
+                        .timeout(Duration::from_secs(3))
+                        .retries(u32::from(status == 503)),
+                )
+                .unwrap(),
+                interval,
+            );
+            let (target, raw_rx) = callback_channel(sinks.queue(), Role::Client);
+            let gateway = sinks.pushgateway.take().unwrap();
+            let (push_tx, push_rx, latest_rx) = metrics_channel(gateway.delivery_queue());
+            let delivery = thread::spawn(move || deliver_push_metrics(push_rx, gateway.sink));
+            let processing = thread::spawn(move || match interval {
+                Some(interval) => push_window_metrics(raw_rx, &sinks, interval, &push_tx),
+                None => push_interval_metrics(raw_rx, &sinks, Some(&push_tx), latest_rx.as_ref()),
+            });
+            for bytes in [1.0, 2.0, 3.0] {
+                enqueue_latest(
+                    &target.tx,
+                    target.latest_rx.as_ref(),
+                    Metrics {
+                        transferred_bytes: bytes,
+                        bandwidth_bits_per_second: bytes * 8.0,
+                        interval_duration_seconds: 1.0,
+                        direction: if bytes == 2.0 {
+                            MetricDirection::Receiver
+                        } else {
+                            MetricDirection::Sender
+                        },
+                        ..Metrics::default()
+                    },
+                );
+                if bytes == if interval.is_some() { 2.0 } else { 1.0 } {
+                    ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                }
+            }
+            drop(target);
+            // Draining/aggregation/file I/O must finish while HTTP is still held.
+            processing.join().unwrap().unwrap();
+            let contents = fs::read_to_string(&path).unwrap();
+            let bytes: Vec<_> = contents
+                .lines()
+                .map(|line| {
+                    serde_json::from_str::<serde_json::Value>(line).unwrap()["transferred_bytes"]
+                        .as_f64()
+                        .unwrap()
+                })
+                .collect();
+            assert_eq!(bytes, [1.0, 2.0, 3.0]);
+            release_tx.send(()).unwrap();
+            delivery.join().unwrap();
+            assert_eq!(server.join().unwrap(), expected);
+            fs::remove_file(path).unwrap();
+        }
     }
 
     #[test]

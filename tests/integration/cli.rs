@@ -53,6 +53,149 @@ fn cli_rejects_unrepresentable_push_deadlines_before_running() {
     }
 }
 
+#[test]
+fn cli_files_progress_while_immediate_or_window_http_is_held() {
+    use std::io::{ErrorKind, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    for window in [false, true] {
+        let port = free_loopback_port();
+        let _server = OneOffServer::start(port);
+        let path = temp_metrics_path("jsonl");
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let http = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut requests = Vec::new();
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        let request = read_http_request(&mut stream);
+                        if requests.is_empty() {
+                            ready_tx.send(()).unwrap();
+                            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                        }
+                        requests.push(request);
+                        stream.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                    }
+                    Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                        if stop_rx.try_recv().is_ok() {
+                            break;
+                        }
+                        assert!(Instant::now() < deadline);
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(err) => panic!("accept HTTP: {err}"),
+                }
+            }
+            requests
+        });
+        let client_path = path.clone();
+        let client = thread::spawn(move || {
+            let mut options = vec![
+                "-t",
+                "2",
+                "-i",
+                "0.1",
+                "-J",
+                "--push.url",
+                endpoint.as_str(),
+                "--push.timeout",
+                "5s",
+            ];
+            if window {
+                options.extend(["--push.interval", "200ms"]);
+            }
+            run_cli_metrics_file_client(port, &client_path, &options)
+        });
+        ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let valid_records = || {
+            fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .filter(|line| serde_json::from_str::<serde_json::Value>(line).is_ok())
+                .count()
+        };
+        let initial = valid_records();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let progressed = loop {
+            if valid_records() >= initial + 2 {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        release_tx.send(()).unwrap();
+        let output = client.join().unwrap();
+        stop_tx.send(()).unwrap();
+        let requests = http.join().unwrap();
+        let records = fs::read_to_string(&path).unwrap();
+        for line in records.lines() {
+            serde_json::from_str::<serde_json::Value>(line).unwrap();
+        }
+        fs::remove_file(path).unwrap();
+        assert!(
+            progressed,
+            "required file stalled behind HTTP (window={window})"
+        );
+        assert!(output.status.success());
+        let stdout: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(stdout.get("end").is_some());
+        assert!(!requests.is_empty());
+        for request in requests {
+            assert_eq!(request.contains("iperf3_window_transferred_bytes"), window);
+        }
+    }
+}
+
+#[test]
+fn cli_required_files_succeed_when_pushgateway_is_unavailable() {
+    use std::net::TcpListener;
+    for window in [false, true] {
+        let port = free_loopback_port();
+        let _server = OneOffServer::start(port);
+        let path = temp_metrics_path("jsonl");
+        let unavailable = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let endpoint = format!("http://{}", unavailable.local_addr().unwrap());
+        drop(unavailable);
+        let mut options = vec![
+            "-J",
+            "--push.url",
+            endpoint.as_str(),
+            "--push.timeout",
+            "50ms",
+        ];
+        if window {
+            options.extend(["--push.interval", "60s"]);
+        }
+        let output = run_cli_metrics_file_client(port, &path, &options);
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("failed to push metrics"));
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&output.stdout)
+                .unwrap()
+                .get("end")
+                .is_some()
+        );
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(!contents.is_empty());
+        for line in contents.lines() {
+            serde_json::from_str::<serde_json::Value>(line).unwrap();
+        }
+        fs::remove_file(path).unwrap();
+    }
+}
+
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[test]
 fn cli_writes_jsonl_metrics_file_without_replacing_stdout() {

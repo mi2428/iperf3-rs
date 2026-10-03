@@ -229,7 +229,7 @@ impl OneShotHttpSink {
 }
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
-fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+pub fn read_http_request(stream: &mut std::net::TcpStream) -> String {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .expect("set HTTP sink read timeout");
