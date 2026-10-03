@@ -52,12 +52,19 @@ fn run() -> Result<bool> {
     // therefore the expected shape for this first library API.
     let mut failed = 0usize;
     for endpoint in &config.endpoints {
-        let report = check_endpoint(endpoint, &config)?;
-        if report.passed {
-            println!("{report}");
-        } else {
-            failed += 1;
-            println!("{report}");
+        match check_endpoint(endpoint, &config) {
+            Ok(report) => {
+                failed += usize::from(!report.passed);
+                println!("{report}");
+            }
+            Err(error) => {
+                failed += 1;
+                println!(
+                    "FAIL endpoint={} error={:?}",
+                    endpoint.raw,
+                    error.to_string()
+                );
+            }
         }
     }
 

@@ -11,7 +11,7 @@ import threading
 import time
 
 
-def probe(server_binary, checker_binary, drop_every_other):
+def probe(server_binary, checker_binary, drop_every_other, extra_endpoint=None):
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         backend_port = reservation.getsockname()[1]
@@ -81,9 +81,12 @@ def probe(server_binary, checker_binary, drop_every_other):
             assert server.poll() is None, "local server did not start"
             for thread in threads:
                 thread.start()
+            endpoints = [f"127.0.0.1:{proxy_port}"]
+            if extra_endpoint is not None:
+                endpoints.append(extra_endpoint)
             checker = subprocess.run(
                 [checker_binary, "--min-bandwidth-bps", "100000", "--max-loss-percent", "1",
-                 f"127.0.0.1:{proxy_port}"],
+                 *endpoints],
                 capture_output=True, text=True, timeout=15,
             )
             server_stdout, _ = server.communicate(timeout=5)
@@ -93,10 +96,16 @@ def probe(server_binary, checker_binary, drop_every_other):
             expected_exit = 1 if drop_every_other else 0
             assert checker.returncode == expected_exit, (checker.stdout, checker.stderr)
             assert checker.stdout.startswith("FAIL " if drop_every_other else "PASS ")
+            if extra_endpoint is not None:
+                lines = checker.stdout.splitlines()
+                assert len(lines) == 3, checker.stdout
+                assert lines[1].startswith(f"PASS endpoint={extra_endpoint} "), checker.stdout
+                assert lines[2] == f"summary checked=2 failed={expected_exit}", checker.stdout
             assert abs(reported_loss - receiver["lost_percent"]) < 0.001
             assert receiver["lost_percent"] > 40 if drop_every_other else receiver["lost_percent"] == 0
             assert counts["dropped"] > 0 if drop_every_other else counts["dropped"] == 0
-            print(json.dumps({"loss_enabled": drop_every_other, "exit": checker.returncode,
+            print(json.dumps({"loss_enabled": drop_every_other, "checked": len(endpoints),
+                              "exit": checker.returncode,
                               "receiver_loss_percent": receiver["lost_percent"],
                               "checker_loss_percent": reported_loss}))
         finally:

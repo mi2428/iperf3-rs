@@ -54,6 +54,15 @@ Each endpoint prints one line:
 PASS endpoint=127.0.0.1:5201 bandwidth_bps=998000 loss_percent=0.000 packets=357 lost_packets=0
 ```
 
+An endpoint that cannot be tested prints an explicit failure instead of fabricated metrics:
+
+```text
+FAIL endpoint=127.0.0.1:5202 error="iperf client exited with error: unable to connect to server"
+```
+
+Operational and threshold failures both count as failures, but remaining endpoints
+are still checked. Invalid global arguments fail before any endpoint is tested.
+
 After all endpoints finish, the checker prints a summary:
 
 ```text
@@ -91,11 +100,15 @@ The receiver-loss regression also runs locally without Docker (Python 3 required
 $ cargo build --bin iperf3-rs
 $ cargo build --manifest-path examples/bwcheck/Cargo.toml
 $ python3 examples/bwcheck/loss_test.py target/debug/iperf3-rs examples/bwcheck/target/debug/iperf3-rs-bwcheck
+$ python3 examples/bwcheck/endpoint_test.py target/debug/iperf3-rs examples/bwcheck/target/debug/iperf3-rs-bwcheck
 ```
 
 It compares a loss-free loopback transfer with a relay that drops every other UDP
 data packet, requires a failing checker exit for the latter, and cleans up its
 own server and relay threads within bounded waits.
+The endpoint regression covers unreachable-to-healthy recovery, mixed endpoint
+results, threshold-failed-to-healthy recovery, all-healthy results, and invalid
+global arguments without a control connection.
 
 ## Limitations
 
