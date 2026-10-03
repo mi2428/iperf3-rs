@@ -6,6 +6,8 @@
 
 use std::time::Duration;
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+
 use reqwest::StatusCode;
 use reqwest::blocking::Client;
 use url::Url;
@@ -323,15 +325,26 @@ fn grouping_path(base_path: &str, job: &str, labels: &[(String, String)]) -> Str
     let mut path = base_path.trim_end_matches('/').to_owned();
     // Pushgateway represents grouping labels as path segments:
     // /metrics/job/<job>/<label>/<value>/...
-    path.push_str("/metrics/job/");
-    path.push_str(&encode_path_segment(job));
+    path.push_str("/metrics");
+    append_grouping_pair(&mut path, "job", job);
     for (name, value) in labels {
-        path.push('/');
-        path.push_str(&encode_path_segment(name));
+        append_grouping_pair(&mut path, name, value);
+    }
+    path
+}
+
+fn append_grouping_pair(path: &mut String, name: &str, value: &str) {
+    path.push('/');
+    path.push_str(name);
+    // URI-encoded slashes are still separators in Pushgateway's router. Dot
+    // segments also need base64 to survive URL and router normalization.
+    if value.contains('/') || matches!(value, "." | "..") {
+        path.push_str("@base64/");
+        path.push_str(&URL_SAFE_NO_PAD.encode(value));
+    } else {
         path.push('/');
         path.push_str(&encode_path_segment(value));
     }
-    path
 }
 
 fn build_http_client(timeout: Duration, user_agent: String) -> Result<Client> {
@@ -643,7 +656,103 @@ mod tests {
 
         assert_eq!(
             gateway.url().as_str(),
-            "http://127.0.0.1:9091/base/metrics/job/iperf%20job/test/test%2Fone/scenario/sample%231/mode/client"
+            "http://127.0.0.1:9091/base/metrics/job/iperf%20job/test@base64/dGVzdC9vbmU/scenario/sample%231/mode/client"
+        );
+    }
+
+    #[test]
+    fn grouping_values_survive_url_and_router_normalization() {
+        for value in [".", "..", "one/two/three", "日本語", "a b", "a%#b"] {
+            let url = grouping_url(
+                Url::parse("http://example.invalid/base/").unwrap(),
+                value,
+                &[("scenario".into(), value.into())],
+            );
+            // The router percent-decodes the path before separating labels.
+            let query = format!("path={}", url.path());
+            let decoded = url::form_urlencoded::parse(query.as_bytes())
+                .next()
+                .unwrap()
+                .1
+                .into_owned();
+            let parts: Vec<_> = decoded
+                .strip_prefix("/base/metrics/")
+                .unwrap()
+                .split('/')
+                .collect();
+            assert_eq!(parts.len(), 4);
+            for pair in parts.chunks_exact(2) {
+                let actual = if pair[0].ends_with("@base64") {
+                    String::from_utf8(URL_SAFE_NO_PAD.decode(pair[1]).unwrap()).unwrap()
+                } else {
+                    pair[1].to_owned()
+                };
+                assert_eq!(actual, value);
+            }
+        }
+        let dot = grouping_url(
+            Url::parse("http://example.invalid/base/").unwrap(),
+            "..",
+            &[("scenario".into(), ".".into())],
+        );
+        assert_eq!(
+            dot.path(),
+            "/base/metrics/job@base64/Li4/scenario@base64/Lg"
+        );
+    }
+
+    #[test]
+    fn put_and_delete_use_the_same_encoded_grouping_key() {
+        use std::io::{BufRead, BufReader};
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let endpoint =
+            Url::parse(&format!("http://{}/base/", listener.local_addr().unwrap())).unwrap();
+        let handle = thread::spawn(move || {
+            let mut targets = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut reader = BufReader::new(&mut stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                targets.push(line.trim().to_owned());
+                let mut len = 0;
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(raw) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        len = raw.trim().parse().unwrap();
+                    }
+                }
+                reader.read_exact(&mut vec![0; len]).unwrap();
+                stream
+                    .write_all(
+                        b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .unwrap();
+            }
+            targets
+        });
+        let gateway = PushGateway::new(
+            PushGatewayConfig::new(endpoint)
+                .job("one/two")
+                .label("scenario", ".."),
+        )
+        .unwrap();
+        gateway.push(&Metrics::default()).unwrap();
+        gateway.delete().unwrap();
+        let targets = handle.join().unwrap();
+        assert_eq!(
+            targets,
+            [
+                "PUT /base/metrics/job@base64/b25lL3R3bw/scenario@base64/Li4 HTTP/1.1",
+                "DELETE /base/metrics/job@base64/b25lL3R3bw/scenario@base64/Li4 HTTP/1.1"
+            ]
         );
     }
 

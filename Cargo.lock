@@ -404,6 +404,7 @@ name = "iperf3-rs"
 version = "1.0.3"
 dependencies = [
  "anyhow",
+ "base64",
  "cc",
  "crossbeam-channel",
  "reqwest",
