@@ -103,10 +103,24 @@ Failures are reported on stderr, but they do not make the CLI fail when the iper
 ### Pushgateway
 
 Start the local observability stack (Prometheus, Pushgateway, and Grafana) with Docker Compose:
+Set `GRAFANA_ADMIN_PASSWORD` to a unique strong password first; there is no shared default password.
 
 ```console
 $ docker compose up
 ```
+
+Published ports bind to `127.0.0.1` by default. Existing `PUSHGATEWAY_PORT`,
+`PROMETHEUS_PORT`, and `GRAFANA_PORT` overrides still select the host ports;
+container-to-container scraping is unchanged. To deliberately allow remote access:
+
+```sh
+OBSERVABILITY_BIND_IP=0.0.0.0 GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:?Set a strong password first}" docker compose up
+```
+
+Remote Pushgateway/Prometheus endpoints are not authenticated by this sample.
+Restrict remote access with a firewall or authenticated TLS reverse proxy; do not
+publish this stack directly to the Internet. Grafana keeps its initialized password
+in its volume, so rotate existing credentials separately when needed.
 
 Bare `host:port` Pushgateway values default to HTTP. Use an explicit `https://` URL when your Pushgateway requires TLS.
 Add grouping labels with `--push.label KEY=VALUE`, repeating the flag for multiple labels.

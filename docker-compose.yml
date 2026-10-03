@@ -3,7 +3,7 @@ services:
     image: prom/pushgateway:latest
     restart: unless-stopped
     ports:
-      - "${PUSHGATEWAY_PORT:-9091}:9091"
+      - "${OBSERVABILITY_BIND_IP:-127.0.0.1}:${PUSHGATEWAY_PORT:-9091}:9091"
 
   prometheus:
     image: prom/prometheus:latest
@@ -14,7 +14,7 @@ services:
       - "--web.console.libraries=/usr/share/prometheus/console_libraries"
       - "--web.console.templates=/usr/share/prometheus/consoles"
     ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      - "${OBSERVABILITY_BIND_IP:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -26,10 +26,10 @@ services:
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-changeme}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Set a unique Grafana admin password}"
       GF_USERS_ALLOW_SIGN_UP: "false"
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      - "${OBSERVABILITY_BIND_IP:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./docker/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
