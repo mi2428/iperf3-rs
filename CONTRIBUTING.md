@@ -222,6 +222,13 @@ Linux artifacts are built in a Debian bullseye-based Rust image and smoke-tested
 This keeps the glibc baseline suitable for older Debian/Raspberry Pi OS systems.
 Use `make dist OS=... ARCH=...` for local release-style builds under `dist/`.
 
+Before a direct `dist plan`/`dist build`, run `sh scripts/prepare_notices.sh`.
+`LICENSE-IPERF3` is generated from the pinned `iperf3/LICENSE`, never maintained as
+a second source of truth. Archives/Homebrew inputs and raw `dist/` outputs keep
+the Rust MIT, SORACOM, and complete upstream third-party notices under distinct
+names. Release CI stages the notice even for old-tag retries; images carry the
+same source notices in `/licenses/` without changing their build base or ABI.
+
 ## GitHub Actions
 
 Workflows:

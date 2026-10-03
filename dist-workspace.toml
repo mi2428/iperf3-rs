@@ -12,6 +12,8 @@ allow-dirty = ["ci"]
 ci = "github"
 # The installers to generate for each app
 installers = ["homebrew"]
+# Generate this collision-free notice from the current native pin before dist.
+include = ["LICENSE-IPERF3"]
 # A GitHub repo to push Homebrew formulas to
 tap = "mi2428/homebrew-iperf3-rs"
 # Publish jobs to run in CI

@@ -11,6 +11,11 @@ root = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix="dist-smoke-", dir=root / "target") as temporary:
     fixture = Path(temporary)
     shutil.copy2(root / "Makefile", fixture / "Makefile")
+    (fixture / "scripts").mkdir()
+    (fixture / "iperf3").mkdir()
+    shutil.copy2(root / "scripts/prepare_notices.sh", fixture / "scripts/prepare_notices.sh")
+    for name in ("LICENSE", "LICENSE-SORACOM", "iperf3/LICENSE"):
+        shutil.copy2(root / name, fixture / name)
     docker = fixture / "docker-mock"
     docker.write_text('''#!/bin/bash
 printf '%s\n' "$*" >> "$DOCKER_LOG"

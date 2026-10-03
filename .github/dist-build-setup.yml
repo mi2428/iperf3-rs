@@ -6,6 +6,10 @@
     git submodule update --init --recursive
     echo "CARGO_INCREMENTAL=0" >> "${GITHUB_ENV}"
 
+- name: Stage upstream binary notice
+  shell: bash
+  run: cp iperf3/LICENSE LICENSE-IPERF3
+
 - name: Install Linux build dependencies
   if: runner.os == 'Linux'
   shell: bash

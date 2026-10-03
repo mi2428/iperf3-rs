@@ -78,4 +78,6 @@ FROM scratch AS release
 
 COPY --from=release-build /out/rootfs/ /
 COPY --from=release-build /out/iperf3-rs /iperf3-rs
+COPY LICENSE LICENSE-SORACOM /licenses/
+COPY iperf3/LICENSE /licenses/LICENSE-IPERF3
 ENTRYPOINT ["/iperf3-rs"]

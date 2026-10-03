@@ -58,6 +58,8 @@ bin/
 dist/
 .cargo-linux/
 .home-linux/
+# Generated from the pinned upstream notice before binary packaging.
+/LICENSE-IPERF3
 
 # This is an executable crate, so keep Cargo.lock tracked for reproducible builds.
 

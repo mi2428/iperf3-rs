@@ -290,7 +290,8 @@ dist: ## Build release binaries into dist/. Use OS=darwin,linux and ARCH=amd64,a
 			$(MAKE) _dist.$$os.$$arch || exit $$?; \
 		done; \
 	done; \
-	$(MAKE) dist-smoke; \
+	$(MAKE) dist-smoke || exit $$?; \
+	sh scripts/prepare_notices.sh "$(DISTDIR)" || exit $$?; \
 	$(MAKE) checksums
 
 .PHONY: dist-smoke
