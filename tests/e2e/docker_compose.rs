@@ -209,8 +209,9 @@ fn compose_interop_and_pushgateway_metrics() {
             "1",
         ];
         let mut live_client = project.spawn_client(&live_args);
-        wait_for_pushgateway_metrics(
+        wait_for_live_pushgateway_metrics(
             &project,
+            &mut live_client,
             LIVE_SCENARIO,
             &[
                 "iperf3_transferred_bytes",
@@ -291,8 +292,9 @@ cat "$stdout"
             "1",
         ];
         let mut delete_client = project.spawn_client(&delete_args);
-        wait_for_pushgateway_metrics(
+        wait_for_live_pushgateway_metrics(
             &project,
+            &mut delete_client,
             DELETE_SCENARIO,
             &[
                 "iperf3_transferred_bytes",

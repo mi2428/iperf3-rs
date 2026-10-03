@@ -2,13 +2,22 @@
 
 use std::env;
 use std::ffi::OsString;
+use std::os::unix::process::ExitStatusExt;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, ExitStatus, Output};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
+
+#[path = "../integration/process.rs"]
+mod process;
+use process::cleanup;
+pub(crate) use process::{
+    BUILD_TIMEOUT, CLEANUP_TIMEOUT, OwnedCommand, READY_TIMEOUT, RUN_TIMEOUT, run_command,
+    run_status,
+};
 
 pub(crate) const COMPOSE_FILE: &str = "docker-compose.test.yml";
 pub(crate) const PUSHGATEWAY_URL: &str = "http://pushgateway:9091";
@@ -44,20 +53,20 @@ impl ComposeProject {
     }
 
     pub(crate) fn run_compose(&self, args: &[&str]) {
-        let status = self
-            .base_command(args)
-            .status()
-            .expect("failed to run docker compose");
+        let timeout = if args.first() == Some(&"build") {
+            BUILD_TIMEOUT
+        } else {
+            RUN_TIMEOUT
+        };
+        let status = run_status(&mut self.base_command(args), timeout)
+            .expect("failed to run docker compose within its budget");
         assert!(status.success(), "docker compose failed with {status}");
     }
 
-    pub(crate) fn spawn_client(&self, args: &[&str]) -> Child {
+    pub(crate) fn spawn_client(&self, args: &[&str]) -> OwnedCommand {
         let mut compose_args = vec!["run", "--rm", "client-rs"];
         compose_args.extend_from_slice(args);
-        self.base_command(&compose_args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+        OwnedCommand::spawn(&mut self.base_command(&compose_args), RUN_TIMEOUT)
             .expect("failed to start docker compose client")
     }
 
@@ -68,9 +77,12 @@ impl ComposeProject {
     }
 
     fn output(&self, args: &[&str]) -> Output {
-        self.base_command(args)
-            .output()
-            .expect("failed to run docker compose")
+        let timeout = if args.contains(&"curl") {
+            READY_TIMEOUT
+        } else {
+            RUN_TIMEOUT
+        };
+        run_command(&mut self.base_command(args), timeout).expect("failed to run docker compose")
     }
 
     fn service_logs(&self, service: &str) -> Output {
@@ -94,11 +106,10 @@ impl Drop for ComposeProject {
     fn drop(&mut self) {
         // Best-effort cleanup keeps failure output intact while still removing
         // containers and networks created for this test project.
-        let _ = self
-            .base_command(&["down", "--volumes", "--remove-orphans"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        cleanup(
+            &mut self.base_command(&["down", "--volumes", "--remove-orphans"]),
+            CLEANUP_TIMEOUT,
+        );
     }
 }
 
@@ -120,27 +131,30 @@ impl ReleaseImage {
         }
 
         let tag = format!("iperf3-rs:release-smoke-{}", unique_suffix());
-        let output = Command::new(&docker)
-            .arg("build")
-            .arg("--target")
-            .arg("release")
-            .arg("-t")
-            .arg(&tag)
-            .arg(".")
-            .current_dir(repo_root())
-            .output()
-            .expect("failed to build release image");
-
-        assert_command_success(
-            &format!("docker build --target release -t {tag} ."),
-            &output,
-        );
-
-        Self {
+        let image = Self {
             docker,
             tag,
             remove_on_drop: true,
-        }
+        };
+        let output = run_command(
+            Command::new(&image.docker)
+                .arg("build")
+                .arg("--target")
+                .arg("release")
+                .arg("-t")
+                .arg(&image.tag)
+                .arg(".")
+                .current_dir(repo_root()),
+            BUILD_TIMEOUT,
+        )
+        .expect("failed to build release image");
+
+        assert_command_success(
+            &format!("docker build --target release -t {} .", image.tag),
+            &output,
+        );
+
+        image
     }
 }
 
@@ -153,13 +167,13 @@ impl Drop for ReleaseImage {
         // Best-effort cleanup keeps the failure output from the test command
         // visible while removing the unique local image tag created for the
         // smoke test.
-        let _ = Command::new(&self.docker)
-            .arg("rmi")
-            .arg("-f")
-            .arg(&self.tag)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        cleanup(
+            Command::new(&self.docker)
+                .arg("rmi")
+                .arg("-f")
+                .arg(&self.tag),
+            CLEANUP_TIMEOUT,
+        );
     }
 }
 
@@ -171,31 +185,34 @@ pub(crate) struct DockerNetwork {
 impl DockerNetwork {
     pub(crate) fn create(docker: &OsString) -> Self {
         let name = format!("iperf3rs-release-smoke-{}", unique_suffix());
-        let output = Command::new(docker)
-            .arg("network")
-            .arg("create")
-            .arg(&name)
-            .output()
-            .expect("failed to create Docker network");
-
-        assert_command_success(&format!("docker network create {name}"), &output);
-
-        Self {
+        let network = Self {
             docker: docker.clone(),
             name,
-        }
+        };
+        let output = run_command(
+            Command::new(docker)
+                .arg("network")
+                .arg("create")
+                .arg(&network.name),
+            RUN_TIMEOUT,
+        )
+        .expect("failed to create Docker network");
+
+        assert_command_success(&format!("docker network create {}", network.name), &output);
+
+        network
     }
 }
 
 impl Drop for DockerNetwork {
     fn drop(&mut self) {
-        let _ = Command::new(&self.docker)
-            .arg("network")
-            .arg("rm")
-            .arg(&self.name)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        cleanup(
+            Command::new(&self.docker)
+                .arg("network")
+                .arg("rm")
+                .arg(&self.name),
+            CLEANUP_TIMEOUT,
+        );
     }
 }
 
@@ -212,39 +229,63 @@ impl DockerContainer {
         args: &[&str],
     ) -> Self {
         let name = format!("iperf3rs-release-smoke-server-{}", unique_suffix());
-        let output = Command::new(docker)
-            .arg("run")
-            .arg("-d")
-            .arg("--name")
-            .arg(&name)
-            .arg("--network")
-            .arg(network)
-            .arg(image)
-            .args(args)
-            .output()
-            .expect("failed to start Docker container");
+        let container = Self {
+            docker: docker.clone(),
+            name,
+        };
+        let output = run_command(
+            Command::new(docker)
+                .arg("run")
+                .arg("-d")
+                .arg("--name")
+                .arg(&container.name)
+                .arg("--network")
+                .arg(network)
+                .arg(image)
+                .args(args),
+            RUN_TIMEOUT,
+        )
+        .expect("failed to start Docker container");
 
         assert_command_success(
-            &format!("docker run -d --name {name} {image} {args:?}"),
+            &format!("docker run -d --name {} {image} {args:?}", container.name),
             &output,
         );
 
-        Self {
+        container
+    }
+
+    pub(crate) fn output(
+        docker: &OsString,
+        image: &str,
+        network: Option<&str>,
+        args: &[&str],
+    ) -> Output {
+        // Register ownership before Docker starts; timeout/panic cleanup must
+        // remove the uniquely named container even after the host CLI is killed.
+        let container = Self {
             docker: docker.clone(),
-            name,
+            name: format!("iperf3rs-release-smoke-client-{}", unique_suffix()),
+        };
+        let mut command = Command::new(docker);
+        command.arg("run").arg("--name").arg(&container.name);
+        if let Some(network) = network {
+            command.arg("--network").arg(network);
         }
+        run_command(command.arg(image).args(args), RUN_TIMEOUT)
+            .expect("failed to run bounded release image client")
     }
 }
 
 impl Drop for DockerContainer {
     fn drop(&mut self) {
-        let _ = Command::new(&self.docker)
-            .arg("rm")
-            .arg("-f")
-            .arg(&self.name)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        cleanup(
+            Command::new(&self.docker)
+                .arg("rm")
+                .arg("-f")
+                .arg(&self.name),
+            CLEANUP_TIMEOUT,
+        );
     }
 }
 
@@ -495,22 +536,46 @@ pub(crate) fn wait_for_pushgateway_metrics(
     required_metrics: &[&str],
 ) {
     wait_for(&format!("pushgateway metrics for {scenario}"), || {
-        let output =
-            project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
-        if !output.status.success() {
-            return output;
-        }
-
-        let metrics = String::from_utf8_lossy(&output.stdout);
-        if required_metrics
-            .iter()
-            .all(|name| metric_value_gt_zero(&metrics, name, scenario))
-        {
-            output
-        } else {
-            failed_output_like(output)
-        }
+        pushgateway_metric_check(project, scenario, required_metrics)
     });
+}
+
+pub(crate) fn wait_for_live_pushgateway_metrics(
+    project: &ComposeProject,
+    client: &mut OwnedCommand,
+    scenario: &str,
+    required_metrics: &[&str],
+) {
+    wait_for(&format!("live pushgateway metrics for {scenario}"), || {
+        assert!(
+            client
+                .try_wait()
+                .expect("poll bounded live client")
+                .is_none(),
+            "client exited before live metrics were observed"
+        );
+        pushgateway_metric_check(project, scenario, required_metrics)
+    });
+}
+
+fn pushgateway_metric_check(
+    project: &ComposeProject,
+    scenario: &str,
+    required_metrics: &[&str],
+) -> Output {
+    let output = project.client_output(&["curl", "-fsS", &format!("{PUSHGATEWAY_URL}/metrics")]);
+    if !output.status.success() {
+        return output;
+    }
+    let metrics = String::from_utf8_lossy(&output.stdout);
+    if required_metrics
+        .iter()
+        .all(|name| metric_value_gt_zero(&metrics, name, scenario))
+    {
+        output
+    } else {
+        failed_output_like(output)
+    }
 }
 
 pub(crate) fn wait_for_metric_value_gt(
@@ -586,15 +651,9 @@ pub(crate) fn wait_for_metric_absent(project: &ComposeProject, name: &str, scena
     );
 }
 
-fn failed_output_like(output: Output) -> Output {
-    let mut failed = Command::new("false")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("failed to synthesize failed output");
-    failed.stdout = output.stdout;
-    failed.stderr = output.stderr;
-    failed
+fn failed_output_like(mut output: Output) -> Output {
+    output.status = ExitStatus::from_raw(1 << 8);
+    output
 }
 
 fn metric_value_gt_zero(metrics: &str, name: &str, scenario: &str) -> bool {
@@ -636,10 +695,8 @@ pub(crate) fn assert_command_success(label: &str, output: &Output) {
     );
 }
 
-pub(crate) fn assert_child_success(args: &[&str], child: Child) {
-    let output = child
-        .wait_with_output()
-        .expect("failed to wait for E2E command");
+pub(crate) fn assert_child_success(args: &[&str], child: OwnedCommand) {
+    let output = child.wait().expect("failed to wait for E2E command");
     assert_success(args, &output);
 }
 

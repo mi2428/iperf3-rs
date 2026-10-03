@@ -1,5 +1,3 @@
-use std::process::Command;
-
 use super::helpers::*;
 
 // This smoke test protects the Docker image shape used by release publishing.
@@ -17,15 +15,9 @@ use super::helpers::*;
 #[ignore = "requires Docker"]
 fn release_image_smoke() {
     let image = ReleaseImage::build();
-    let output = Command::new(&image.docker)
-        .arg("run")
-        .arg("--rm")
-        .arg(&image.tag)
-        .arg("--version")
-        .output()
-        .expect("failed to run release image");
+    let output = DockerContainer::output(&image.docker, &image.tag, None, &["--version"]);
 
-    assert_command_success(&format!("docker run --rm {} --version", image.tag), &output);
+    assert_command_success(&format!("release image {} --version", image.tag), &output);
 
     let version_output = format!(
         "{}{}",
@@ -43,21 +35,12 @@ fn release_image_smoke() {
     let server = DockerContainer::run_detached(&image.docker, &image.tag, &network.name, &["-s"]);
     let release_to_release =
         retry_json_client("release image client to release image server", || {
-            Command::new(&image.docker)
-                .arg("run")
-                .arg("--rm")
-                .arg("--network")
-                .arg(&network.name)
-                .arg(&image.tag)
-                .arg("-c")
-                .arg(&server.name)
-                .arg("-t")
-                .arg("1")
-                .arg("-i")
-                .arg("1")
-                .arg("-J")
-                .output()
-                .expect("failed to run release image client")
+            DockerContainer::output(
+                &image.docker,
+                &image.tag,
+                Some(&network.name),
+                &["-c", &server.name, "-t", "1", "-i", "1", "-J"],
+            )
         });
     assert_iperf_summary_has_traffic(&release_to_release);
 }

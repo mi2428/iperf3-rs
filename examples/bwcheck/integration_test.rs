@@ -1,11 +1,15 @@
 use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const COMPOSE_FILE: &str = "docker-compose.test.yml";
+
+#[path = "../../tests/integration/process.rs"]
+mod process;
+use process::{BUILD_TIMEOUT, CLEANUP_TIMEOUT, RUN_TIMEOUT, cleanup, run_command, run_status};
 
 // This example integration test protects the library-crate usage path rather
 // than the iperf3-rs CLI wrapper path. The checker binary imports iperf3-rs as
@@ -70,10 +74,13 @@ impl ComposeProject {
     }
 
     fn run_compose(&self, args: &[&str]) {
-        let status = self
-            .base_command(args)
-            .status()
-            .expect("failed to run docker compose");
+        let timeout = if args.first() == Some(&"build") {
+            BUILD_TIMEOUT
+        } else {
+            RUN_TIMEOUT
+        };
+        let status = run_status(&mut self.base_command(args), timeout)
+            .expect("failed to run docker compose within its budget");
         assert!(status.success(), "docker compose failed with {status}");
     }
 
@@ -84,8 +91,7 @@ impl ComposeProject {
     }
 
     fn output(&self, args: &[&str]) -> Output {
-        self.base_command(args)
-            .output()
+        run_command(&mut self.base_command(args), RUN_TIMEOUT)
             .expect("failed to run docker compose")
     }
 
@@ -104,11 +110,10 @@ impl ComposeProject {
 
 impl Drop for ComposeProject {
     fn drop(&mut self) {
-        let _ = self
-            .base_command(&["down", "--volumes", "--remove-orphans"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        cleanup(
+            &mut self.base_command(&["down", "--volumes", "--remove-orphans"]),
+            CLEANUP_TIMEOUT,
+        );
     }
 }
 

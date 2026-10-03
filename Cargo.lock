@@ -407,6 +407,7 @@ dependencies = [
  "base64",
  "cc",
  "crossbeam-channel",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

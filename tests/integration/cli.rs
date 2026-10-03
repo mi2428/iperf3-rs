@@ -1,6 +1,7 @@
 use std::{fs, process::Command};
 
 use super::helpers::*;
+use super::process::{RUN_TIMEOUT, run_command};
 
 #[test]
 fn cli_rejects_reserved_labels_before_output_or_delivery() {
@@ -344,17 +345,18 @@ fn cli_treats_metrics_file_create_failure_as_fatal() {
     let port = free_loopback_port().to_string();
     let metrics_file_arg = metrics_file.to_string_lossy();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_iperf3-rs"))
-        .args([
+    let output = run_command(
+        Command::new(env!("CARGO_BIN_EXE_iperf3-rs")).args([
             "-c",
             "127.0.0.1",
             "-p",
             port.as_str(),
             "--metrics.file",
             metrics_file_arg.as_ref(),
-        ])
-        .output()
-        .expect("run iperf3-rs client with unwritable metrics file");
+        ]),
+        RUN_TIMEOUT,
+    )
+    .expect("run iperf3-rs client with unwritable metrics file");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);

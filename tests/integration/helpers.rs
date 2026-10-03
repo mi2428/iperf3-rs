@@ -5,15 +5,16 @@ use std::{
 };
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 use std::{
-    io::{BufRead, BufReader, ErrorKind as IoErrorKind, Read, Write},
+    io::{ErrorKind as IoErrorKind, Read, Write},
     net::TcpListener,
     path::Path,
-    process::{Child, Command, Output, Stdio},
-    sync::mpsc,
+    process::{Command, Output},
     thread,
     time::{Duration, Instant},
 };
 
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
+use super::process::{OwnedCommand, READY_TIMEOUT, RUN_TIMEOUT, run_command};
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 use iperf3_rs::{IperfCommand, MetricEvent, MetricsMode, PushGatewayConfig};
 
@@ -97,10 +98,11 @@ pub fn run_cli_metrics_file_client(port: u16, metrics_file: &Path, extra_args: &
         metrics_file.as_ref(),
     ];
     args.extend_from_slice(extra_args);
-    let output = Command::new(env!("CARGO_BIN_EXE_iperf3-rs"))
-        .args(args)
-        .output()
-        .expect("run iperf3-rs client with metrics file");
+    let output = run_command(
+        Command::new(env!("CARGO_BIN_EXE_iperf3-rs")).args(args),
+        RUN_TIMEOUT,
+    )
+    .expect("run iperf3-rs client with metrics file");
     assert!(
         output.status.success(),
         "client should complete\nstdout:\n{}\nstderr:\n{}",
@@ -118,64 +120,27 @@ pub fn free_loopback_port() -> u16 {
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 pub struct OneOffServer {
-    child: Child,
-    output_worker: Option<thread::JoinHandle<()>>,
+    _child: OwnedCommand,
 }
 
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 impl OneOffServer {
     pub fn start(port: u16) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_iperf3-rs"))
-            .args(["-s", "-1", "-p", &port.to_string(), "--forceflush"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("start iperf3-rs one-off server");
-
-        let stdout = child.stdout.take().unwrap();
-        let (ready, receiver) = mpsc::channel();
-        let output_worker = thread::spawn(move || {
-            let mut reader = BufReader::new(stdout);
-            let marker = format!("Server listening on {port} ");
-            let mut line = String::new();
-            loop {
-                line.clear();
-                match reader.read_line(&mut line) {
-                    Ok(0) => break,
-                    Err(error) => {
-                        let _ = ready.send(Err(error));
-                        break;
-                    }
-                    Ok(_) => {
-                        if line.starts_with(&marker) {
-                            let _ = ready.send(Ok(()));
-                        }
-                    }
-                }
-            }
-        });
-        let server = Self {
-            child,
-            output_worker: Some(output_worker),
-        };
-        receiver
-            .recv_timeout(Duration::from_secs(3))
-            .expect("test-owned server should emit its force-flushed listen marker")
-            .expect("test-owned stdout should be readable");
-        server
-    }
-}
-
-#[cfg(all(feature = "pushgateway", feature = "serde"))]
-impl Drop for OneOffServer {
-    fn drop(&mut self) {
-        if self.child.try_wait().ok().flatten().is_none() {
-            let _ = self.child.kill();
-        }
-        let _ = self.child.wait();
-        if let Some(worker) = self.output_worker.take() {
-            worker.join().expect("test-owned stdout reader should stop");
-        }
+        let mut child = OwnedCommand::spawn(
+            Command::new(env!("CARGO_BIN_EXE_iperf3-rs")).args([
+                "-s",
+                "-1",
+                "-p",
+                &port.to_string(),
+                "--forceflush",
+            ]),
+            READY_TIMEOUT,
+        )
+        .expect("start iperf3-rs one-off server");
+        child
+            .wait_for_stdout(&format!("Server listening on {port} "))
+            .expect("test-owned server should emit its force-flushed listen marker");
+        Self { _child: child }
     }
 }
 

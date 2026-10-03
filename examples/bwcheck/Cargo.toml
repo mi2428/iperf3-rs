@@ -7,6 +7,9 @@ publish = false
 [dependencies]
 iperf3-rs = { path = "../.." }
 
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2.189"
+
 [[bin]]
 name = "iperf3-rs-bwcheck"
 path = "src/main.rs"
