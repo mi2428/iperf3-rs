@@ -320,3 +320,10 @@ iperf3rs_free_string(char *value)
 {
     free(value);
 }
+
+/* Exposes the borrowed argument for the FFI lifetime regression check. */
+const char *
+iperf3rs_diskfile_name(struct iperf_test *test)
+{
+    return test->diskfile_name;
+}

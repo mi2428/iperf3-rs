@@ -44,5 +44,6 @@ const char *iperf3rs_current_error(void);
 void iperf3rs_ignore_sigpipe(void);
 char *iperf3rs_usage_long(void);
 void iperf3rs_free_string(char *value);
+const char *iperf3rs_diskfile_name(struct iperf_test *test);
 
 #endif

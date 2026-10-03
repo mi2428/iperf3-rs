@@ -80,6 +80,8 @@ mod ffi {
         pub fn iperf3rs_ignore_sigpipe();
         pub fn iperf3rs_usage_long() -> *mut c_char;
         pub fn iperf3rs_free_string(value: *mut c_char);
+        #[cfg(test)]
+        pub fn iperf3rs_diskfile_name(test: *mut iperf_test) -> *const c_char;
     }
 }
 
@@ -106,13 +108,18 @@ impl Default for Role {
 
 pub struct IperfTest {
     ptr: NonNull<ffi::iperf_test>,
+    // libiperf borrows and mutates argv bytes. Drop them only after native free.
+    argv_storage: Vec<Vec<u8>>,
 }
 
 impl IperfTest {
     pub fn new() -> Result<Self> {
         let ptr = NonNull::new(unsafe { ffi::iperf_new_test() })
             .ok_or_else(|| Error::internal("iperf_new_test returned null"))?;
-        let test = Self { ptr };
+        let test = Self {
+            ptr,
+            argv_storage: Vec::new(),
+        };
         let rc = unsafe { ffi::iperf_defaults(test.as_ptr()) };
         if rc < 0 {
             return Err(Error::libiperf(format!(
@@ -128,23 +135,25 @@ impl IperfTest {
     }
 
     pub fn parse_arguments(&mut self, args: &[String]) -> Result<()> {
-        // libiperf parses synchronously, so the CString backing storage only
-        // needs to stay alive for this call.
-        let cstrings = args
+        let argc = c_int::try_from(args.len())
+            .map_err(|_| Error::invalid_argument("too many iperf arguments"))?;
+        let storage = args
             .iter()
             .map(|arg| {
                 CString::new(arg.as_str())
+                    .map(CString::into_bytes_with_nul)
                     .map_err(|_| Error::invalid_argument(format!("argument contains NUL: {arg:?}")))
             })
             .collect::<Result<Vec<_>>>()?;
-        let mut argv = cstrings
-            .iter()
-            .map(|arg| arg.as_ptr() as *mut c_char)
+        let start = self.argv_storage.len();
+        self.argv_storage.extend(storage);
+        let mut argv = self.argv_storage[start..]
+            .iter_mut()
+            .map(|arg| arg.as_mut_ptr().cast::<c_char>())
             .collect::<Vec<_>>();
+        argv.push(std::ptr::null_mut());
 
-        let rc = unsafe {
-            ffi::iperf_parse_arguments(self.as_ptr(), argv.len() as c_int, argv.as_mut_ptr())
-        };
+        let rc = unsafe { ffi::iperf_parse_arguments(self.as_ptr(), argc, argv.as_mut_ptr()) };
         if rc < 0 {
             return Err(Error::libiperf(format!(
                 "failed to parse iperf options: {}",
@@ -319,5 +328,34 @@ mod tests {
         .unwrap();
 
         assert_eq!(test.role(), Role::Client);
+    }
+
+    #[test]
+    fn parser_retains_owned_writable_argument_bytes() {
+        let _guard = crate::command::run_lock().lock().unwrap();
+        let mut test = IperfTest::new().unwrap();
+        test.parse_arguments(&[
+            "iperf3-rs".to_owned(),
+            "-c".to_owned(),
+            "127.0.0.1".to_owned(),
+            "-b".to_owned(),
+            "1M/2".to_owned(),
+            "-F".to_owned(),
+            "probe.dat".to_owned(),
+        ])
+        .unwrap();
+
+        let file_name = unsafe { ffi::iperf3rs_diskfile_name(test.as_ptr()) };
+        assert_eq!(file_name, test.argv_storage[6].as_ptr().cast::<c_char>());
+        assert_eq!(
+            unsafe { CStr::from_ptr(file_name) }.to_bytes(),
+            b"probe.dat"
+        );
+        assert_eq!(
+            CStr::from_bytes_until_nul(&test.argv_storage[4])
+                .unwrap()
+                .to_bytes(),
+            b"1M"
+        );
     }
 }
