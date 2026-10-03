@@ -696,7 +696,7 @@ fn notify_ready(ready: Option<Sender<ReadyMessage>>, message: ReadyMessage) {
     }
 }
 
-fn run_lock() -> &'static Mutex<()> {
+pub(crate) fn run_lock() -> &'static Mutex<()> {
     // libiperf still has process-global state, including its current error and
     // signal/output hooks. The first public API keeps high-level runs
     // serialized so callers do not accidentally depend on best-effort
@@ -1084,6 +1084,7 @@ mod tests {
 
     #[test]
     fn unbounded_server_mode_is_rejected_by_default() {
+        let _guard = run_lock().lock().unwrap();
         let command = {
             let mut command = IperfCommand::new();
             command.arg("-s");
@@ -1100,6 +1101,7 @@ mod tests {
 
     #[test]
     fn one_off_server_mode_is_allowed() {
+        let _guard = run_lock().lock().unwrap();
         let command = {
             let mut command = IperfCommand::new();
             command.args(["-s", "-1"]);
@@ -1112,6 +1114,7 @@ mod tests {
 
     #[test]
     fn unbounded_server_mode_can_be_explicitly_allowed() {
+        let _guard = run_lock().lock().unwrap();
         let command = {
             let mut command = IperfCommand::new();
             command.arg("-s").allow_unbounded_server(true);
