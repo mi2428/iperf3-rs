@@ -14,6 +14,7 @@
 #include "iperf_api.h"
 #include "iperf3rs_shim.h"
 #include "iperf3rs_options.h"
+#include "iperf3rs_cli.h"
 
 static iperf3rs_metrics_callback interval_metrics_callback = NULL;
 /* Like the callback, this snapshot belongs to the serialized native run. */
@@ -370,7 +371,10 @@ iperf3rs_run_server_once(struct iperf_test *test)
     int rc = iperf_run_server(test);
     test->server_last_run_rc = rc;
     if (rc < 0 && test->json_output && test->json_top != NULL) {
-        iperf_err(test, "error - %s", iperf_strerror(i_errno));
+        if (iperf3rs_cli_interrupted())
+            iperf_err(test, "interrupt - %s by signal %s(%d)", iperf_strerror(i_errno), strsignal(iperf3rs_cli_interrupted()), iperf3rs_cli_interrupted());
+        else
+            iperf_err(test, "error - %s", iperf_strerror(i_errno));
         if (iperf_json_finish(test) < 0) {
             return -2;
         }

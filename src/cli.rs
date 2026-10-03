@@ -7,7 +7,7 @@ use anyhow::{Context, Result, anyhow};
 
 use crate::args::extract_app_options;
 use crate::help;
-use crate::iperf::{IperfTest, ParseOutcome, SigpipeGuard};
+use crate::iperf::{CliGuard, IperfTest, ParseOutcome, SigpipeGuard};
 use crate::metrics::{IntervalMetricsReporter, MetricsSinks};
 use crate::metrics_file::MetricsFileSink;
 use crate::pushgateway::{PushGateway, PushGatewayConfig};
@@ -69,6 +69,8 @@ fn run() -> Result<()> {
         ParseOutcome::UsageError => std::process::exit(EXIT_OPTION_ERROR.into()),
     }
 
+    // Daemonize and own the pidfile before HTTP/reporting threads are created.
+    let mut runtime = CliGuard::prepare(&test)?;
     let mut sinks = MetricsSinks::new();
     if let Some(push_url) = app.push_url {
         let config = PushGatewayConfig::new(push_url)
@@ -103,6 +105,9 @@ fn run() -> Result<()> {
     // thread, and surfaces required file sink errors after libiperf stops.
     let reporter_result = reporter.map(IntervalMetricsReporter::finish).transpose();
 
+    // Native workers have returned; finish also joins the file/event worker and
+    // its HTTP delivery worker (including client drop) before retiring wake fds.
+    runtime.cleanup()?;
     sigpipe.restore()?;
     result?;
     reporter_result?;

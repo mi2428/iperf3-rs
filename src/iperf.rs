@@ -86,6 +86,11 @@ mod ffi {
         pub fn iperf3rs_current_error() -> *const c_char;
         pub fn iperf3rs_ignore_sigpipe() -> *mut c_void;
         pub fn iperf3rs_restore_sigpipe(saved: *mut c_void) -> c_int;
+        pub fn iperf3rs_cli_interrupted() -> c_int;
+        #[cfg(all(feature = "pushgateway", feature = "serde"))]
+        pub fn iperf3rs_cli_prepare(test: *mut iperf_test) -> *mut c_void;
+        #[cfg(all(feature = "pushgateway", feature = "serde"))]
+        pub fn iperf3rs_cli_cleanup(state: *mut c_void) -> c_int;
         pub fn iperf3rs_usage_long() -> *mut c_char;
         pub fn iperf3rs_free_string(value: *mut c_char);
         #[cfg(test)]
@@ -158,6 +163,46 @@ pub(crate) enum ParseOutcome {
 }
 
 pub(crate) struct SigpipeGuard(Option<NonNull<c_void>>);
+
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
+pub(crate) struct CliGuard(Option<NonNull<c_void>>);
+
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
+impl CliGuard {
+    pub(crate) fn prepare(test: &IperfTest) -> Result<Self> {
+        NonNull::new(unsafe { ffi::iperf3rs_cli_prepare(test.as_ptr()) })
+            .map(|state| Self(Some(state)))
+            .ok_or_else(|| {
+                Error::with_source(
+                    ErrorKind::Libiperf,
+                    format!("failed to prepare CLI runtime: {}", current_error()),
+                    std::io::Error::last_os_error(),
+                )
+            })
+    }
+
+    pub(crate) fn cleanup(&mut self) -> Result<()> {
+        if let Some(state) = self.0.take()
+            && unsafe { ffi::iperf3rs_cli_cleanup(state.as_ptr()) } < 0
+        {
+            return Err(Error::with_source(
+                ErrorKind::Libiperf,
+                "failed to clean up CLI runtime",
+                std::io::Error::last_os_error(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "pushgateway", feature = "serde"))]
+impl Drop for CliGuard {
+    fn drop(&mut self) {
+        if let Err(error) = self.cleanup() {
+            eprintln!("{error:#}");
+        }
+    }
+}
 
 impl SigpipeGuard {
     pub(crate) fn install() -> Result<Self> {
@@ -309,6 +354,9 @@ impl IperfTest {
     fn run_client(&mut self) -> Result<()> {
         let rc = unsafe { ffi::iperf_run_client(self.as_ptr()) };
         self.retained_json = self.native_json_output();
+        if unsafe { ffi::iperf3rs_cli_interrupted() } != 0 {
+            return Ok(()); // Upstream treats CLI SIGINT/SIGTERM/SIGHUP as normal exit.
+        }
         if rc < 0 {
             return Err(Error::libiperf(format!(
                 "iperf client exited with error: {}",
@@ -325,6 +373,9 @@ impl IperfTest {
             let rc = unsafe { ffi::iperf3rs_run_server_once(self.as_ptr()) };
             // Copy this session before reset releases C storage, including errors.
             self.retained_json = self.native_json_output();
+            if unsafe { ffi::iperf3rs_cli_interrupted() } != 0 {
+                return Ok(());
+            }
             if rc < 0 {
                 let error = current_error();
                 if rc < -1 {

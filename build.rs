@@ -34,6 +34,8 @@ fn main() {
     println!("cargo:rerun-if-changed=native/iperf3rs_shim.c");
     println!("cargo:rerun-if-changed=native/iperf3rs_shim.h");
     println!("cargo:rerun-if-changed=native/source_adapter.rs");
+    println!("cargo:rerun-if-changed=native/iperf3rs_cli.c");
+    println!("cargo:rerun-if-changed=native/iperf3rs_cli.h");
     println!("cargo:rerun-if-changed=iperf3");
     emit_git_rerun_instructions(&iperf_dir);
     println!("cargo:rerun-if-env-changed={CONFIGURE_ARGS_ENV}");
@@ -94,6 +96,7 @@ fn main() {
     // libiperf without patching the submodule.
     let mut shim = cc::Build::new();
     shim.file("native/iperf3rs_shim.c")
+        .file("native/iperf3rs_cli.c")
         .include(&out_dir)
         .include(&build_src)
         .include(&iperf_src)
@@ -151,12 +154,19 @@ fn configure_and_build_iperf(
     }
 
     run(configure, "configure iperf3");
+    fs::copy(
+        iperf_dir.parent().unwrap().join("native/iperf3rs_cli.h"),
+        build_dir.join("src/iperf3rs_cli.h"),
+    )
+    .unwrap();
 
     // Automake's VPATH recipes prefer local source files over the vendored ones.
     // Adapt only reviewed C files inside OUT_DIR; never patch the submodule.
     for (name, adapt) in [
         ("iperf_api.c", source_adapter::api as fn(&str) -> String),
         ("iperf_server_api.c", source_adapter::server),
+        ("iperf_client_api.c", source_adapter::client),
+        ("net.c", source_adapter::net),
     ] {
         let source = fs::read_to_string(iperf_dir.join("src").join(name)).unwrap();
         fs::write(build_dir.join("src").join(name), adapt(&source)).unwrap();

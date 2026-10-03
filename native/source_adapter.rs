@@ -4,6 +4,11 @@
 pub fn api(source: &str) -> String {
     let source = replace_once(
         source,
+        "#include \"iperf_api.h\"",
+        "#include \"iperf_api.h\"\n#include \"iperf3rs_cli.h\"",
+    );
+    let source = replace_once(
+        &source,
         "            case 'v':\n                printf(\"%s (cJSON %s)\\n%s\\n%s\\n\", version, cJSON_Version(), get_system_info(),\n\t\t       get_optional_features());\n                exit(0);",
         "            case 'v':\n                return 2; /* version outcome, not process exit */",
     );
@@ -62,21 +67,115 @@ iperf_free_test(struct iperf_test *test)
         "void\niperf_reset_test(struct iperf_test *test)\n{",
         "void\niperf_reset_test(struct iperf_test *test)\n{\n    iperf3rs_release_json(test);",
     );
-    replace_once(
+    let source = replace_once(
         &source,
         "            test->json_output_string = strdup(str);",
         "            free(test->json_output_string);\n            test->json_output_string = strdup(str);",
-    )
+    );
+    let pid_start = "int\niperf_create_pidfile(struct iperf_test *test)\n{";
+    let pid_end = "/* Get rid of a PID file, return -1 on error. */";
+    assert_eq!(
+        source.matches(pid_start).count(),
+        1,
+        "upstream pidfile start changed"
+    );
+    assert_eq!(
+        source.matches(pid_end).count(),
+        1,
+        "upstream pidfile end changed"
+    );
+    let (before, body) = source.split_once(pid_start).unwrap();
+    let (_, after) = body.split_once(pid_end).unwrap();
+    let source = format!(
+        "{before}{pid_start}\n    int owned;\n    struct stat identity;\n    return iperf3rs_create_pidfile(test, &owned, &identity);\n}}\n\n{pid_end}{after}"
+    );
+    let source = replace_once(
+        &source,
+        "    if (test->server_hostname)\n\tfree(test->server_hostname);",
+        "    free(test->pidfile);\n    test->pidfile = NULL;\n    if (test->server_hostname)\n\tfree(test->server_hostname);",
+    );
+    // Reuse upstream's partial-statistics and peer-notification sequence. The
+    // owner calls this normally after a wakeup, never from the signal handler.
+    let sig_start = "void\niperf_got_sigend(struct iperf_test *test, int sig)\n{";
+    let body = source
+        .split_once(sig_start)
+        .expect("upstream sigend anchor changed")
+        .1
+        .split_once("\n    exit_normal = 0;")
+        .expect("upstream sigend end changed")
+        .0;
+    let body = replace_once(body, "    int exit_normal;", "");
+    let body = replace_once(
+        &body,
+        "\ttest->reporter_callback(test);",
+        "\tif (test->role == 's') test->reporter_callback(test);",
+    );
+    let report = format!(
+        "void\niperf3rs_cli_report_interrupt(struct iperf_test *test)\n{{{body}\n    if (test->role == 'c') iperf_set_test_state(test, DISPLAY_RESULTS);\n}}\n\n{sig_start}"
+    );
+    replace_once(&source, sig_start, &report)
 }
 
 pub fn server(source: &str) -> String {
     let source = replace_once(
         source,
+        "#include \"iperf_api.h\"",
+        "#include \"iperf_api.h\"\n#include \"iperf3rs_cli.h\"",
+    );
+    let source = replace_once(
+        &source,
         "\t\t\t  exit(0);",
         "\t\t\t  return 0; /* one-off idle completion */",
     );
     assert!(!source.contains("exit("), "new upstream server exit path");
-    source
+    replace_once(
+        &source,
+        "        result = select(test->max_fd + 1, &read_set, &write_set, NULL, timeout);",
+        "        result = iperf3rs_cli_select(test->max_fd + 1, &read_set, &write_set, NULL, timeout);\n        if (iperf3rs_cli_interrupted()) {\n            iperf3rs_cli_report_interrupt(test);\n            cleanup_server(test);\n            return -2;\n        }",
+    )
+}
+
+pub fn client(source: &str) -> String {
+    let source = replace_once(
+        source,
+        "#include \"iperf_api.h\"",
+        "#include \"iperf_api.h\"\n#include \"iperf3rs_cli.h\"",
+    );
+    assert_eq!(
+        source.matches("result = select(").count(),
+        2,
+        "upstream client selects changed"
+    );
+    let source = source.replace("result = select(", "result = iperf3rs_cli_select(");
+    let source = replace_once(
+        &source,
+        "#endif // __vxworks or __VXWORKS__\n\tif (result < 0 && errno != EINTR)",
+        "#endif // __vxworks or __VXWORKS__\n        if (iperf3rs_cli_interrupted()) goto cleanup_and_fail;\n\tif (result < 0 && errno != EINTR)",
+    );
+    let source = replace_once(
+        &source,
+        "  cleanup_and_fail:\n    /* Cancel all outstanding threads */",
+        "  cleanup_and_fail:\n    if (iperf3rs_cli_interrupted()) iperf3rs_cli_report_interrupt(test);\n    /* Cancel all outstanding threads */",
+    );
+    replace_once(
+        &source,
+        "        cJSON_AddStringToObject(test->json_top, \"error\", iperf_strerror(i_errno));",
+        "        if (iperf3rs_cli_interrupted())\n            iperf_err(test, \"interrupt - %s by signal %s(%d)\", iperf_strerror(i_errno), strsignal(iperf3rs_cli_interrupted()), iperf3rs_cli_interrupted());\n        else\n            cJSON_AddStringToObject(test->json_top, \"error\", iperf_strerror(i_errno));",
+    )
+}
+
+pub fn net(source: &str) -> String {
+    let source = replace_once(
+        source,
+        "#include \"timer.h\"",
+        "#include \"timer.h\"\n#include \"iperf3rs_cli.h\"",
+    );
+    assert_eq!(
+        source.matches("r = select(").count(),
+        2,
+        "upstream control selects changed"
+    );
+    source.replace("r = select(", "r = iperf3rs_cli_select(")
 }
 
 pub fn option_metadata(source: &str) -> String {
