@@ -51,5 +51,8 @@ int iperf3rs_sigpipe_probe(int install);
 char *iperf3rs_usage_long(void);
 void iperf3rs_free_string(char *value);
 const char *iperf3rs_diskfile_name(struct iperf_test *test);
+int iperf3rs_json_probe(int install);
+int iperf3rs_json_probe_session(struct iperf_test *test, int finish);
+int iperf3rs_server_json_sessions_probe(int port, int reset_ready);
 
 #endif

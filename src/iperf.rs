@@ -97,6 +97,10 @@ mod ffi {
             current: std::os::raw::c_long,
             previous: std::os::raw::c_long,
         ) -> std::os::raw::c_long;
+        #[cfg(test)]
+        pub fn iperf3rs_json_probe(install: c_int) -> c_int;
+        #[cfg(test)]
+        pub fn iperf3rs_json_probe_session(test: *mut iperf_test, finish: c_int) -> c_int;
     }
 }
 
@@ -142,6 +146,7 @@ pub struct IperfTest {
     ptr: NonNull<ffi::iperf_test>,
     // libiperf borrows and mutates argv bytes. Drop them only after native free.
     argv_storage: Vec<Vec<u8>>,
+    retained_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,6 +201,7 @@ impl IperfTest {
         let test = Self {
             ptr,
             argv_storage: Vec::new(),
+            retained_json: None,
         };
         let rc = unsafe { ffi::iperf_defaults(test.as_ptr()) };
         if rc < 0 {
@@ -272,6 +278,10 @@ impl IperfTest {
 
     /// Return libiperf's retained JSON result, when JSON output was requested.
     pub fn json_output(&self) -> Option<String> {
+        self.retained_json.clone()
+    }
+
+    fn native_json_output(&self) -> Option<String> {
         let ptr = unsafe { ffi::iperf_get_test_json_output_string(self.as_ptr()) };
         if ptr.is_null() {
             return None;
@@ -298,6 +308,7 @@ impl IperfTest {
 
     fn run_client(&mut self) -> Result<()> {
         let rc = unsafe { ffi::iperf_run_client(self.as_ptr()) };
+        self.retained_json = self.native_json_output();
         if rc < 0 {
             return Err(Error::libiperf(format!(
                 "iperf client exited with error: {}",
@@ -312,6 +323,8 @@ impl IperfTest {
             // Upstream server mode handles one accepted test at a time and then
             // resets the same iperf_test so a long-running server can accept more.
             let rc = unsafe { ffi::iperf3rs_run_server_once(self.as_ptr()) };
+            // Copy this session before reset releases C storage, including errors.
+            self.retained_json = self.native_json_output();
             if rc < 0 {
                 let error = current_error();
                 if rc < -1 {
@@ -410,6 +423,65 @@ mod tests {
         let second_stream = unsafe { ffi::iperf3rs_reorder_delta(7, 4) };
         assert_eq!(first_stream + second_stream, 6);
         assert_eq!(unsafe { ffi::iperf3rs_reorder_delta(2, 0) }, 2);
+    }
+
+    #[test]
+    fn json_trees_and_retained_strings_are_released_on_reset_and_free() {
+        const CHILD: &str = "IPERF3_RS_JSON_OWNER_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let _guard = crate::command::run_lock().lock().unwrap();
+            assert_eq!(unsafe { ffi::iperf3rs_json_probe(1) }, 0);
+            for finish in [0, 1] {
+                let test = IperfTest::new().unwrap();
+                for _ in 0..3 {
+                    assert_eq!(
+                        unsafe { ffi::iperf3rs_json_probe_session(test.as_ptr(), finish) },
+                        0
+                    );
+                    if finish != 0 {
+                        assert!(test.native_json_output().is_some());
+                    }
+                    unsafe { ffi::iperf_reset_test(test.as_ptr()) };
+                    assert_eq!(unsafe { ffi::iperf3rs_json_probe(0) }, 0);
+                    assert!(test.native_json_output().is_none());
+                }
+                assert_eq!(
+                    unsafe { ffi::iperf3rs_json_probe_session(test.as_ptr(), 0) },
+                    0
+                );
+                drop(test);
+                assert_eq!(unsafe { ffi::iperf3rs_json_probe(0) }, 0);
+            }
+            println!("JSON_OWNER_RETURNED");
+            return;
+        }
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "iperf::tests::json_trees_and_retained_strings_are_released_on_reset_and_free",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while child.try_wait().unwrap().is_none() {
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("JSON ownership child timed out");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success());
+        assert!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .contains("JSON_OWNER_RETURNED")
+        );
     }
 
     #[test]

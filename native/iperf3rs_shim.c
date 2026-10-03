@@ -369,6 +369,13 @@ iperf3rs_run_server_once(struct iperf_test *test)
 {
     int rc = iperf_run_server(test);
     test->server_last_run_rc = rc;
+    if (rc < 0 && test->json_output && test->json_top != NULL) {
+        iperf_err(test, "error - %s", iperf_strerror(i_errno));
+        if (iperf_json_finish(test) < 0) {
+            return -2;
+        }
+        iflush(test);
+    }
     return rc;
 }
 
@@ -522,4 +529,73 @@ const char *
 iperf3rs_diskfile_name(struct iperf_test *test)
 {
     return test->diskfile_name;
+}
+
+/* Allocation accounting is enabled only by an isolated regression process. */
+static int iperf3rs_json_allocations;
+
+static void *
+iperf3rs_json_alloc(size_t size)
+{
+    void *value = malloc(size);
+    if (value != NULL) iperf3rs_json_allocations++;
+    return value;
+}
+
+static void
+iperf3rs_json_free(void *value)
+{
+    if (value != NULL) iperf3rs_json_allocations--;
+    free(value);
+}
+
+int
+iperf3rs_json_probe(int install)
+{
+    if (install) {
+        cJSON_Hooks hooks = { iperf3rs_json_alloc, iperf3rs_json_free };
+        iperf3rs_json_allocations = 0;
+        cJSON_InitHooks(&hooks);
+    }
+    return iperf3rs_json_allocations;
+}
+
+int
+iperf3rs_json_probe_session(struct iperf_test *test, int finish)
+{
+    if (iperf_json_start(test) < 0) return -1;
+    if (finish && iperf_json_finish(test) < 0) return -1;
+    return 0;
+}
+
+/* Two ordinary sessions on the same native owner: incomplete exchange, success. */
+int
+iperf3rs_server_json_sessions_probe(int port, int reset_ready)
+{
+    struct iperf_test *test = iperf_new_test();
+    char *retained_error = NULL;
+    int result = -1;
+    if (test == NULL) return -1;
+    if (iperf_defaults(test) < 0 || iperf3rs_suppress_output(test) < 0) goto done;
+    iperf_set_test_role(test, 's');
+    test->server_port = port;
+    test->one_off = 1;
+    test->json_output = 1;
+    if (iperf3rs_run_server_once(test) >= 0 || test->json_output_string == NULL ||
+        strstr(test->json_output_string, "\"error\"") == NULL) goto done;
+    retained_error = strdup(test->json_output_string);
+    if (retained_error == NULL) goto done;
+    iperf_reset_test(test);
+    if (test->json_top != NULL || test->json_output_string != NULL) goto done;
+    /* The previous listener is closed: only a new-listen startup race remains. */
+    if (write(reset_ready, "R", 1) != 1) goto done;
+    if (iperf3rs_run_server_once(test) < 0 || test->json_output_string == NULL ||
+        strstr(test->json_output_string, "\"end\"") == NULL ||
+        strstr(test->json_output_string, "\"error\"") != NULL) goto done;
+    if (strstr(retained_error, "\"error\"") == NULL) goto done;
+    result = 0;
+done:
+    free(retained_error);
+    iperf_free_test(test);
+    return result;
 }

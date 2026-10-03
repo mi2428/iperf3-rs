@@ -25,7 +25,48 @@ pub fn api(source: &str) -> String {
         .expect("upstream parser end anchor changed")
         .0;
     assert!(!parser.contains("exit("), "new upstream parser exit path");
-    source
+    let cleanup = r#"static void
+iperf3rs_delete_unattached(cJSON *parent, const char *name, cJSON *child)
+{
+    if (child != NULL && (parent == NULL || cJSON_GetObjectItem(parent, name) != child))
+        cJSON_Delete(child);
+}
+
+static void
+iperf3rs_release_json(struct iperf_test *test)
+{
+    iperf3rs_delete_unattached(test->json_start, "connected", test->json_connected);
+    iperf3rs_delete_unattached(test->json_top, "start", test->json_start);
+    iperf3rs_delete_unattached(test->json_top, "intervals", test->json_intervals);
+    iperf3rs_delete_unattached(test->json_top, "end", test->json_end);
+    iperf3rs_delete_unattached(test->json_top, "server_output_json", test->json_server_output);
+    cJSON_Delete(test->json_top);
+    test->json_top = test->json_start = test->json_connected = test->json_intervals = test->json_end = test->json_server_output = NULL;
+    free(test->json_output_string);
+    test->json_output_string = NULL;
+    free(test->server_output_text);
+    test->server_output_text = NULL;
+}
+
+void
+iperf_free_test(struct iperf_test *test)
+{
+    iperf3rs_release_json(test);"#;
+    let source = replace_once(
+        &source,
+        "void\niperf_free_test(struct iperf_test *test)\n{",
+        cleanup,
+    );
+    let source = replace_once(
+        &source,
+        "void\niperf_reset_test(struct iperf_test *test)\n{",
+        "void\niperf_reset_test(struct iperf_test *test)\n{\n    iperf3rs_release_json(test);",
+    );
+    replace_once(
+        &source,
+        "            test->json_output_string = strdup(str);",
+        "            free(test->json_output_string);\n            test->json_output_string = strdup(str);",
+    )
 }
 
 pub fn server(source: &str) -> String {
