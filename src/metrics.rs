@@ -239,6 +239,7 @@ pub enum MetricsMode {
     /// consumers that continuously drain the stream.
     Interval,
     /// Aggregate interval samples into fixed-duration summary windows.
+    /// The interval must be nonzero and representable as a runtime deadline.
     ///
     /// This mode still consumes every libiperf interval sample internally. It
     /// emits fewer public events than `Interval`, but the stream should still be
@@ -247,6 +248,21 @@ pub enum MetricsMode {
 }
 
 impl MetricsMode {
+    pub(crate) const fn has_nonzero_window(self) -> bool {
+        !matches!(self, Self::Window(interval) if interval.is_zero())
+    }
+
+    pub(crate) fn validate(self) -> Result<()> {
+        if !self.has_nonzero_window() {
+            return Err(Error::invalid_metrics_mode(
+                "metrics window interval must be greater than zero",
+            ));
+        }
+        if let Self::Window(interval) = self {
+            checked_deadline(interval).map_err(|err| Error::invalid_metrics_mode(err.message()))?;
+        }
+        Ok(())
+    }
     /// Return `true` when this mode installs the libiperf metrics callback.
     pub const fn is_enabled(self) -> bool {
         !matches!(self, Self::Disabled)
@@ -277,6 +293,8 @@ pub enum MetricEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MetricsRecvError {
+    /// The timeout cannot be represented as a runtime deadline.
+    InvalidTimeout,
     /// No event was currently queued.
     Empty,
     /// No event arrived before the requested timeout elapsed.
@@ -288,6 +306,7 @@ pub enum MetricsRecvError {
 impl fmt::Display for MetricsRecvError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidTimeout => f.write_str("metrics timeout exceeds runtime deadline range"),
             Self::Empty => f.write_str("no metrics event is currently queued"),
             Self::Timeout => f.write_str("timed out waiting for metrics event"),
             Self::Closed => f.write_str("metrics stream is closed"),
@@ -320,11 +339,13 @@ impl MetricsStream {
     }
 
     /// Wait for the next metric event up to `timeout`.
+    /// Unrepresentable deadlines return [`MetricsRecvError::InvalidTimeout`].
     pub fn recv_timeout(
         &self,
         timeout: Duration,
     ) -> std::result::Result<MetricEvent, MetricsRecvError> {
-        match self.rx.recv_timeout(timeout) {
+        let deadline = checked_deadline(timeout).map_err(|_| MetricsRecvError::InvalidTimeout)?;
+        match self.rx.recv_deadline(deadline) {
             Ok(event) => Ok(event),
             Err(RecvTimeoutError::Timeout) => Err(MetricsRecvError::Timeout),
             Err(RecvTimeoutError::Disconnected) => Err(MetricsRecvError::Closed),
@@ -438,6 +459,13 @@ impl IntervalMetricsReporter {
     }
 
     pub(crate) fn attach_sinks(test: &mut IperfTest, sinks: MetricsSinks) -> Result<Self> {
+        if let Some(interval) = sinks
+            .pushgateway
+            .as_ref()
+            .and_then(|sink| sink.push_interval)
+        {
+            MetricsMode::Window(interval).validate()?;
+        }
         let queue = sinks.queue();
         let (callback, rx) = CallbackMetricsReporter::attach(test, queue)?;
 
@@ -541,17 +569,21 @@ fn callback_channel(queue: MetricsQueue, role: Role) -> (CallbackTarget, Receive
 pub(crate) fn metric_event_stream(
     rx: Receiver<Metrics>,
     mode: MetricsMode,
-) -> (MetricsStream, JoinHandle<()>) {
+) -> Result<(MetricsStream, JoinHandle<Result<()>>)> {
+    mode.validate()?;
     // The public stream is also unbounded to preserve every event. This keeps
     // the metrics worker simple and nonblocking, but it makes unread streams a
     // caller-visible memory risk on long-running runs.
     let (tx, event_rx) = unbounded::<MetricEvent>();
     let worker = thread::spawn(move || match mode {
-        MetricsMode::Disabled => {}
-        MetricsMode::Interval => forward_interval_events(rx, tx),
+        MetricsMode::Disabled => Ok(()),
+        MetricsMode::Interval => {
+            forward_interval_events(rx, tx);
+            Ok(())
+        }
         MetricsMode::Window(interval) => forward_window_events(rx, tx, interval),
     });
-    (MetricsStream::new(event_rx), worker)
+    Ok((MetricsStream::new(event_rx), worker))
 }
 
 fn forward_interval_events(rx: Receiver<Metrics>, tx: Sender<MetricEvent>) {
@@ -562,7 +594,11 @@ fn forward_interval_events(rx: Receiver<Metrics>, tx: Sender<MetricEvent>) {
     }
 }
 
-fn forward_window_events(rx: Receiver<Metrics>, tx: Sender<MetricEvent>, interval: Duration) {
+fn forward_window_events(
+    rx: Receiver<Metrics>,
+    tx: Sender<MetricEvent>,
+    interval: Duration,
+) -> Result<()> {
     let mut window = Vec::new();
     let mut deadline = None;
 
@@ -584,7 +620,7 @@ fn forward_window_events(rx: Receiver<Metrics>, tx: Sender<MetricEvent>, interva
                             if !flush_window_event(&tx, &mut window) {
                                 break;
                             }
-                            deadline = Some(window_deadline(interval));
+                            deadline = Some(checked_deadline(interval)?);
                         }
                         window.push(metrics);
                     }
@@ -600,7 +636,7 @@ fn forward_window_events(rx: Receiver<Metrics>, tx: Sender<MetricEvent>, interva
             None => match rx.recv() {
                 Ok(metrics) => {
                     window.push(metrics);
-                    deadline = Some(window_deadline(interval));
+                    deadline = Some(checked_deadline(interval)?);
                 }
                 Err(_) => break,
             },
@@ -608,6 +644,7 @@ fn forward_window_events(rx: Receiver<Metrics>, tx: Sender<MetricEvent>, interva
     }
 
     let _ = flush_window_event(&tx, &mut window);
+    Ok(())
 }
 
 fn flush_window_event(tx: &Sender<MetricEvent>, window: &mut Vec<Metrics>) -> bool {
@@ -618,10 +655,10 @@ fn flush_window_event(tx: &Sender<MetricEvent>, window: &mut Vec<Metrics>) -> bo
     tx.send(MetricEvent::Window(metrics)).is_ok()
 }
 
-fn window_deadline(interval: Duration) -> Instant {
+pub(crate) fn checked_deadline(interval: Duration) -> Result<Instant> {
     Instant::now()
         .checked_add(interval)
-        .unwrap_or_else(Instant::now)
+        .ok_or_else(|| Error::invalid_argument("duration exceeds runtime deadline range"))
 }
 
 fn window_context_changes(window: &[Metrics], metrics: &Metrics) -> bool {
@@ -692,7 +729,7 @@ fn push_window_metrics(
                         }
                         if window_context_changes(&window, &metrics) {
                             flush_window_metrics(&sinks, &mut window);
-                            deadline = Some(window_deadline(interval));
+                            deadline = Some(checked_deadline(interval)?);
                         }
                         window.push(metrics);
                     }
@@ -710,7 +747,7 @@ fn push_window_metrics(
                         break;
                     }
                     window.push(metrics);
-                    deadline = Some(window_deadline(interval));
+                    deadline = Some(checked_deadline(interval)?);
                 }
                 Err(_) => break,
             },
@@ -1232,6 +1269,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unrepresentable_window_and_receive_deadlines_are_rejected() {
+        assert!(checked_deadline(Duration::MAX).is_err());
+        assert!(checked_deadline(Duration::ZERO).is_ok());
+        let (_, rx) = unbounded();
+        let err = metric_event_stream(rx, MetricsMode::Window(Duration::MAX)).unwrap_err();
+        assert_eq!(err.kind(), crate::ErrorKind::InvalidMetricsMode);
+        let (_, rx) = unbounded();
+        let stream = MetricsStream::new(rx);
+        assert_eq!(
+            stream.recv_timeout(Duration::MAX),
+            Err(MetricsRecvError::InvalidTimeout)
+        );
+    }
+
+    #[test]
     fn transport_protocol_maps_callback_values() {
         assert_eq!(
             TransportProtocol::from_callback_value(0),
@@ -1352,13 +1404,13 @@ mod tests {
             transferred_bytes: 42.0,
             ..Metrics::default()
         };
-        let (mut stream, worker) = metric_event_stream(rx, MetricsMode::Interval);
+        let (mut stream, worker) = metric_event_stream(rx, MetricsMode::Interval).unwrap();
 
         tx.send(sample.clone()).unwrap();
         drop(tx);
 
         assert_eq!(stream.next(), Some(MetricEvent::Interval(sample)));
-        worker.join().unwrap();
+        worker.join().unwrap().unwrap();
         assert_eq!(stream.next(), None);
     }
 
@@ -1366,7 +1418,7 @@ mod tests {
     fn metric_event_stream_flushes_final_window() {
         let (tx, rx) = unbounded::<Metrics>();
         let (mut stream, worker) =
-            metric_event_stream(rx, MetricsMode::Window(Duration::from_secs(60)));
+            metric_event_stream(rx, MetricsMode::Window(Duration::from_secs(60))).unwrap();
 
         tx.send(Metrics {
             timestamp_unix_seconds: 10.0,
@@ -1405,7 +1457,7 @@ mod tests {
         assert_eq!(window.direction, MetricDirection::Sender);
         assert_eq!(window.stream_count, 2);
         assert_eq!(window.protocol, TransportProtocol::Tcp);
-        worker.join().unwrap();
+        worker.join().unwrap().unwrap();
         assert_eq!(stream.next(), None);
     }
 
@@ -1413,7 +1465,7 @@ mod tests {
     fn metric_event_stream_splits_windows_when_context_changes() {
         let (tx, rx) = unbounded::<Metrics>();
         let (mut stream, worker) =
-            metric_event_stream(rx, MetricsMode::Window(Duration::from_secs(60)));
+            metric_event_stream(rx, MetricsMode::Window(Duration::from_secs(60))).unwrap();
 
         tx.send(Metrics {
             role: Role::Client,
@@ -1448,7 +1500,7 @@ mod tests {
         assert_eq!(first.direction, MetricDirection::Sender);
         assert_eq!(second.transferred_bytes, 8.0);
         assert_eq!(second.direction, MetricDirection::Receiver);
-        worker.join().unwrap();
+        worker.join().unwrap().unwrap();
         assert_eq!(stream.next(), None);
     }
 

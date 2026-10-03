@@ -16,7 +16,8 @@ use crate::iperf::{IperfTest, Role, SigpipeGuard};
 #[cfg(feature = "pushgateway")]
 use crate::metrics::IntervalMetricsReporter;
 use crate::metrics::{
-    CallbackMetricsReporter, MetricEvent, MetricsMode, MetricsStream, metric_event_stream,
+    CallbackMetricsReporter, MetricEvent, MetricsMode, MetricsStream, checked_deadline,
+    metric_event_stream,
 };
 #[cfg(feature = "pushgateway")]
 use crate::pushgateway::{PushGateway, PushGatewayConfig};
@@ -540,15 +541,15 @@ impl RunningIperf {
     }
 
     /// Wait up to `timeout` for the worker to finish.
+    /// A timeout outside the runtime deadline range returns an error without
+    /// consuming or stopping the running worker.
     ///
     /// Returns `Ok(None)` when the timeout expires before the iperf run exits.
     /// A zero timeout performs a single nonblocking poll. Timeout expiration
     /// does not stop the iperf run; call this again, call [`RunningIperf::wait`],
     /// or manage cancellation outside this in-process API.
     pub fn wait_timeout(&mut self, timeout: Duration) -> Result<Option<IperfResult>> {
-        let deadline = Instant::now()
-            .checked_add(timeout)
-            .unwrap_or_else(Instant::now);
+        let deadline = checked_deadline(timeout)?;
         loop {
             if self.is_finished() {
                 return self.take_finished_result().map(Some);
@@ -589,7 +590,7 @@ struct RunSetup {
     role: Role,
     callback: Option<CallbackMetricsReporter>,
     stream: Option<MetricsStream>,
-    worker: Option<JoinHandle<()>>,
+    worker: Option<JoinHandle<Result<()>>>,
     #[cfg(feature = "pushgateway")]
     push_reporter: Option<IntervalMetricsReporter>,
 }
@@ -629,7 +630,9 @@ fn run_command(command: IperfCommand, ready: Option<Sender<ReadyMessage>>) -> Re
     // event worker to flush any final window and exit before the result returns.
     drop(setup.callback.take());
     if let Some(worker) = setup.worker.take() {
-        let _ = worker.join();
+        worker
+            .join()
+            .map_err(|_| Error::worker("metrics event worker thread panicked"))??;
     }
     #[cfg(feature = "pushgateway")]
     let push_result = setup
@@ -671,7 +674,7 @@ fn setup_run(command: IperfCommand) -> Result<RunSetup> {
     let (callback, stream, worker, push_reporter) =
         if let Some(queue) = command.metrics_mode.callback_queue() {
             let (callback, rx) = CallbackMetricsReporter::attach(&mut test, queue)?;
-            let (stream, worker) = metric_event_stream(rx, command.metrics_mode);
+            let (stream, worker) = metric_event_stream(rx, command.metrics_mode)?;
             (Some(callback), Some(stream), Some(worker), None)
         } else if let Some(pushgateway) = command.pushgateway {
             let sink = PushGateway::new(pushgateway.config)?;
@@ -685,7 +688,7 @@ fn setup_run(command: IperfCommand) -> Result<RunSetup> {
     let (callback, stream, worker) = match command.metrics_mode.callback_queue() {
         Some(queue) => {
             let (callback, rx) = CallbackMetricsReporter::attach(&mut test, queue)?;
-            let (stream, worker) = metric_event_stream(rx, command.metrics_mode);
+            let (stream, worker) = metric_event_stream(rx, command.metrics_mode)?;
             (Some(callback), Some(stream), Some(worker))
         }
         None => (None, None, None),
@@ -724,13 +727,7 @@ pub(crate) fn run_lock() -> &'static Mutex<()> {
 }
 
 fn validate_metrics_mode(mode: MetricsMode) -> Result<()> {
-    if metrics_mode_is_valid(mode) {
-        Ok(())
-    } else {
-        Err(Error::invalid_metrics_mode(
-            "metrics window interval must be greater than zero",
-        ))
-    }
+    mode.validate()
 }
 
 #[cfg(feature = "pushgateway")]
@@ -752,11 +749,7 @@ fn validate_pushgateway_mode(mode: MetricsMode) -> Result<()> {
         MetricsMode::Disabled => Err(Error::invalid_metrics_mode(
             "Pushgateway metrics mode must be Interval or Window",
         )),
-        MetricsMode::Interval => Ok(()),
-        MetricsMode::Window(interval) if interval.is_zero() => Err(Error::invalid_metrics_mode(
-            "metrics window interval must be greater than zero",
-        )),
-        MetricsMode::Window(_) => Ok(()),
+        _ => mode.validate(),
     }
 }
 
@@ -768,10 +761,6 @@ impl MetricsMode {
             MetricsMode::Window(interval) => Some(interval),
         }
     }
-}
-
-fn metrics_mode_is_valid(mode: MetricsMode) -> bool {
-    !matches!(mode, MetricsMode::Window(interval) if interval.is_zero())
 }
 
 fn whole_seconds_arg(duration: Duration) -> String {
@@ -823,13 +812,13 @@ mod verification {
     use super::*;
 
     #[kani::proof]
-    fn zero_window_interval_is_the_only_invalid_metrics_mode() {
+    fn metrics_modes_require_nonzero_windows() {
         let seconds: u8 = kani::any();
         let mode = MetricsMode::Window(Duration::from_secs(u64::from(seconds)));
 
-        assert_eq!(metrics_mode_is_valid(mode), seconds != 0);
-        assert!(metrics_mode_is_valid(MetricsMode::Disabled));
-        assert!(metrics_mode_is_valid(MetricsMode::Interval));
+        assert_eq!(mode.has_nonzero_window(), seconds != 0);
+        assert!(MetricsMode::Disabled.has_nonzero_window());
+        assert!(MetricsMode::Interval.has_nonzero_window());
     }
 }
 
@@ -1171,10 +1160,28 @@ mod tests {
         assert!(err.to_string().contains("greater than zero"));
     }
 
+    #[test]
+    fn unrepresentable_metrics_windows_fail_before_iperf_setup() {
+        let mut command = IperfCommand::new();
+        command.metrics(MetricsMode::Window(Duration::MAX));
+        assert_eq!(
+            command.run().unwrap_err().kind(),
+            ErrorKind::InvalidMetricsMode
+        );
+        let err = command
+            .spawn_with_metrics(MetricsMode::Window(Duration::MAX))
+            .unwrap_err();
+        assert!(err.to_string().contains("deadline range"));
+    }
+
     #[cfg(feature = "pushgateway")]
     #[test]
     fn direct_pushgateway_rejects_disabled_or_zero_window_mode() {
-        for mode in [MetricsMode::Disabled, MetricsMode::Window(Duration::ZERO)] {
+        for mode in [
+            MetricsMode::Disabled,
+            MetricsMode::Window(Duration::ZERO),
+            MetricsMode::Window(Duration::MAX),
+        ] {
             let command = {
                 let mut command = IperfCommand::new();
                 command.arg("-s").arg("-1").pushgateway(
@@ -1243,6 +1250,10 @@ mod tests {
         };
 
         assert!(!running.is_finished());
+        assert_eq!(
+            running.wait_timeout(Duration::MAX).unwrap_err().kind(),
+            ErrorKind::InvalidArgument
+        );
         assert!(running.try_wait().unwrap().is_none());
         assert!(running.wait_timeout(Duration::ZERO).unwrap().is_none());
 

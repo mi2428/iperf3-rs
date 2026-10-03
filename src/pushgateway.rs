@@ -12,7 +12,7 @@ use reqwest::StatusCode;
 use reqwest::blocking::Client;
 use url::Url;
 
-use crate::metrics::{Metrics, WindowMetrics};
+use crate::metrics::{Metrics, WindowMetrics, checked_deadline};
 use crate::prometheus::{
     PrometheusEncoder, render_interval_prometheus as render_prometheus, render_window_prometheus,
     validate_metric_prefix,
@@ -36,6 +36,7 @@ pub struct PushGatewayConfig {
     /// Grouping labels encoded into the Pushgateway request path.
     pub labels: Vec<(String, String)>,
     /// Per-request HTTP timeout.
+    /// Must be nonzero and representable as a runtime deadline.
     pub timeout: Duration,
     /// Number of retries after the first failed request.
     pub retries: u32,
@@ -432,6 +433,7 @@ fn validate_timeout(timeout: Duration) -> Result<()> {
             "Pushgateway timeout must be greater than zero",
         ));
     }
+    checked_deadline(timeout)?;
     Ok(())
 }
 
@@ -814,6 +816,11 @@ mod tests {
                 "zero timeout",
                 PushGatewayConfig::new(endpoint.clone()).timeout(Duration::ZERO),
                 "timeout",
+            ),
+            (
+                "unrepresentable timeout",
+                PushGatewayConfig::new(endpoint.clone()).timeout(Duration::MAX),
+                "deadline range",
             ),
             (
                 "too many retries",

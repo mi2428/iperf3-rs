@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, bail};
 use url::Url;
 
+use crate::metrics::checked_deadline;
 use crate::metrics_file::MetricsFileFormat;
 use crate::prometheus::validate_metric_prefix;
 use crate::pushgateway::{
@@ -427,6 +428,7 @@ fn parse_duration_option(option: &str, raw: &str) -> Result<Duration> {
     if duration.is_zero() {
         bail!("{option} must be greater than zero");
     }
+    checked_deadline(duration).map_err(|err| anyhow!("invalid {option}: {err}"))?;
     Ok(duration)
 }
 

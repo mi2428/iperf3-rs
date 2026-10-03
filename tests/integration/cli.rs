@@ -33,6 +33,26 @@ fn cli_rejects_reserved_labels_before_output_or_delivery() {
     }
 }
 
+#[test]
+fn cli_rejects_unrepresentable_push_deadlines_before_running() {
+    for option in ["--push.timeout", "--push.interval"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_iperf3-rs"))
+            .args([
+                "--push.url",
+                "127.0.0.1:9091",
+                option,
+                "18446744073709551615s",
+                "-c",
+                "127.0.0.1",
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("deadline range"));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("panicked"));
+    }
+}
+
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[test]
 fn cli_writes_jsonl_metrics_file_without_replacing_stdout() {
