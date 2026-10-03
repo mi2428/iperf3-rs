@@ -251,6 +251,20 @@ mod tests {
     static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     #[test]
+    fn reserved_sample_label_is_rejected_before_creating_output() {
+        let path = temp_path("prom");
+        let err = MetricsFileSink::with_prefix_and_labels(
+            &path,
+            MetricsFileFormat::Prometheus,
+            "iperf3",
+            [("__name__", "collision")],
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidArgument);
+        assert!(!path.exists());
+    }
+
+    #[test]
     fn jsonl_format_appends_interval_events() {
         let path = temp_path("jsonl");
         let sink = MetricsFileSink::new(&path, MetricsFileFormat::Jsonl).unwrap();

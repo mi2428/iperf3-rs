@@ -626,7 +626,7 @@ mod verification {
         let bytes: [u8; MAX_RESERVED_LABEL_NAME_BYTES] = kani::any();
 
         let name = &bytes[..len];
-        let expected = name == b"job";
+        let expected = name == b"job" || name.starts_with(b"__");
 
         assert_eq!(is_reserved_label_name_bytes(name), expected);
     }

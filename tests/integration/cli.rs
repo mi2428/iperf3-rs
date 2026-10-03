@@ -2,6 +2,37 @@ use std::{fs, process::Command};
 
 use super::helpers::*;
 
+#[test]
+fn cli_rejects_reserved_labels_before_output_or_delivery() {
+    let path = temp_metrics_path("prom");
+    let path_arg = path.to_str().unwrap();
+    for options in [
+        vec![
+            "--metrics.file",
+            path_arg,
+            "--metrics.format",
+            "prometheus",
+            "--metrics.label",
+            "__name__=collision",
+        ],
+        vec![
+            "--push.url",
+            "127.0.0.1:9091",
+            "--push.label",
+            "__private=value",
+        ],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_iperf3-rs"))
+            .args(options)
+            .args(["-c", "127.0.0.1"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("reserved"));
+        assert!(!path.exists());
+    }
+}
+
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 #[test]
 fn cli_writes_jsonl_metrics_file_without_replacing_stdout() {

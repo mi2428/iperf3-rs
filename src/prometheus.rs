@@ -114,6 +114,11 @@ fn validate_labels(labels: &[(String, String)]) -> Result<()> {
                 "invalid Prometheus label name '{name}'"
             )));
         }
+        if name == "__name__" {
+            return Err(Error::invalid_argument(
+                "Prometheus label name '__name__' is reserved",
+            ));
+        }
         if value.is_empty() {
             return Err(Error::invalid_argument(format!(
                 "Prometheus label value for '{name}' must not be empty"
@@ -583,12 +588,23 @@ mod tests {
     fn invalid_labels_are_rejected() {
         for labels in [
             vec![("9bad", "value")],
+            vec![("__name__", "value")],
             vec![("ok", "")],
             vec![("dup", "one"), ("dup", "two")],
         ] {
             let err = PrometheusEncoder::with_labels("iperf3", labels).unwrap_err();
             assert!(err.to_string().contains("label"));
         }
+        let encoder = PrometheusEncoder::with_labels(
+            "iperf3",
+            [("job", "test"), ("_valid", "quote\"slash\\line\n")],
+        )
+        .unwrap();
+        assert!(
+            encoder
+                .encode_interval(&Metrics::default())
+                .contains("job=\"test\"")
+        );
     }
 
     #[test]

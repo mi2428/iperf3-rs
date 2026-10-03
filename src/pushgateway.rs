@@ -455,7 +455,7 @@ pub(crate) fn is_reserved_label_name(name: &str) -> bool {
 }
 
 pub(crate) fn is_reserved_label_name_bytes(name: &[u8]) -> bool {
-    name == b"job"
+    name == b"job" || name.starts_with(b"__")
 }
 
 pub(crate) fn is_valid_label_name_bytes(name: &[u8]) -> bool {
@@ -670,6 +670,13 @@ mod tests {
     #[test]
     fn config_validation_rejects_values_cli_would_reject() {
         let endpoint = Url::parse("http://localhost:9091").unwrap();
+        for name in ["__name__", "__private", "__"] {
+            let err = PushGatewayConfig::new(endpoint.clone())
+                .label(name, "value")
+                .validate()
+                .unwrap_err();
+            assert!(err.to_string().contains("reserved"));
+        }
 
         for (label, config, expected) in [
             (
