@@ -5,3 +5,4 @@ mod api;
 mod cli;
 #[cfg(all(feature = "pushgateway", feature = "serde"))]
 mod command;
+mod traffic;
