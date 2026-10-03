@@ -36,6 +36,7 @@ typedef void (*iperf3rs_metrics_callback)(
     int udp_out_of_order_packets_available);
 
 void iperf3rs_enable_interval_metrics(struct iperf_test *test, iperf3rs_metrics_callback callback);
+long iperf3rs_reorder_delta(long current, long previous);
 int iperf3rs_parse_arguments(struct iperf_test *test, int argc, char **argv);
 void iperf3rs_clear_error_state(void);
 int iperf3rs_run_server_once(struct iperf_test *test);

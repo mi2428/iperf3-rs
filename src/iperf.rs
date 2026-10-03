@@ -86,6 +86,11 @@ mod ffi {
         pub fn iperf3rs_diskfile_name(test: *mut iperf_test) -> *const c_char;
         #[cfg(test)]
         pub fn iperf3rs_sigpipe_probe(install: c_int) -> c_int;
+        #[cfg(test)]
+        pub fn iperf3rs_reorder_delta(
+            current: std::os::raw::c_long,
+            previous: std::os::raw::c_long,
+        ) -> std::os::raw::c_long;
     }
 }
 
@@ -349,6 +354,26 @@ pub fn usage_long() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_reorder_intervals_preserve_availability_and_resets() {
+        for (current, previous, expected) in [
+            (-1, 0, None),
+            (0, 0, Some(0)),
+            (2, 0, Some(2)),
+            (2, 2, Some(0)),
+            (5, 2, Some(3)),
+            (1, 5, Some(1)),
+            (3, -1, None),
+        ] {
+            let delta = unsafe { ffi::iperf3rs_reorder_delta(current, previous) };
+            assert_eq!((delta >= 0).then_some(delta), expected);
+        }
+        let first_stream = unsafe { ffi::iperf3rs_reorder_delta(5, 2) };
+        let second_stream = unsafe { ffi::iperf3rs_reorder_delta(7, 4) };
+        assert_eq!(first_stream + second_stream, 6);
+        assert_eq!(unsafe { ffi::iperf3rs_reorder_delta(2, 0) }, 2);
+    }
 
     #[test]
     fn parser_sets_server_role() {

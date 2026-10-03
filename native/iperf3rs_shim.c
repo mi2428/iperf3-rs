@@ -15,7 +15,11 @@
 #include "iperf3rs_shim.h"
 
 static iperf3rs_metrics_callback interval_metrics_callback = NULL;
+/* Like the callback, this snapshot belongs to the serialized native run. */
+static double interval_reorder_events = 0.0;
+static int interval_reorder_available = 0;
 
+static void iperf3rs_stats_callback(struct iperf_test *test);
 static void iperf3rs_reporter_callback(struct iperf_test *test);
 static void iperf3rs_emit_interval_metrics(struct iperf_test *test);
 static int iperf3rs_add_nonnegative(double *sum, long value);
@@ -54,7 +58,70 @@ void
 iperf3rs_enable_interval_metrics(struct iperf_test *test, iperf3rs_metrics_callback callback)
 {
     interval_metrics_callback = callback;
+    interval_reorder_events = 0.0;
+    interval_reorder_available = 0;
+    test->stats_callback = iperf3rs_stats_callback;
     test->reporter_callback = iperf3rs_reporter_callback;
+}
+
+long
+iperf3rs_reorder_delta(long current, long previous)
+{
+    if (current < 0 || previous < 0) {
+        return -1;
+    }
+    /* A decreasing counter starts a new epoch, rather than a negative delta. */
+    return current < previous ? current : current - previous;
+}
+
+static int
+iperf3rs_stream_must_be_sender(struct iperf_test *test)
+{
+    return test->mode == BIDIRECTIONAL ? test->role == 'c' : test->mode * test->mode;
+}
+
+static void
+iperf3rs_stats_callback(struct iperf_test *test)
+{
+    struct iperf_stream *stream;
+    struct iperf_interval_results *interval;
+    size_t count = 0, index = 0;
+    interval_reorder_events = 0.0;
+    interval_reorder_available = 0;
+    if (test->protocol->id != Ptcp || test->sender_has_retransmits != 1 ||
+        !iperf3rs_stream_must_be_sender(test)) {
+        iperf_stats_callback(test);
+        return;
+    }
+    SLIST_FOREACH(stream, &test->streams, streams) {
+        if (stream->sender) {
+            count++;
+        }
+    }
+    if (count == 0) {
+        iperf_stats_callback(test);
+        return;
+    }
+    /* Upstream replaces the last result during stats collection. Capture its
+     * per-stream cumulative value first; native stream counts are bounded by
+     * MAX_STREAMS (twice that in bidirectional mode). No cross-session history. */
+    long previous[count];
+    SLIST_FOREACH(stream, &test->streams, streams) {
+        if (stream->sender) {
+            interval = TAILQ_LAST(&stream->result->interval_results, irlisthead);
+            previous[index++] = interval == NULL ? 0 : interval->reorder;
+        }
+    }
+    iperf_stats_callback(test);
+    index = 0;
+    SLIST_FOREACH(stream, &test->streams, streams) {
+        if (stream->sender) {
+            interval = TAILQ_LAST(&stream->result->interval_results, irlisthead);
+            long delta = iperf3rs_reorder_delta(interval->reorder, previous[index++]);
+            interval_reorder_available |=
+                iperf3rs_add_nonnegative(&interval_reorder_events, delta);
+        }
+    }
 }
 
 static void
@@ -77,7 +144,7 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
     double tcp_snd_cwnd_bytes = 0.0;
     double tcp_snd_wnd_bytes = 0.0;
     double tcp_pmtu_bytes = 0.0;
-    double tcp_reorder_events = 0.0;
+    double tcp_reorder_events = interval_reorder_events;
     double udp_packets = 0.0;
     double udp_lost_packets = 0.0;
     double udp_jitter_seconds = 0.0;
@@ -98,7 +165,7 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
     int tcp_snd_cwnd_bytes_available = 0;
     int tcp_snd_wnd_bytes_available = 0;
     int tcp_pmtu_bytes_available = 0;
-    int tcp_reorder_events_available = 0;
+    int tcp_reorder_events_available = interval_reorder_available;
     int udp_packets_available = 0;
     int udp_lost_packets_available = 0;
     int udp_jitter_seconds_available = 0;
@@ -116,11 +183,7 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
      * server-side metrics aligned with its receiving streams. Emitting both
      * halves would require a wider Rust callback and Prometheus/file schema.
      */
-    if (test->mode == BIDIRECTIONAL) {
-        stream_must_be_sender = test->role == 'c';
-    } else {
-        stream_must_be_sender = test->mode * test->mode;
-    }
+    stream_must_be_sender = iperf3rs_stream_must_be_sender(test);
     direction = stream_must_be_sender ? 1 : 2;
 
     if (test->protocol->id == Ptcp) {
@@ -154,7 +217,6 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
             if (test->sender_has_retransmits == 1 && stream_must_be_sender) {
                 /* TCP_INFO values are only meaningful on the sending stream. */
                 tcp_retransmits_available = 1;
-                tcp_reorder_events_available = 1;
                 tcp_retransmits += (double)interval->interval_retrans;
                 tcp_rtt_count +=
                     iperf3rs_add_nonnegative(&tcp_rtt_seconds, interval->rtt);
@@ -170,8 +232,6 @@ iperf3rs_emit_interval_metrics(struct iperf_test *test)
                 }
                 tcp_pmtu_count +=
                     iperf3rs_add_nonnegative(&tcp_pmtu_bytes, interval->pmtu);
-                tcp_reorder_events +=
-                    interval->reorder > 0 ? (double)interval->reorder : 0.0;
             }
         } else if (test->protocol->id == Pudp) {
             /* UDP has packet-level interval counters; TCP is reported as bytes. */
