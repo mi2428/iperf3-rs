@@ -268,6 +268,12 @@ for a newer build toolchain. Review Kani's pinned version against its documented
 compiler support separately. Preserve hand-edited release CI and its external
 setup; Renovate also scans `.github/dist-build-setup.yml` for Action updates.
 
+Release planning and native/global artifact jobs have read-only repository
+permissions. Planning uses `dist plan`; hosting creation/upload/release happens
+only in the publishing host job. Only that job and GHCR dispatch can write
+repository contents. Homebrew keeps its separate tap token, and GHCR grants
+package writes only to the digest-build and manifest-publish jobs that need them.
+
 ## Maintainer Checklist
 
 Before publishing a release:

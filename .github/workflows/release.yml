@@ -15,7 +15,7 @@
 
 name: Release
 permissions:
-  "contents": "write"
+  contents: read
 
 # This task will run whenever you push a git tag that looks like a version
 # like "1.0.0", "v0.1.0-prerelease.1", "my-app/0.1.0", "releases/v1.0.0", etc.
@@ -90,7 +90,7 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
             dist plan --output-format=json > plan-dist-manifest.json
           else
-            dist host --steps=create --tag="${RELEASE_TAG}" --output-format=json > plan-dist-manifest.json
+            dist plan --tag="${RELEASE_TAG}" --output-format=json > plan-dist-manifest.json
           fi
           echo "dist ran successfully"
           cat plan-dist-manifest.json
@@ -124,7 +124,6 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container && matrix.container.image || (contains(join(matrix.targets, ','), 'unknown-linux-gnu') && 'rust:1.93-bullseye' || null) }}
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
       RELEASE_CACHE_ABI: ${{ contains(join(matrix.targets, ','), 'unknown-linux-gnu') && 'glibc-bullseye' || 'native' }}
     steps:
@@ -246,7 +245,6 @@ jobs:
       - build-local-artifacts
     runs-on: "ubuntu-22.04"
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/global-dist-manifest.json
     steps:
       - uses: actions/checkout@v6
@@ -290,6 +288,8 @@ jobs:
             ${{ env.BUILD_MANIFEST_NAME }}
   # Determines if we should publish/announce
   host:
+    permissions:
+      contents: write
     needs:
       - plan
       - build-local-artifacts
@@ -325,7 +325,7 @@ jobs:
       - id: host
         shell: bash
         run: |
-          dist host ${{ needs.plan.outputs.tag-flag }} --steps=upload --steps=release --output-format=json > dist-manifest.json
+          dist host ${{ needs.plan.outputs.tag-flag }} --steps=create --steps=upload --steps=release --output-format=json > dist-manifest.json
           echo "artifacts uploaded and released successfully"
           cat dist-manifest.json
           echo "manifest=$(jq -c "." dist-manifest.json)" >> "$GITHUB_OUTPUT"
@@ -376,7 +376,6 @@ jobs:
       - host
     runs-on: "ubuntu-22.04"
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PLAN: ${{ needs.plan.outputs.val }}
       GITHUB_USER: "axo bot"
       GITHUB_EMAIL: "admin+bot@axo.dev"
@@ -422,6 +421,8 @@ jobs:
           git push
 
   announce:
+    permissions:
+      contents: write
     needs:
       - plan
       - host
