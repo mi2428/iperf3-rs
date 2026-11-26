@@ -121,11 +121,12 @@ jobs:
       # - 1 "global" task that builds universal installers
       # - N "local" tasks that build each platform's binaries and platform-specific installers
       matrix: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix }}
-    runs-on: ${{ matrix.runner }}
+    # cargo-dist 0.31 still selects the retired macos-14 runner for ARM64.
+    runs-on: ${{ matrix.runner == 'macos-14' && 'macos-15' || matrix.runner }}
     container: ${{ matrix.container && matrix.container.image || (contains(join(matrix.targets, ','), 'unknown-linux-gnu') && 'rust:1.93-bullseye' || null) }}
     env:
       BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
-      RELEASE_CACHE_ABI: ${{ contains(join(matrix.targets, ','), 'unknown-linux-gnu') && 'glibc-bullseye' || 'native' }}
+      RELEASE_CACHE_ABI: ${{ contains(join(matrix.targets, ','), 'unknown-linux-gnu') && 'glibc-bullseye' || (matrix.runner == 'macos-14' && 'macos-15-arm64') || 'native' }}
     steps:
       - name: enable windows longpaths
         run: |
